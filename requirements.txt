@@ -1,0 +1,13 @@
+Flask==3.0.0
+Werkzeug==3.0.1
+boto3>=1.42.0
+pyarrow>=17.0.0
+opencv-python-headless>=4.10.0
+requests>=2.32.0
+numpy>=2.0.0
+pandas>=2.0.0
+yt-dlp>=2025.1.0
+cryptography>=42.0.0
+
+# System dependencies (install via package manager):
+# sudo apt install ffmpeg  # For video processing and thumbnails

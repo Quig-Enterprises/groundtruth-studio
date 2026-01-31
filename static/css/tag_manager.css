@@ -1,0 +1,376 @@
+.manager-content {
+    margin-top: 20px;
+}
+
+.actions-bar {
+    background: white;
+    padding: 15px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    display: flex;
+    gap: 10px;
+}
+
+.categories-section {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.categories-section h2 {
+    margin-bottom: 15px;
+    color: #2c3e50;
+    font-size: 18px;
+}
+
+.categories-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+}
+
+.category-chip {
+    background: #3498db;
+    color: white;
+    padding: 8px 16px;
+    border-radius: 20px;
+    cursor: pointer;
+    transition: background 0.2s;
+    font-size: 14px;
+}
+
+.category-chip:hover {
+    background: #2980b9;
+}
+
+.category-chip.active {
+    background: #27ae60;
+}
+
+.category-chip.all {
+    background: #95a5a6;
+}
+
+.category-chip.all:hover {
+    background: #7f8c8d;
+}
+
+.category-chip.all.active {
+    background: #27ae60;
+}
+
+.suggestions-section {
+    background: white;
+    padding: 20px;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.suggestions-section h2 {
+    margin-bottom: 15px;
+    color: #2c3e50;
+    font-size: 18px;
+}
+
+.suggestions-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.suggestion-item {
+    background: #f8f9fa;
+    border-left: 4px solid #3498db;
+    padding: 15px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.suggestion-item:hover {
+    background: #ecf0f1;
+}
+
+.suggestion-item.negative {
+    border-left-color: #e74c3c;
+    background: #fff5f5;
+}
+
+.suggestion-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.suggestion-tag-text {
+    font-weight: 600;
+    color: #2c3e50;
+    font-size: 15px;
+}
+
+.suggestion-item.negative .suggestion-tag-text::before {
+    content: "NOT: ";
+    color: #e74c3c;
+    font-weight: bold;
+}
+
+.suggestion-category {
+    display: inline-block;
+    background: #3498db;
+    color: white;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+    margin-left: 10px;
+}
+
+.suggestion-description {
+    color: #7f8c8d;
+    font-size: 13px;
+    margin-top: 5px;
+    font-style: italic;
+}
+
+.suggestion-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+}
+
+.btn-edit,
+.btn-delete-small {
+    padding: 5px 12px;
+    font-size: 12px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-edit {
+    background: #3498db;
+    color: white;
+}
+
+.btn-edit:hover {
+    background: #2980b9;
+}
+
+.btn-delete-small {
+    background: #e74c3c;
+    color: white;
+}
+
+.btn-delete-small:hover {
+    background: #c0392b;
+}
+
+.suggestion-meta {
+    display: flex;
+    gap: 15px;
+    margin-top: 8px;
+    font-size: 12px;
+    color: #95a5a6;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 40px;
+    color: #95a5a6;
+}
+
+.help-text-small {
+    font-size: 12px;
+    color: #7f8c8d;
+    margin-top: 5px;
+    font-style: italic;
+}
+
+@media (max-width: 768px) {
+    .manager-content {
+        margin-top: 15px;
+    }
+
+    .actions-bar {
+        flex-direction: column;
+        padding: 12px;
+        gap: 8px;
+    }
+
+    .actions-bar button {
+        width: 100%;
+        padding: 12px;
+        font-size: 15px;
+    }
+
+    .categories-section,
+    .suggestions-section {
+        padding: 15px;
+        margin-bottom: 15px;
+    }
+
+    .categories-section h2,
+    .suggestions-section h2 {
+        font-size: 16px;
+    }
+
+    .categories-list {
+        gap: 8px;
+    }
+
+    .category-chip {
+        padding: 10px 16px;
+        font-size: 15px;
+    }
+
+    .suggestions-list {
+        gap: 12px;
+    }
+
+    .suggestion-item {
+        padding: 12px;
+    }
+
+    .suggestion-header {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 8px;
+    }
+
+    .suggestion-tag-text {
+        font-size: 14px;
+    }
+
+    .suggestion-category {
+        margin-left: 0;
+        margin-top: 0;
+        font-size: 13px;
+        padding: 4px 10px;
+    }
+
+    .suggestion-description {
+        font-size: 13px;
+    }
+
+    .suggestion-actions {
+        flex-wrap: wrap;
+        width: 100%;
+    }
+
+    .btn-edit,
+    .btn-delete-small {
+        flex: 1;
+        min-width: 80px;
+        padding: 8px 12px;
+        font-size: 13px;
+    }
+
+    .suggestion-meta {
+        flex-direction: column;
+        gap: 5px;
+        font-size: 11px;
+    }
+
+    .empty-state {
+        padding: 30px 20px;
+        font-size: 14px;
+    }
+}
+
+@media (max-width: 480px) {
+    .actions-bar {
+        padding: 10px;
+    }
+
+    .categories-section,
+    .suggestions-section {
+        padding: 12px;
+    }
+
+    .categories-section h2,
+    .suggestions-section h2 {
+        font-size: 15px;
+    }
+
+    .category-chip {
+        padding: 8px 14px;
+        font-size: 14px;
+    }
+
+    .suggestion-item {
+        padding: 10px;
+    }
+
+    .suggestion-tag-text {
+        font-size: 13px;
+    }
+
+    .suggestion-category {
+        font-size: 12px;
+    }
+
+    .suggestion-description {
+        font-size: 12px;
+    }
+
+    .empty-state {
+        padding: 25px 15px;
+        font-size: 13px;
+    }
+}
+
+/* Touch device optimization */
+@media (hover: none) and (pointer: coarse) {
+    .category-chip,
+    .btn-edit,
+    .btn-delete-small,
+    .suggestion-item {
+        min-height: 44px;
+    }
+
+    .category-chip {
+        padding: 12px 18px;
+    }
+
+    .btn-edit,
+    .btn-delete-small {
+        padding: 10px 14px;
+    }
+
+    .suggestion-actions {
+        gap: 10px;
+    }
+
+    /* Remove hover effects on touch devices */
+    .category-chip:hover {
+        background: #3498db;
+    }
+
+    .category-chip.all:hover {
+        background: #95a5a6;
+    }
+
+    .category-chip.active:hover,
+    .category-chip.all.active:hover {
+        background: #27ae60;
+    }
+
+    .suggestion-item:hover {
+        background: #f8f9fa;
+    }
+
+    .suggestion-item.negative:hover {
+        background: #fff5f5;
+    }
+
+    .btn-edit:hover {
+        background: #3498db;
+    }
+
+    .btn-delete-small:hover {
+        background: #e74c3c;
+    }
+}

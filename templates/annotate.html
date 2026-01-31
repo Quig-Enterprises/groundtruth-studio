@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groundtruth Studio - Annotation</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/css/style.css?v=1768876920">
+    <link rel="stylesheet" href="/static/css/annotate.css?v=1768876920">
+    <link rel="stylesheet" href="/static/css/tag-form.css?v=1768876920">
+    <link rel="stylesheet" href="/static/css/scenario-workflow.css?v=1768876920">
+</head>
+<body>
+    <div class="annotation-container">
+        <header class="annotation-header">
+            <h1 id="video-title">Video Annotation</h1>
+            <div>
+                <a href="/" class="btn-secondary">← Back to Library</a>
+            </div>
+        </header>
+
+        <div class="annotation-workspace">
+            <!-- Left Panel: Video Player and Controls -->
+            <div class="video-panel">
+                <div class="video-wrapper">
+                    <video id="video-player" controls>
+                        <source id="video-source" src="" type="video/mp4">
+                        Your browser does not support the video tag.
+                    </video>
+                    <canvas id="bbox-canvas"></canvas>
+                </div>
+
+                <div class="player-controls">
+                    <div class="time-display">
+                        <span id="current-time">0:00</span> / <span id="total-time">0:00</span>
+                    </div>
+                    <div class="playback-controls">
+                        <button onclick="seekRelative(-5)" class="btn-control">-5s</button>
+                        <button onclick="seekRelative(-1)" class="btn-control">-1s</button>
+                        <button onclick="togglePlay()" id="play-btn" class="btn-control">Play</button>
+                        <button onclick="seekRelative(1)" class="btn-control">+1s</button>
+                        <button onclick="seekRelative(5)" class="btn-control">+5s</button>
+                        <button onclick="startOtherAnnotation()" id="draw-mode-btn" class="btn-control">Draw BBox</button>
+                        <select id="speed-select" class="speed-select" onchange="changePlaybackSpeed(this.value)" title="Playback Speed">
+                            <option value="0.25">0.25x</option>
+                            <option value="0.5">0.5x</option>
+                            <option value="0.75">0.75x</option>
+                            <option value="1" selected>1x</option>
+                            <option value="1.25">1.25x</option>
+                            <option value="1.5">1.5x</option>
+                            <option value="2">2x</option>
+                            <option value="3">3x</option>
+                            <option value="4">4x</option>
+                            <option value="5">5x</option>
+                            <option value="6">6x</option>
+                            <option value="8">8x</option>
+                            <option value="10">10x</option>
+                            <option value="12">12x</option>
+                            <option value="16">16x</option>
+                        </select>
+                    </div>
+                </div>
+
+                <!-- Audio Waveform Timeline -->
+                <div class="waveform-container">
+                    <canvas id="waveform-canvas"></canvas>
+                    <canvas id="waveform-markers-canvas"></canvas>
+                    <div id="waveform-progress" class="waveform-progress"></div>
+                </div>
+
+                <div class="video-metadata" id="video-metadata">
+                    <p><strong>Duration:</strong> <span id="meta-duration">-</span></p>
+                    <p><strong>Resolution:</strong> <span id="meta-resolution">-</span></p>
+                </div>
+            </div>
+
+            <!-- Right Panel: Annotations -->
+            <div class="annotation-panel">
+                <!-- Unified Annotation Section -->
+                <div class="annotation-section">
+                    <div class="section-header">
+                        <h2>Annotations</h2>
+                        <button onclick="scenarioWorkflow.startWorkflow()" class="btn-primary">+ Annotate</button>
+                    </div>
+
+                    <div id="annotations-list" class="annotations-list-container">
+                        <div id="time-range-tags-list" class="tags-list-container">
+                            <!-- Time range tags will be loaded here -->
+                        </div>
+                        <div id="keyframe-annotations-list" class="keyframes-list-container">
+                            <!-- Keyframe annotations will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+    <script src="/static/js/annotation-scenarios.js?v=1768876920"></script>
+    <script src="/static/js/scenario-workflow.js?v=1768876920"></script>
+    <script src="/static/js/tag-form-generator.js?v=1768876920"></script>
+    <script src="/static/js/waveform.js?v=1768876920"></script>
+    <script src="/static/js/annotate.js?v=1768876920"></script>
+    <script src="/static/js/annotate-integration.js?v=1768876920"></script>
+</body>
+</html>

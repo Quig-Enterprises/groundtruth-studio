@@ -1,0 +1,921 @@
+.annotation-container {
+    max-width: 100%;
+    margin: 0;
+    padding: 0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    background: #f5f5f5;
+}
+
+.annotation-header {
+    background: white;
+    padding: 15px 20px;
+    border-bottom: 1px solid #ddd;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.annotation-header h1 {
+    font-size: 20px;
+    margin: 0;
+    color: #2c3e50;
+}
+
+.annotation-workspace {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+}
+
+.video-panel {
+    flex: 2;
+    background: #2c3e50;
+    display: flex;
+    flex-direction: column;
+    padding: 20px;
+}
+
+.video-wrapper {
+    position: relative;
+    background: black;
+    border-radius: 4px;
+    overflow: hidden;
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+#video-player {
+    max-width: 100%;
+    max-height: 100%;
+    width: auto;
+    height: auto;
+    display: block;
+}
+
+#bbox-canvas {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+}
+
+#bbox-canvas.drawing {
+    pointer-events: all;
+    cursor: crosshair;
+    z-index: 100;
+}
+
+.player-controls {
+    background: #34495e;
+    padding: 15px;
+    border-radius: 4px;
+    margin-top: 15px;
+}
+
+.time-display {
+    color: white;
+    text-align: center;
+    margin-bottom: 10px;
+    font-size: 16px;
+    font-family: monospace;
+}
+
+.playback-controls {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    flex-wrap: wrap;
+}
+
+.speed-select {
+    padding: 8px 6px;
+    border-radius: 4px;
+    border: 1px solid #555;
+    background: #2c3e50;
+    color: white;
+    cursor: pointer;
+    font-size: 14px;
+    min-width: 65px;
+    max-width: 75px;
+    text-align: center;
+}
+
+.speed-select:focus {
+    outline: none;
+    border-color: #3498db;
+}
+
+.speed-select:hover {
+    background: #34495e;
+}
+
+.btn-control {
+    padding: 8px 16px;
+    background: #3498db;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s;
+}
+
+.btn-control:hover {
+    background: #2980b9;
+}
+
+.btn-control:active {
+    background: #21618c;
+}
+
+#draw-mode-btn.active {
+    background: #e74c3c;
+}
+
+.video-metadata {
+    background: #34495e;
+    padding: 10px 15px;
+    border-radius: 4px;
+    margin-top: 10px;
+    color: white;
+    font-size: 14px;
+}
+
+.video-metadata p {
+    margin: 5px 0;
+}
+
+.annotation-panel {
+    flex: 1;
+    background: white;
+    overflow-y: auto;
+    padding: 20px;
+    border-left: 1px solid #ddd;
+}
+
+.annotation-section {
+    margin-bottom: 30px;
+}
+
+.section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 15px;
+    padding-bottom: 10px;
+    border-bottom: 2px solid #3498db;
+}
+
+.section-header h2 {
+    font-size: 18px;
+    color: #2c3e50;
+    margin: 0;
+}
+
+.tags-list-container,
+.keyframes-list-container {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+}
+
+.time-range-tag-item {
+    background: #ecf0f1;
+    border-left: 4px solid #3498db;
+    padding: 12px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.time-range-tag-item:hover {
+    background: #dfe6e9;
+}
+
+.time-range-tag-item.open {
+    border-left-color: #f39c12;
+}
+
+.tag-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.tag-name {
+    font-weight: 600;
+    color: #2c3e50;
+    font-size: 15px;
+}
+
+.tag-time-range {
+    color: #7f8c8d;
+    font-family: monospace;
+    font-size: 13px;
+}
+
+.tag-comment {
+    color: #34495e;
+    font-size: 13px;
+    margin-top: 5px;
+    font-style: italic;
+}
+
+.tag-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.btn-small {
+    padding: 4px 10px;
+    font-size: 12px;
+    border: none;
+    border-radius: 3px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+.btn-close-tag {
+    background: #27ae60;
+    color: white;
+}
+
+.btn-close-tag:hover {
+    background: #229954;
+}
+
+.btn-delete-tag {
+    background: #e74c3c;
+    color: white;
+}
+
+.btn-delete-tag:hover {
+    background: #c0392b;
+}
+
+.btn-seek {
+    background: #95a5a6;
+    color: white;
+}
+
+.btn-seek:hover {
+    background: #7f8c8d;
+}
+
+.keyframe-item {
+    background: #e8f4f8;
+    border-left: 4px solid #16a085;
+    padding: 12px;
+    border-radius: 4px;
+    transition: all 0.2s;
+}
+
+.keyframe-item:hover {
+    background: #d4e9f0;
+}
+
+.keyframe-item.active {
+    background: #fff3cd;
+    border-left-color: #f39c12;
+    box-shadow: 0 0 10px rgba(243, 156, 18, 0.3);
+}
+
+.keyframe-item.ai-generated {
+    border-left-style: dotted;
+    border-left-width: 4px;
+}
+
+.keyframe-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+}
+
+.keyframe-header-actions {
+    display: flex;
+    gap: 6px;
+}
+
+.keyframe-timestamp {
+    font-weight: 600;
+    color: #16a085;
+    font-family: monospace;
+}
+
+.keyframe-tags {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.activity-tag {
+    background: #3498db;
+    color: white;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+}
+
+.moment-tag {
+    background: #e67e22;
+    color: white;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 12px;
+}
+
+.keyframe-bbox {
+    color: #7f8c8d;
+    font-size: 12px;
+    font-family: monospace;
+    margin-top: 5px;
+}
+
+.keyframe-comment {
+    color: #34495e;
+    font-size: 13px;
+    margin-top: 5px;
+    font-style: italic;
+}
+
+.keyframe-thumbnail {
+    margin-top: 8px;
+    max-width: 160px;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.keyframe-thumbnail img {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.keyframe-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.empty-state {
+    text-align: center;
+    padding: 40px 20px;
+    color: #95a5a6;
+}
+
+.form-group {
+    margin-bottom: 15px;
+}
+
+.form-group label {
+    display: block;
+    margin-bottom: 5px;
+    font-weight: 500;
+    color: #2c3e50;
+    font-size: 14px;
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"],
+.form-group textarea {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+}
+
+.form-group input[readonly] {
+    background: #ecf0f1;
+}
+
+.help-text {
+    background: #fff3cd;
+    border: 1px solid #ffc107;
+    padding: 10px;
+    border-radius: 4px;
+    color: #856404;
+    font-size: 13px;
+    margin-bottom: 15px;
+}
+
+.help-text-small {
+    font-size: 12px;
+    color: #7f8c8d;
+    margin-top: 5px;
+    font-style: italic;
+}
+
+.time-range-tag-item.negative {
+    border-left-color: #e74c3c;
+    background: #ffe6e6;
+}
+
+.time-range-tag-item.negative .tag-name::before {
+    content: "NOT ";
+    color: #e74c3c;
+    font-weight: bold;
+}
+
+.keyframe-item.negative {
+    border-left-color: #e74c3c;
+    background: #ffe6e6;
+}
+
+.keyframe-item.negative .keyframe-timestamp::after {
+    content: " [NEGATIVE]";
+    color: #e74c3c;
+    font-size: 11px;
+    font-weight: normal;
+}
+
+.modal-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+}
+
+.tag-quick-select {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+}
+
+.quick-select-btn {
+    background: #ecf0f1;
+    border: 1px solid #bdc3c7;
+    padding: 5px 12px;
+    border-radius: 16px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    color: #2c3e50;
+}
+
+.quick-select-btn:hover {
+    background: #3498db;
+    border-color: #3498db;
+    color: white;
+}
+
+.quick-select-btn.negative {
+    background: #ffe6e6;
+    border-color: #e74c3c;
+    color: #c0392b;
+}
+
+.quick-select-btn.negative:hover {
+    background: #e74c3c;
+    border-color: #c0392b;
+    color: white;
+}
+
+.tag-quick-select-header {
+    width: 100%;
+    font-size: 11px;
+    color: #7f8c8d;
+    margin-top: 4px;
+    margin-bottom: 4px;
+}
+
+/* Inline annotation form styling */
+.inline-annotation-form {
+    background: white;
+    border-radius: 4px;
+    padding: 0;
+}
+
+.form-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px 0;
+    margin-bottom: 20px;
+    border-bottom: 2px solid #3498db;
+}
+
+.form-header h2 {
+    font-size: 18px;
+    color: #2c3e50;
+    margin: 0;
+}
+
+.form-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 20px;
+    padding-top: 20px;
+    border-top: 1px solid #ecf0f1;
+}
+
+.btn-secondary:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+}
+
+/* Audio Waveform Timeline */
+.waveform-container {
+    position: relative;
+    background: #2c3e50;
+    border-radius: 4px;
+    margin-top: 15px;
+    padding: 10px;
+    height: 80px;
+    cursor: pointer;
+}
+
+#waveform-canvas {
+    width: 100%;
+    height: 60px;
+    display: block;
+}
+
+#waveform-markers-canvas {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    width: calc(100% - 20px);
+    height: 60px;
+    pointer-events: none;
+}
+
+.waveform-progress {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    width: 2px;
+    height: 60px;
+    background: #e74c3c;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.waveform-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #95a5a6;
+    font-size: 14px;
+    height: 60px;
+}
+
+/* Mobile Responsive Styles */
+@media (max-width: 1024px) {
+    .annotation-workspace {
+        flex-direction: column;
+    }
+
+    .video-panel {
+        flex: none;
+        height: 60vh;
+    }
+
+    .annotation-panel {
+        border-left: none;
+        border-top: 1px solid #ddd;
+    }
+
+    .playback-controls {
+        gap: 8px;
+    }
+
+    .btn-control {
+        padding: 10px 14px;
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 768px) {
+    .annotation-container {
+        height: auto;
+        min-height: 100vh;
+    }
+
+    .annotation-header {
+        padding: 12px 15px;
+        flex-direction: column;
+        gap: 10px;
+        align-items: flex-start;
+    }
+
+    .annotation-header h1 {
+        font-size: 18px;
+    }
+
+    .annotation-header a {
+        padding: 8px 16px;
+        font-size: 14px;
+    }
+
+    .annotation-workspace {
+        flex-direction: column;
+        height: auto;
+    }
+
+    .video-panel {
+        height: 50vh;
+        min-height: 300px;
+        padding: 10px;
+    }
+
+    .video-wrapper {
+        border-radius: 8px;
+    }
+
+    .player-controls {
+        padding: 10px;
+        margin-top: 10px;
+    }
+
+    .time-display {
+        font-size: 14px;
+        margin-bottom: 8px;
+    }
+
+    .playback-controls {
+        gap: 6px;
+        justify-content: space-between;
+    }
+
+    .btn-control {
+        padding: 10px 12px;
+        font-size: 13px;
+        flex: 1;
+        min-width: 60px;
+    }
+
+    .speed-select {
+        min-width: 60px;
+        max-width: 70px;
+        padding: 10px 4px;
+        font-size: 13px;
+    }
+
+    #draw-mode-btn {
+        flex: 1 1 100%;
+        margin-top: 6px;
+    }
+
+    .video-metadata {
+        padding: 8px 12px;
+        margin-top: 8px;
+        font-size: 13px;
+    }
+
+    .annotation-panel {
+        padding: 15px;
+        height: auto;
+        max-height: none;
+    }
+
+    .section-header h2 {
+        font-size: 16px;
+    }
+
+    .time-range-tag-item,
+    .keyframe-item {
+        padding: 10px;
+    }
+
+    .tag-name {
+        font-size: 14px;
+    }
+
+    .tag-time-range,
+    .keyframe-timestamp {
+        font-size: 12px;
+    }
+
+    .tag-comment,
+    .keyframe-comment {
+        font-size: 12px;
+    }
+
+    .tag-actions,
+    .keyframe-actions {
+        flex-wrap: wrap;
+        gap: 6px;
+    }
+
+    .btn-small {
+        flex: 1;
+        min-width: 70px;
+        padding: 6px 10px;
+    }
+
+    .keyframe-thumbnail {
+        max-width: 120px;
+    }
+
+    .form-group {
+        margin-bottom: 12px;
+    }
+
+    .form-group label {
+        font-size: 13px;
+    }
+
+    .form-group input,
+    .form-group textarea {
+        font-size: 14px;
+        padding: 10px;
+    }
+
+    .form-actions,
+    .modal-actions {
+        flex-direction: column;
+        gap: 8px;
+    }
+
+    .form-actions button,
+    .modal-actions button {
+        width: 100%;
+        padding: 12px;
+    }
+
+    .waveform-container {
+        height: 70px;
+        padding: 8px;
+    }
+
+    #waveform-canvas,
+    #waveform-markers-canvas {
+        height: 50px;
+    }
+
+    .waveform-progress {
+        height: 50px;
+    }
+
+    .tag-quick-select {
+        gap: 5px;
+    }
+
+    .quick-select-btn {
+        padding: 8px 12px;
+        font-size: 13px;
+    }
+}
+
+@media (max-width: 480px) {
+    .annotation-header {
+        padding: 10px 12px;
+    }
+
+    .annotation-header h1 {
+        font-size: 16px;
+    }
+
+    .video-panel {
+        height: 45vh;
+        min-height: 250px;
+        padding: 8px;
+    }
+
+    .player-controls {
+        padding: 8px;
+    }
+
+    .time-display {
+        font-size: 13px;
+    }
+
+    .playback-controls {
+        gap: 4px;
+    }
+
+    .btn-control {
+        padding: 8px 10px;
+        font-size: 12px;
+        min-width: 50px;
+    }
+
+    .speed-select {
+        min-width: 50px;
+        max-width: 60px;
+        padding: 8px 2px;
+        font-size: 12px;
+    }
+
+    .annotation-panel {
+        padding: 12px;
+    }
+
+    .section-header {
+        margin-bottom: 12px;
+    }
+
+    .section-header h2 {
+        font-size: 15px;
+    }
+
+    .time-range-tag-item,
+    .keyframe-item {
+        padding: 8px;
+    }
+
+    .tag-name {
+        font-size: 13px;
+    }
+
+    .tag-actions,
+    .keyframe-actions {
+        gap: 5px;
+    }
+
+    .btn-small {
+        font-size: 11px;
+        padding: 5px 8px;
+        min-width: 60px;
+    }
+
+    .keyframe-thumbnail {
+        max-width: 100px;
+    }
+
+    .waveform-container {
+        height: 60px;
+        padding: 6px;
+        margin-top: 10px;
+    }
+
+    #waveform-canvas,
+    #waveform-markers-canvas {
+        height: 45px;
+    }
+
+    .waveform-progress {
+        height: 45px;
+    }
+
+    .help-text {
+        font-size: 12px;
+        padding: 8px;
+    }
+}
+
+/* Landscape mode optimization for mobile */
+@media (max-width: 768px) and (orientation: landscape) {
+    .video-panel {
+        height: 70vh;
+    }
+
+    .annotation-panel {
+        height: auto;
+    }
+
+    .playback-controls {
+        flex-wrap: nowrap;
+    }
+
+    .btn-control {
+        font-size: 11px;
+        padding: 8px 10px;
+    }
+}
+
+/* Touch device optimization */
+@media (hover: none) and (pointer: coarse) {
+    .btn-control,
+    .btn-small,
+    .quick-select-btn {
+        min-height: 44px;
+        min-width: 44px;
+    }
+
+    .time-range-tag-item,
+    .keyframe-item {
+        padding: 14px;
+        min-height: 44px;
+    }
+
+    /* Make video controls easier to tap */
+    .playback-controls button {
+        padding: 12px;
+    }
+
+    /* Remove hover effects on touch devices */
+    .time-range-tag-item:hover,
+    .keyframe-item:hover {
+        background: inherit;
+    }
+
+    .btn-control:hover {
+        background: #3498db;
+    }
+
+    /* Make canvas drawing easier on touch */
+    #bbox-canvas.drawing {
+        touch-action: none;
+    }
+}

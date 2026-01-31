@@ -1,0 +1,1801 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EcoEye Alert Preview - Groundtruth Studio</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .ecoeye-container {
+            max-width: 1600px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+
+        .ecoeye-header {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .ecoeye-header h1 {
+            color: #2c3e50;
+            margin: 0;
+        }
+
+        .header-actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .back-link {
+            text-decoration: none;
+            color: #3498db;
+            font-size: 14px;
+            transition: color 0.2s;
+        }
+
+        .back-link:hover {
+            color: #2980b9;
+        }
+
+        .filter-bar {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .filter-bar h3 {
+            margin-top: 0;
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+
+        .filter-controls {
+            display: grid;
+            grid-template-columns: repeat(6, 1fr) auto;
+            gap: 15px;
+            align-items: end;
+        }
+
+        .filter-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .filter-group label {
+            font-size: 13px;
+            color: #7f8c8d;
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        .filter-group select,
+        .filter-group input[type="date"] {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        /* Tag Bar */
+        .tag-bar {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            align-items: center;
+            gap: 15px;
+            flex-wrap: wrap;
+        }
+
+        .tag-bar-label {
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 14px;
+        }
+
+        .tag-pills {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            flex: 1;
+        }
+
+        .tag-pill {
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .tag-pill:hover {
+            filter: brightness(0.9);
+        }
+
+        .tag-pill.selected {
+            border-color: #2c3e50;
+            box-shadow: 0 0 0 2px rgba(44, 62, 80, 0.2);
+        }
+
+        .tag-pill .tag-count {
+            background: rgba(0,0,0,0.2);
+            padding: 2px 6px;
+            border-radius: 10px;
+            font-size: 11px;
+        }
+
+        .tag-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .events-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .event-card {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.2s, box-shadow 0.2s;
+            position: relative;
+        }
+
+        .event-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .event-card.selected {
+            box-shadow: 0 0 0 3px #3498db;
+        }
+
+        .event-thumbnail {
+            width: 100%;
+            height: 180px;
+            object-fit: cover;
+            background: #34495e;
+            position: relative;
+        }
+
+        .event-thumbnail img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .event-thumbnail .no-thumb {
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #34495e;
+            color: #7f8c8d;
+            font-size: 48px;
+        }
+
+        .event-badge {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            color: white;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+        }
+
+        .event-badge.motion { background: #3498db; }
+        .event-badge.person { background: #e67e22; }
+        .event-badge.vehicle { background: #9b59b6; }
+        .event-badge.animal { background: #27ae60; }
+        .event-badge.package { background: #f39c12; }
+        .event-badge.default { background: #95a5a6; }
+
+        .event-info {
+            padding: 15px;
+        }
+
+        .event-camera {
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 15px;
+            margin-bottom: 5px;
+        }
+
+        .event-meta {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            font-size: 13px;
+            color: #7f8c8d;
+            margin-bottom: 8px;
+        }
+
+        .event-timestamp {
+            font-size: 12px;
+        }
+
+        /* Event tags */
+        .event-tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+            margin-bottom: 10px;
+            min-height: 24px;
+        }
+
+        .event-tag {
+            padding: 2px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 500;
+            color: white;
+        }
+
+        .event-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .event-checkbox {
+            width: 18px;
+            height: 18px;
+            cursor: pointer;
+        }
+
+        .event-actions button {
+            flex: 1;
+            padding: 8px 12px;
+            font-size: 13px;
+        }
+
+        .bottom-toolbar {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            position: sticky;
+            bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 15px;
+        }
+
+        .toolbar-left {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .toolbar-right {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .pagination-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .pagination-info {
+            font-size: 13px;
+            color: #7f8c8d;
+            margin: 0 10px;
+        }
+
+        .loading-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 9999;
+        }
+
+        .loading-spinner {
+            background: white;
+            padding: 30px 50px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #3498db;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .event-status {
+            position: absolute;
+            top: 8px;
+            left: 8px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .status-completed {
+            background: #27ae60;
+            color: white;
+        }
+
+        .status-failed {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .status-pending, .status-downloading {
+            background: #f39c12;
+            color: white;
+        }
+
+        .event-site, .event-alarm {
+            font-size: 12px;
+            color: #7f8c8d;
+            margin-top: 2px;
+        }
+
+        .btn-warning {
+            background: #f39c12;
+            color: white;
+            border: none;
+            padding: 6px 12px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .btn-warning:hover {
+            background: #e67e22;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #7f8c8d;
+        }
+
+        .empty-state-icon {
+            font-size: 64px;
+            margin-bottom: 15px;
+        }
+
+        /* Play button overlay */
+        .play-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: rgba(0,0,0,0.3);
+            opacity: 0;
+            transition: opacity 0.2s;
+            cursor: pointer;
+        }
+
+        .event-thumbnail:hover .play-overlay {
+            opacity: 1;
+        }
+
+        .play-overlay.always-visible {
+            opacity: 1;
+            background: rgba(0,0,0,0.4);
+        }
+
+        .play-btn {
+            width: 60px;
+            height: 60px;
+            background: rgba(255,255,255,0.9);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 24px;
+            color: #2c3e50;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+            transition: transform 0.2s;
+        }
+
+        .play-overlay:hover .play-btn {
+            transform: scale(1.1);
+        }
+
+        /* Imported badge */
+        .imported-badge {
+            position: absolute;
+            bottom: 8px;
+            left: 8px;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 10px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+
+        .imported-badge.has-video {
+            background: #27ae60;
+            color: white;
+        }
+
+        .imported-badge.metadata-only {
+            background: #3498db;
+            color: white;
+        }
+
+        /* Status indicator in event info */
+        .event-status-bar {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            margin-bottom: 10px;
+        }
+
+        .event-status-bar.status-local-video {
+            background: #d5f5e3;
+            color: #1e8449;
+            border: 1px solid #82e0aa;
+        }
+
+        .event-status-bar.status-imported {
+            background: #d6eaf8;
+            color: #1a5276;
+            border: 1px solid #85c1e9;
+        }
+
+        .event-status-bar.status-available {
+            background: #fdebd0;
+            color: #9c640c;
+            border: 1px solid #f5b041;
+        }
+
+        .event-status-bar.status-pending {
+            background: #f5f5f5;
+            color: #666;
+            border: 1px solid #ddd;
+        }
+
+        .status-icon {
+            font-size: 14px;
+        }
+
+        /* Video player modal */
+        .video-modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.9);
+            z-index: 10001;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .video-modal.active {
+            display: flex;
+        }
+
+        .video-modal-content {
+            max-width: 90vw;
+            max-height: 90vh;
+            position: relative;
+        }
+
+        .video-modal video {
+            max-width: 100%;
+            max-height: 85vh;
+            border-radius: 8px;
+        }
+
+        .video-modal-close {
+            position: absolute;
+            top: -40px;
+            right: 0;
+            background: none;
+            border: none;
+            color: white;
+            font-size: 32px;
+            cursor: pointer;
+        }
+
+        .video-modal-title {
+            color: white;
+            text-align: center;
+            margin-top: 10px;
+            font-size: 14px;
+        }
+
+        /* Modal styles */
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.5);
+            z-index: 10000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.active {
+            display: flex;
+        }
+
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            padding: 24px;
+            max-width: 500px;
+            width: 90%;
+            max-height: 80vh;
+            overflow-y: auto;
+        }
+
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .modal-header h2 {
+            margin: 0;
+            color: #2c3e50;
+        }
+
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 24px;
+            cursor: pointer;
+            color: #7f8c8d;
+        }
+
+        .modal-close:hover {
+            color: #2c3e50;
+        }
+
+        .tag-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .tag-list-item {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 4px;
+        }
+
+        .tag-list-item .tag-color {
+            width: 24px;
+            height: 24px;
+            border-radius: 4px;
+        }
+
+        .tag-list-item .tag-name {
+            flex: 1;
+            font-weight: 500;
+        }
+
+        .tag-list-item .tag-usage {
+            color: #7f8c8d;
+            font-size: 12px;
+        }
+
+        .tag-list-item .delete-tag {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 4px 8px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .new-tag-form {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+            padding-top: 15px;
+            border-top: 1px solid #eee;
+        }
+
+        .new-tag-form input[type="text"] {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+
+        .new-tag-form input[type="color"] {
+            width: 50px;
+            height: 40px;
+            border: none;
+            cursor: pointer;
+        }
+
+        /* Responsive adjustments */
+        @media (max-width: 768px) {
+            .filter-controls {
+                grid-template-columns: 1fr;
+            }
+
+            .events-grid {
+                grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            }
+
+            .bottom-toolbar {
+                flex-direction: column;
+                gap: 15px;
+            }
+
+            .toolbar-left,
+            .toolbar-right {
+                width: 100%;
+                justify-content: center;
+                flex-wrap: wrap;
+            }
+
+            .pagination-controls {
+                flex-wrap: wrap;
+                justify-content: center;
+            }
+
+            .tag-bar {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .events-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="ecoeye-container">
+        <div class="ecoeye-header">
+            <div>
+                <h1>EcoEye Alert Preview</h1>
+            </div>
+            <div class="header-actions">
+                <button onclick="openTagManager()" class="btn-secondary">Manage Tags</button>
+                <a href="/" class="back-link">Back to Groundtruth Studio</a>
+            </div>
+        </div>
+
+        <div class="filter-bar">
+            <h3>Filter Events</h3>
+            <div class="filter-controls">
+                <div class="filter-group">
+                    <label for="camera-filter">Camera</label>
+                    <select id="camera-filter">
+                        <option value="">All Cameras</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="type-filter">Event Type</label>
+                    <select id="type-filter">
+                        <option value="">All Types</option>
+                        <option value="motion">Motion</option>
+                        <option value="person">Person</option>
+                        <option value="vehicle">Vehicle</option>
+                        <option value="animal">Animal</option>
+                        <option value="package">Package</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="site-filter">Site</label>
+                    <select id="site-filter">
+                        <option value="">All Sites</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="date-filter">Since Date</label>
+                    <input type="date" id="date-filter">
+                </div>
+                <div class="filter-group">
+                    <label for="sort-filter">Sort By</label>
+                    <select id="sort-filter">
+                        <option value="desc">Newest First</option>
+                        <option value="asc">Oldest First</option>
+                    </select>
+                </div>
+                <div class="filter-group">
+                    <label for="tag-filter">Tag Filter</label>
+                    <select id="tag-filter">
+                        <option value="">All Events</option>
+                        <option value="untagged">Untagged Only</option>
+                        <!-- Tags loaded dynamically -->
+                    </select>
+                </div>
+                <div class="filter-group" style="display: flex; gap: 8px;">
+                    <button onclick="searchEvents()" class="btn-primary">Search</button>
+                    <button onclick="resetFilters()" class="btn-secondary">Reset</button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tag Bar -->
+        <div class="tag-bar">
+            <span class="tag-bar-label">Quick Tags:</span>
+            <div class="tag-pills" id="tag-pills">
+                <!-- Tags loaded dynamically -->
+            </div>
+            <div class="tag-actions">
+                <button onclick="applySelectedTags()" class="btn-primary" id="apply-tags-btn" disabled>
+                    Apply to Selected (<span id="tag-apply-count">0</span>)
+                </button>
+                <button onclick="removeSelectedTags()" class="btn-secondary" id="remove-tags-btn" disabled>
+                    Remove Tags
+                </button>
+            </div>
+        </div>
+
+        <div class="events-grid" id="events-grid">
+            <div class="loading">Loading events...</div>
+        </div>
+
+        <div class="bottom-toolbar">
+            <div class="toolbar-left">
+                <button onclick="selectAll()" class="btn-secondary">Select All</button>
+                <button onclick="deselectAll()" class="btn-secondary">Deselect All</button>
+                <button onclick="importSelected()" class="btn-primary">Import Selected (<span id="selected-count">0</span>)</button>
+            </div>
+            <div class="toolbar-right">
+                <div class="pagination-controls">
+                    <button onclick="firstPage()" class="btn-secondary" id="first-btn" title="First Page">⏮</button>
+                    <button onclick="previousPage()" class="btn-secondary" id="prev-btn">Previous</button>
+                    <span class="pagination-info" id="page-info">Page 1</span>
+                    <button onclick="nextPage()" class="btn-secondary" id="next-btn">Next</button>
+                    <button onclick="lastPage()" class="btn-secondary" id="last-btn" title="Last Page">⏭</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tag Manager Modal -->
+    <div id="tag-manager-modal" class="modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h2>Manage Tags</h2>
+                <button class="modal-close" onclick="closeTagManager()">&times;</button>
+            </div>
+            <div class="tag-list" id="tag-manager-list">
+                <!-- Tags loaded dynamically -->
+            </div>
+            <div class="new-tag-form">
+                <input type="text" id="new-tag-name" placeholder="New tag name...">
+                <input type="color" id="new-tag-color" value="#6c757d">
+                <button onclick="createTag()" class="btn-primary">Add Tag</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Video Player Modal -->
+    <div id="video-modal" class="video-modal">
+        <div class="video-modal-content">
+            <button class="video-modal-close" onclick="closeVideoPlayer()">&times;</button>
+            <video id="video-player" controls>
+                <source id="video-source" src="" type="video/mp4">
+                Your browser does not support video playback.
+            </video>
+            <div class="video-modal-title" id="video-title"></div>
+        </div>
+    </div>
+
+    <div id="loading-overlay" class="loading-overlay" style="display: none;">
+        <div class="loading-spinner">
+            <div class="spinner"></div>
+            <div id="loading-message">Loading...</div>
+        </div>
+    </div>
+
+    <script>
+        let currentPage = 1;
+        let totalPages = 1;
+        const pageSize = 50;
+        let selectedEvents = new Set();
+        let selectedTags = new Set();
+        let allEvents = [];
+        let availableTags = [];
+        let eventTagsMap = {}; // event_id -> [tags]
+
+        // Load tags from API
+        async function loadTags() {
+            try {
+                const response = await fetch('/api/ecoeye/tags');
+                const data = await response.json();
+
+                if (data.success) {
+                    availableTags = data.tags || [];
+                    renderTagPills();
+                    populateTagFilter();
+                    console.log('[Tags] Loaded', availableTags.length, 'tags');
+                }
+            } catch (error) {
+                console.error('Failed to load tags:', error);
+            }
+        }
+
+        // Populate the tag filter dropdown
+        function populateTagFilter() {
+            const select = document.getElementById('tag-filter');
+            // Keep first two options (All Events, Untagged Only)
+            while (select.options.length > 2) {
+                select.remove(2);
+            }
+            // Add tags as filter options
+            availableTags.forEach(tag => {
+                const option = document.createElement('option');
+                option.value = `tag:${tag.id}`;
+                option.textContent = `Tag: ${tag.name} (${tag.usage_count || 0})`;
+                select.appendChild(option);
+            });
+        }
+
+        // Render tag pills in the tag bar
+        function renderTagPills() {
+            const container = document.getElementById('tag-pills');
+            container.innerHTML = availableTags.map(tag => `
+                <div class="tag-pill ${selectedTags.has(tag.id) ? 'selected' : ''}"
+                     style="background: ${tag.color}; color: white;"
+                     onclick="toggleTagSelection(${tag.id})"
+                     title="${tag.description || tag.name}">
+                    ${tag.name}
+                    <span class="tag-count">${tag.usage_count || 0}</span>
+                </div>
+            `).join('');
+        }
+
+        // Toggle tag selection
+        function toggleTagSelection(tagId) {
+            if (selectedTags.has(tagId)) {
+                selectedTags.delete(tagId);
+            } else {
+                selectedTags.add(tagId);
+            }
+            renderTagPills();
+            updateTagButtons();
+        }
+
+        // Update tag action buttons
+        function updateTagButtons() {
+            const applyBtn = document.getElementById('apply-tags-btn');
+            const removeBtn = document.getElementById('remove-tags-btn');
+            const count = selectedEvents.size;
+
+            document.getElementById('tag-apply-count').textContent = count;
+
+            applyBtn.disabled = selectedTags.size === 0 || count === 0;
+            removeBtn.disabled = selectedTags.size === 0 || count === 0;
+        }
+
+        // Apply selected tags to selected events
+        async function applySelectedTags() {
+            console.log('[Button] applySelectedTags clicked');
+            console.log('[Tags] Selected tags:', Array.from(selectedTags));
+            console.log('[Tags] Selected events:', Array.from(selectedEvents));
+
+            if (selectedTags.size === 0 || selectedEvents.size === 0) {
+                console.log('[Tags] Nothing to apply (tags or events empty)');
+                alert('Please select both events (checkboxes) and tags (colored pills) first.');
+                return;
+            }
+
+            const eventIds = Array.from(selectedEvents);
+            const tagIds = Array.from(selectedTags);
+
+            // Auto-import metadata for unimported events first
+            const unimportedEvents = eventIds.filter(eventId => {
+                const event = allEvents.find(e => e.event_id === eventId);
+                return event && !event.imported_to_studio && !event.has_local_video;
+            });
+
+            if (unimportedEvents.length > 0) {
+                showLoading(`Importing ${unimportedEvents.length} event(s)...`);
+                console.log('[Tags] Auto-importing', unimportedEvents.length, 'unimported events');
+
+                for (const eventId of unimportedEvents) {
+                    try {
+                        await fetch('/api/ecoeye/sync-sample', {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ event_id: eventId, include_video: false })
+                        });
+                    } catch (err) {
+                        console.error('[Auto-Import] Failed for', eventId, err);
+                    }
+                }
+            }
+
+            // Apply tags
+            showLoading(`Applying ${tagIds.length} tag(s) to ${eventIds.length} event(s)...`);
+
+            try {
+                const response = await fetch('/api/ecoeye/tags/assign', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event_ids: eventIds, tag_ids: tagIds })
+                });
+
+                const data = await response.json();
+                hideLoading();
+
+                if (data.success) {
+                    console.log('[Success] Tags applied:', data);
+                    // Clear selections
+                    selectedEvents.clear();
+                    selectedTags.clear();
+                    updateSelectedCount();
+                    updateTagButtons();
+                    renderTagPills();
+                    // Refresh
+                    await loadTags();
+                    await loadEventTags();
+                    await loadEvents();
+                } else {
+                    alert('Failed to apply tags: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                hideLoading();
+                alert('Failed to apply tags: ' + error.message);
+            }
+        }
+
+        // Remove selected tags from selected events
+        async function removeSelectedTags() {
+            if (selectedTags.size === 0 || selectedEvents.size === 0) return;
+
+            if (!confirm(`Remove ${selectedTags.size} tag(s) from ${selectedEvents.size} event(s)?`)) {
+                return;
+            }
+
+            showLoading(`Removing tags...`);
+
+            try {
+                const response = await fetch('/api/ecoeye/tags/remove', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        event_ids: Array.from(selectedEvents),
+                        tag_ids: Array.from(selectedTags)
+                    })
+                });
+
+                const data = await response.json();
+                hideLoading();
+
+                if (data.success) {
+                    console.log('[Tags] Removed:', data);
+                    await loadTags();
+                    await loadEventTags();
+                    renderEvents(allEvents);
+                } else {
+                    alert('Failed to remove tags: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                hideLoading();
+                alert('Failed to remove tags: ' + error.message);
+            }
+        }
+
+        // Load tags for current events
+        async function loadEventTags() {
+            if (allEvents.length === 0) return;
+
+            const eventIds = allEvents.map(e => e.event_id || e.id).join(',');
+
+            try {
+                const response = await fetch(`/api/ecoeye/tags?event_ids=${encodeURIComponent(eventIds)}`);
+                const data = await response.json();
+
+                if (data.success) {
+                    eventTagsMap = data.events || {};
+                    console.log('[Tags] Loaded tags for', Object.keys(eventTagsMap).length, 'events');
+                }
+            } catch (error) {
+                console.error('Failed to load event tags:', error);
+            }
+        }
+
+        // Tag manager modal
+        function openTagManager() {
+            document.getElementById('tag-manager-modal').classList.add('active');
+            renderTagManagerList();
+        }
+
+        function closeTagManager() {
+            document.getElementById('tag-manager-modal').classList.remove('active');
+        }
+
+        function renderTagManagerList() {
+            const container = document.getElementById('tag-manager-list');
+            container.innerHTML = availableTags.map(tag => `
+                <div class="tag-list-item">
+                    <div class="tag-color" style="background: ${tag.color}"></div>
+                    <span class="tag-name">${tag.name}</span>
+                    <span class="tag-usage">${tag.usage_count || 0} uses</span>
+                    <button class="delete-tag" onclick="deleteTag(${tag.id}, '${tag.name}')">Delete</button>
+                </div>
+            `).join('');
+        }
+
+        async function createTag() {
+            const nameInput = document.getElementById('new-tag-name');
+            const colorInput = document.getElementById('new-tag-color');
+
+            const name = nameInput.value.trim();
+            const color = colorInput.value;
+
+            if (!name) {
+                alert('Please enter a tag name');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/ecoeye/tags', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name, color })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    nameInput.value = '';
+                    await loadTags();
+                    renderTagManagerList();
+                } else {
+                    alert('Failed to create tag: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Failed to create tag: ' + error.message);
+            }
+        }
+
+        async function deleteTag(tagId, tagName) {
+            if (!confirm(`Delete tag "${tagName}"? This will remove it from all events.`)) {
+                return;
+            }
+
+            try {
+                const response = await fetch(`/api/ecoeye/tags/${tagId}`, {
+                    method: 'DELETE'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    await loadTags();
+                    renderTagManagerList();
+                    await loadEventTags();
+                    renderEvents(allEvents);
+                } else {
+                    alert('Failed to delete tag: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                alert('Failed to delete tag: ' + error.message);
+            }
+        }
+
+        // Load cameras for filter
+        async function loadCameras() {
+            console.log('[Cameras] Loading camera list...');
+            try {
+                const response = await fetch('/api/ecoeye/cameras');
+                const data = await response.json();
+                console.log('[Cameras] Response:', data);
+
+                if (data.success && data.cameras) {
+                    const select = document.getElementById('camera-filter');
+                    console.log('[Cameras] Adding', data.cameras.length, 'cameras to dropdown');
+                    data.cameras.forEach(camera => {
+                        const option = document.createElement('option');
+                        option.value = camera;
+                        option.textContent = camera;
+                        select.appendChild(option);
+                    });
+                } else {
+                    console.error('[Cameras] No cameras returned or error:', data.error);
+                }
+            } catch (error) {
+                console.error('[Cameras] Failed to load:', error);
+            }
+        }
+
+        // Load sites for filter
+        async function loadSites() {
+            console.log('[Sites] Loading site list...');
+            try {
+                const response = await fetch('/api/ecoeye/sites');
+                const data = await response.json();
+                console.log('[Sites] Response:', data);
+
+                if (data.success && data.sites) {
+                    const select = document.getElementById('site-filter');
+                    console.log('[Sites] Adding', data.sites.length, 'sites to dropdown');
+                    data.sites.forEach(site => {
+                        const option = document.createElement('option');
+                        option.value = site.name;
+                        option.textContent = site.name;
+                        select.appendChild(option);
+                    });
+                } else {
+                    console.error('[Sites] No sites returned or error:', data.error);
+                }
+            } catch (error) {
+                console.error('[Sites] Failed to load:', error);
+            }
+        }
+
+        // Search events (reset to page 1)
+        function searchEvents() {
+            console.log('[Search] Starting new search, resetting to page 1');
+            currentPage = 1;
+            saveFiltersToURL();
+            loadEvents();
+        }
+
+        // Save current filters to URL for persistence
+        function saveFiltersToURL() {
+            const params = new URLSearchParams();
+            const camera = document.getElementById('camera-filter').value;
+            const eventType = document.getElementById('type-filter').value;
+            const dateValue = document.getElementById('date-filter').value;
+            const sortOrder = document.getElementById('sort-filter').value;
+            const site = document.getElementById('site-filter').value;
+            const tagFilter = document.getElementById('tag-filter').value;
+
+            if (camera) params.set('camera', camera);
+            if (eventType) params.set('event_type', eventType);
+            if (dateValue) params.set('since', dateValue);
+            if (sortOrder !== 'desc') params.set('sort', sortOrder);
+            if (site) params.set('site', site);
+            if (tagFilter) params.set('tag', tagFilter);
+
+            const newURL = params.toString() ? `${window.location.pathname}?${params}` : window.location.pathname;
+            history.replaceState(null, '', newURL);
+        }
+
+        // Load filters from URL on page load
+        function loadFiltersFromURL() {
+            const params = new URLSearchParams(window.location.search);
+
+            if (params.get('camera')) {
+                document.getElementById('camera-filter').value = params.get('camera');
+            }
+            if (params.get('event_type')) {
+                document.getElementById('type-filter').value = params.get('event_type');
+            }
+            if (params.get('since')) {
+                document.getElementById('date-filter').value = params.get('since');
+            }
+            if (params.get('sort')) {
+                document.getElementById('sort-filter').value = params.get('sort');
+            }
+            if (params.get('site')) {
+                document.getElementById('site-filter').value = params.get('site');
+            }
+            if (params.get('tag')) {
+                document.getElementById('tag-filter').value = params.get('tag');
+            }
+
+            console.log('[Init] Loaded filters from URL:', Object.fromEntries(params));
+        }
+
+        // Reset all filters and reload
+        function resetFilters() {
+            document.getElementById('camera-filter').value = '';
+            document.getElementById('type-filter').value = '';
+            document.getElementById('date-filter').value = '';
+            document.getElementById('sort-filter').value = 'desc';
+            document.getElementById('site-filter').value = '';
+            document.getElementById('tag-filter').value = '';
+            currentPage = 1;
+            history.replaceState(null, '', window.location.pathname);
+            loadEvents();
+        }
+
+        // Load events from API
+        async function loadEvents() {
+            const camera = document.getElementById('camera-filter').value;
+            const eventType = document.getElementById('type-filter').value;
+            const dateValue = document.getElementById('date-filter').value;
+            const sortOrder = document.getElementById('sort-filter').value;
+            const site = document.getElementById('site-filter').value;
+            const tagFilter = document.getElementById('tag-filter').value;
+
+            console.log('[LoadEvents] Filters:', { camera, eventType, dateValue, sortOrder, site, tagFilter, page: currentPage });
+
+            showLoading('Loading events...');
+
+            try {
+                const params = new URLSearchParams({
+                    limit: pageSize,
+                    offset: (currentPage - 1) * pageSize,
+                    has_thumbnail: '1',
+                    sort: sortOrder
+                });
+
+                if (camera) params.append('camera', camera);
+                if (eventType) params.append('event_type', eventType);
+                if (dateValue) params.append('since', dateValue);
+                if (site) params.append('site', site);
+
+                // Tag filter
+                if (tagFilter === 'untagged') {
+                    params.append('untagged', '1');
+                } else if (tagFilter.startsWith('tag:')) {
+                    params.append('tag_id', tagFilter.replace('tag:', ''));
+                }
+
+                console.log('[LoadEvents] API URL:', `/api/ecoeye/events?${params}`);
+                const response = await fetch(`/api/ecoeye/events?${params}`);
+                const data = await response.json();
+                console.log('[LoadEvents] Response:', { success: data.success, total: data.total, eventsCount: data.events?.length });
+
+                if (data.success) {
+                    allEvents = data.events || [];
+                    console.log('[Events] Loaded', allEvents.length, 'events');
+
+                    // Load tags for these events
+                    await loadEventTags();
+
+                    renderEvents(allEvents);
+                    updatePagination(data.total || allEvents.length);
+                } else {
+                    showError('Failed to load events: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                showError('Failed to load events: ' + error.message);
+            } finally {
+                hideLoading();
+            }
+        }
+
+        // Render events to grid
+        function renderEvents(events) {
+            const grid = document.getElementById('events-grid');
+
+            if (events.length === 0) {
+                grid.innerHTML = `
+                    <div class="empty-state" style="grid-column: 1 / -1;">
+                        <div class="empty-state-icon">📹</div>
+                        <h3>No Events Found</h3>
+                        <p>Try adjusting your filters or check back later.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            grid.innerHTML = events.map(event => {
+                const eventId = event.event_id || event.id;
+                const isSelected = selectedEvents.has(eventId);
+                const badgeClass = getBadgeClass(event.event_type);
+                const eventTags = eventTagsMap[eventId] || [];
+
+                // Determine thumbnail source (prefer local if available)
+                const thumbnailSrc = event.local_thumbnail || event.thumbnail;
+
+                // Build play overlay if local video exists
+                let playOverlay = '';
+                let importedBadge = '';
+
+                if (event.has_local_video && event.local_video_path) {
+                    playOverlay = `
+                        <div class="play-overlay always-visible" onclick="playVideo('${event.local_video_path}', '${event.camera_name || 'Video'}')">
+                            <div class="play-btn">▶</div>
+                        </div>
+                    `;
+                    importedBadge = '<div class="imported-badge has-video">In Studio</div>';
+                } else if (event.imported_to_studio) {
+                    importedBadge = '<div class="imported-badge metadata-only">Imported</div>';
+                }
+
+                // Determine status bar and action buttons based on state
+                let statusBar = '';
+                let actionButtons = '';
+
+                if (event.has_local_video) {
+                    // Already has video locally
+                    statusBar = `<div class="event-status-bar status-local-video">
+                        <span class="status-icon">✓</span> Video in Studio
+                    </div>`;
+                    actionButtons = `
+                        <button class="btn-primary" onclick="openInAnnotator(${event.local_video_id})">Open in Annotator</button>
+                    `;
+                } else if (event.imported_to_studio) {
+                    // Imported but no video
+                    statusBar = `<div class="event-status-bar status-imported">
+                        <span class="status-icon">📋</span> Metadata Imported
+                    </div>`;
+                    actionButtons = `
+                        <button class="btn-warning" onclick="requestVideoDownload('${eventId}')">Request Video</button>
+                    `;
+                } else if (event.has_video) {
+                    // Has video on relay - can sync with video
+                    statusBar = `<div class="event-status-bar status-available">
+                        <span class="status-icon">📹</span> Video Available on Relay
+                    </div>`;
+                    actionButtons = `
+                        <button class="btn-primary" onclick="syncSingleEvent('${eventId}')">Sync with Video</button>
+                    `;
+                } else {
+                    // No video anywhere
+                    statusBar = `<div class="event-status-bar status-pending">
+                        <span class="status-icon">⏳</span> Not Imported
+                    </div>`;
+                    actionButtons = `
+                        <button class="btn-secondary" onclick="importMetadataOnly('${eventId}')">Import Metadata</button>
+                        <button class="btn-warning" onclick="requestVideoDownload('${eventId}')">Request Video</button>
+                    `;
+                }
+
+                return `
+                    <div class="event-card ${isSelected ? 'selected' : ''}" data-event-id="${eventId}">
+                        <div class="event-thumbnail">
+                            ${thumbnailSrc ?
+                                `<img src="${thumbnailSrc}" alt="Event thumbnail" onerror="this.parentElement.innerHTML='<div class=\\'no-thumb\\'>📹</div>'">` :
+                                `<div class="no-thumb">📹</div>`
+                            }
+                            ${playOverlay}
+                            <div class="event-badge ${badgeClass}">${event.event_type || 'Event'}</div>
+                            ${event.status ? `<div class="event-status status-${event.status}">${event.status}</div>` : ''}
+                            ${importedBadge}
+                        </div>
+                        <div class="event-info">
+                            <div class="event-camera">${event.camera_name || 'Unknown Camera'}</div>
+                            <div class="event-meta">
+                                <div class="event-timestamp">${formatTimestamp(event.timestamp)}</div>
+                                ${event.site_name ? `<div class="event-site">📍 ${event.site_name}</div>` : ''}
+                                ${event.alarm_name ? `<div class="event-alarm">🔔 ${event.alarm_name}</div>` : ''}
+                            </div>
+                            ${statusBar}
+                            <div class="event-tags">
+                                ${eventTags.map(t => `<span class="event-tag" style="background: ${t.color}">${t.name}</span>`).join('')}
+                            </div>
+                            <div class="event-actions">
+                                <input type="checkbox" class="event-checkbox"
+                                       ${isSelected ? 'checked' : ''}
+                                       onchange="toggleSelection('${eventId}', this.checked)">
+                                ${actionButtons}
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+
+            updateSelectedCount();
+        }
+
+        // Get badge class based on event type
+        function getBadgeClass(eventType) {
+            if (!eventType) return 'default';
+            const type = eventType.toLowerCase();
+            if (['motion', 'person', 'vehicle', 'animal', 'package'].includes(type)) {
+                return type;
+            }
+            return 'default';
+        }
+
+        // Format timestamp
+        function formatTimestamp(timestamp) {
+            if (!timestamp) return 'Unknown time';
+            const date = new Date(timestamp);
+            return date.toLocaleString();
+        }
+
+        // Toggle event selection
+        function toggleSelection(eventId, isChecked) {
+            if (isChecked) {
+                selectedEvents.add(eventId);
+            } else {
+                selectedEvents.delete(eventId);
+            }
+            updateSelectedCount();
+            updateTagButtons();
+
+            // Update card visual state
+            const card = document.querySelector(`.event-card[data-event-id="${eventId}"]`);
+            if (card) {
+                card.classList.toggle('selected', isChecked);
+            }
+        }
+
+        // Select all visible events
+        function selectAll() {
+            allEvents.forEach(event => {
+                const eventId = event.event_id || event.id;
+                selectedEvents.add(eventId);
+            });
+
+            document.querySelectorAll('.event-checkbox').forEach(cb => {
+                cb.checked = true;
+            });
+            document.querySelectorAll('.event-card').forEach(card => {
+                card.classList.add('selected');
+            });
+            updateSelectedCount();
+            updateTagButtons();
+        }
+
+        // Deselect all
+        function deselectAll() {
+            selectedEvents.clear();
+            document.querySelectorAll('.event-checkbox').forEach(cb => {
+                cb.checked = false;
+            });
+            document.querySelectorAll('.event-card').forEach(card => {
+                card.classList.remove('selected');
+            });
+            updateSelectedCount();
+            updateTagButtons();
+        }
+
+        // Update selected count
+        function updateSelectedCount() {
+            document.getElementById('selected-count').textContent = selectedEvents.size;
+        }
+
+        // Sync single event (with video)
+        async function syncSingleEvent(eventId) {
+            console.log('[Button] syncSingleEvent clicked for:', eventId);
+            showLoading('Importing event with video...');
+
+            try {
+                console.log('[API] POST /api/ecoeye/sync-sample', { event_id: eventId, include_video: true });
+                const response = await fetch('/api/ecoeye/sync-sample', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event_id: eventId, include_video: true })
+                });
+
+                const data = await response.json();
+                console.log('[API] Response:', response.status, data);
+                hideLoading();
+
+                if (data.success) {
+                    console.log('[Success] Event imported, video_id:', data.video_id);
+                    alert('Event imported successfully! Video ID: ' + data.video_id);
+                    // Refresh events to update import status
+                    await loadEvents();
+                } else {
+                    console.error('[Error] Import failed:', data.error);
+                    alert('Failed to import event: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('[Error] Fetch failed:', error);
+                hideLoading();
+                alert('Failed to import event: ' + error.message);
+            }
+        }
+
+        // Import metadata only (no video)
+        async function importMetadataOnly(eventId) {
+            console.log('[Button] importMetadataOnly clicked for:', eventId);
+            showLoading('Importing metadata...');
+
+            try {
+                console.log('[API] POST /api/ecoeye/sync-sample', { event_id: eventId, include_video: false });
+                const response = await fetch('/api/ecoeye/sync-sample', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event_id: eventId, include_video: false })
+                });
+
+                const data = await response.json();
+                console.log('[API] Response:', response.status, data);
+                hideLoading();
+
+                if (data.success) {
+                    console.log('[Success] Metadata imported, record_id:', data.record_id);
+                    alert('Metadata imported successfully! Record ID: ' + data.record_id);
+                    // Refresh events to update import status
+                    await loadEvents();
+                } else {
+                    console.error('[Error] Import failed:', data.error);
+                    alert('Failed to import: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('[Error] Fetch failed:', error);
+                hideLoading();
+                alert('Failed to import: ' + error.message);
+            }
+        }
+
+        // Request video download from EcoEye relay
+        async function requestVideoDownload(eventId) {
+            console.log('[Button] requestVideoDownload clicked for:', eventId);
+            if (!confirm('Request the EcoEye relay to download this video clip?')) {
+                console.log('[Button] User cancelled request');
+                return;
+            }
+
+            showLoading('Requesting video download...');
+
+            try {
+                console.log('[API] POST /api/ecoeye/request-download', { event_id: eventId });
+                const response = await fetch('/api/ecoeye/request-download', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ event_id: eventId })
+                });
+
+                const data = await response.json();
+                console.log('[API] Response:', response.status, data);
+                hideLoading();
+
+                if (data.success) {
+                    console.log('[Success] Download requested');
+                    alert('Download request sent! The video will be available soon.');
+                    loadEvents();
+                } else {
+                    console.error('[Error] Request failed:', data.error);
+                    alert('Failed to request download: ' + (data.error || 'Unknown error'));
+                }
+            } catch (error) {
+                console.error('[Error] Fetch failed:', error);
+                hideLoading();
+                alert('Failed to request download: ' + error.message);
+            }
+        }
+
+        // Import all selected events
+        async function importSelected() {
+            if (selectedEvents.size === 0) {
+                alert('No events selected');
+                return;
+            }
+
+            const requestVideos = confirm(
+                `Import ${selectedEvents.size} selected events.\n\n` +
+                `Click OK to also request video downloads.\n` +
+                `Click Cancel to import metadata/thumbnails only.`
+            );
+
+            showLoading(`Importing ${selectedEvents.size} events...`);
+
+            let imported = 0;
+            let failed = 0;
+            let videosRequested = 0;
+
+            for (const eventId of selectedEvents) {
+                try {
+                    const response = await fetch('/api/ecoeye/sync-sample', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ event_id: eventId, include_video: false })
+                    });
+
+                    const data = await response.json();
+                    if (data.success) {
+                        imported++;
+
+                        if (requestVideos) {
+                            const event = allEvents.find(e => (e.event_id || e.id) === eventId);
+                            if (event && !event.has_video) {
+                                try {
+                                    await fetch('/api/ecoeye/request-download', {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ event_id: eventId })
+                                    });
+                                    videosRequested++;
+                                } catch (e) {
+                                    console.warn('Failed to request video for', eventId);
+                                }
+                            }
+                        }
+                    } else {
+                        failed++;
+                    }
+
+                    document.getElementById('loading-message').textContent =
+                        `Importing... (${imported + failed}/${selectedEvents.size})`;
+                } catch (error) {
+                    failed++;
+                }
+            }
+
+            hideLoading();
+            let message = `Import complete!\nSuccessful: ${imported}\nFailed: ${failed}`;
+            if (videosRequested > 0) {
+                message += `\nVideo downloads requested: ${videosRequested}`;
+            }
+            alert(message);
+
+            deselectAll();
+            // Refresh events to update import status
+            await loadEvents();
+        }
+
+        // Pagination
+        function firstPage() {
+            if (currentPage !== 1) {
+                currentPage = 1;
+                console.log('[Pagination] Jump to first page');
+                loadEvents();
+            }
+        }
+
+        function previousPage() {
+            if (currentPage > 1) {
+                currentPage--;
+                console.log('[Pagination] Previous page:', currentPage);
+                loadEvents();
+            }
+        }
+
+        function nextPage() {
+            if (currentPage < totalPages) {
+                currentPage++;
+                console.log('[Pagination] Next page:', currentPage);
+                loadEvents();
+            }
+        }
+
+        function lastPage() {
+            if (currentPage !== totalPages) {
+                currentPage = totalPages;
+                console.log('[Pagination] Jump to last page:', currentPage);
+                loadEvents();
+            }
+        }
+
+        function updatePagination(total) {
+            totalPages = Math.ceil(total / pageSize) || 1;
+            document.getElementById('page-info').textContent = `Page ${currentPage} of ${totalPages} (${total} events)`;
+            document.getElementById('first-btn').disabled = currentPage === 1;
+            document.getElementById('prev-btn').disabled = currentPage === 1;
+            document.getElementById('next-btn').disabled = currentPage >= totalPages;
+            document.getElementById('last-btn').disabled = currentPage >= totalPages;
+        }
+
+        // Loading overlay
+        function showLoading(message) {
+            document.getElementById('loading-message').textContent = message;
+            document.getElementById('loading-overlay').style.display = 'flex';
+        }
+
+        function hideLoading() {
+            document.getElementById('loading-overlay').style.display = 'none';
+        }
+
+        function showError(message) {
+            const grid = document.getElementById('events-grid');
+            grid.innerHTML = `
+                <div class="empty-state" style="grid-column: 1 / -1;">
+                    <div class="empty-state-icon">⚠️</div>
+                    <h3>Error</h3>
+                    <p>${message}</p>
+                </div>
+            `;
+        }
+
+        // Video player functions
+        function playVideo(videoPath, title) {
+            console.log('[Video] Playing:', videoPath, 'Title:', title);
+            const modal = document.getElementById('video-modal');
+            const video = document.getElementById('video-player');
+            const source = document.getElementById('video-source');
+            const titleEl = document.getElementById('video-title');
+
+            source.src = videoPath;
+            titleEl.textContent = title;
+            video.load();
+            modal.classList.add('active');
+            video.play();
+        }
+
+        function closeVideoPlayer() {
+            console.log('[Video] Closing player');
+            const modal = document.getElementById('video-modal');
+            const video = document.getElementById('video-player');
+            video.pause();
+            modal.classList.remove('active');
+        }
+
+        function openInAnnotator(videoId) {
+            console.log('[Button] openInAnnotator clicked for video_id:', videoId);
+            window.open(`/annotate?video=${videoId}`, '_blank');
+        }
+
+        // Close video modal on outside click or escape
+        document.getElementById('video-modal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeVideoPlayer();
+            }
+        });
+
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeVideoPlayer();
+                closeTagManager();
+            }
+        });
+
+        // Close modal on outside click
+        document.getElementById('tag-manager-modal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeTagManager();
+            }
+        });
+
+        // Initialize on page load
+        document.addEventListener('DOMContentLoaded', async () => {
+            console.log('[Init] Loading EcoEye Preview...');
+
+            // Load filter options first, then restore filter values from URL
+            await Promise.all([loadTags(), loadCameras(), loadSites()]);
+
+            // Restore filters from URL after dropdowns are populated
+            loadFiltersFromURL();
+
+            // Now load events with restored filters
+            loadEvents();
+        });
+    </script>
+</body>
+</html>

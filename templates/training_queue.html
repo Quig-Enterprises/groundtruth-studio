@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Training Queue - Groundtruth Studio</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .tq-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .tq-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 24px;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .tq-header h1 { color: #2c3e50; }
+        .tq-header a { font-size: 14px; color: #3498db; text-decoration: none; }
+        .tq-header a:hover { text-decoration: underline; }
+
+        .tq-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 16px;
+            margin-bottom: 24px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 32px;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: #7f8c8d;
+            margin-top: 4px;
+        }
+
+        .stat-card.warning .stat-value { color: #e67e22; }
+        .stat-card.danger .stat-value { color: #e74c3c; }
+
+        .tq-section {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 24px;
+        }
+
+        .tq-section h2 {
+            font-size: 18px;
+            color: #34495e;
+            margin-bottom: 16px;
+        }
+
+        .submit-form {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .submit-form .form-group { display: flex; flex-direction: column; gap: 6px; }
+        .submit-form label { font-size: 13px; font-weight: 600; color: #555; }
+        .submit-form input, .submit-form select {
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .submit-actions {
+            grid-column: 1 / -1;
+            display: flex;
+            gap: 10px;
+            margin-top: 8px;
+            align-items: center;
+        }
+
+        .jobs-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .jobs-table th, .jobs-table td {
+            padding: 10px 12px;
+            text-align: left;
+            border-bottom: 1px solid #eee;
+            font-size: 14px;
+        }
+
+        .jobs-table th {
+            font-weight: 600;
+            color: #555;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .jobs-table tr:hover { background: #fafafa; }
+
+        .status-badge {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-pending { background: #fef3cd; color: #856404; }
+        .status-uploading { background: #d1ecf1; color: #0c5460; }
+        .status-queued { background: #cce5ff; color: #004085; }
+        .status-processing { background: #e2d5f1; color: #5a3d8a; }
+        .status-completed { background: #d4edda; color: #155724; }
+        .status-failed { background: #f8d7da; color: #721c24; }
+        .status-cancelled { background: #e2e3e5; color: #383d41; }
+
+        .job-id { font-family: monospace; font-size: 12px; color: #7f8c8d; }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #95a5a6;
+        }
+
+        .empty-state p { font-size: 16px; margin-bottom: 8px; }
+        .empty-state small { font-size: 13px; }
+
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+            border: none;
+            padding: 6px 14px;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+        }
+
+        .btn-danger:hover { background: #c0392b; }
+
+        .refresh-note {
+            font-size: 12px;
+            color: #95a5a6;
+            margin-left: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="tq-container">
+        <div class="tq-header">
+            <div>
+                <h1>Training Queue</h1>
+                <a href="/">Back to Studio</a>
+            </div>
+            <div>
+                <button class="btn-secondary" onclick="refreshAll()">Refresh</button>
+                <span class="refresh-note">Auto-refreshes every 30s</span>
+            </div>
+        </div>
+
+        <div class="tq-stats">
+            <div class="stat-card" id="stat-queued">
+                <div class="stat-value" id="queue-messages">-</div>
+                <div class="stat-label">Queued Messages</div>
+            </div>
+            <div class="stat-card" id="stat-inflight">
+                <div class="stat-value" id="queue-inflight">-</div>
+                <div class="stat-label">In Flight</div>
+            </div>
+            <div class="stat-card" id="stat-dlq">
+                <div class="stat-value" id="dlq-messages">-</div>
+                <div class="stat-label">Dead Letter Queue</div>
+            </div>
+            <div class="stat-card" id="stat-local">
+                <div class="stat-value" id="local-total">-</div>
+                <div class="stat-label">Total Jobs</div>
+            </div>
+        </div>
+
+        <div class="tq-section">
+            <h2>Submit Training Job</h2>
+            <div class="submit-form">
+                <div class="form-group">
+                    <label>Job Type</label>
+                    <select id="job-type">
+                        <option value="yolo-training">YOLO Object Detection</option>
+                        <option value="bearing-fault-training">Bearing Fault (Vibration)</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>YOLO Export Config (for YOLO jobs)</label>
+                    <select id="export-config-id">
+                        <option value="">-- Select config --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Vibration Tag Filter (for vibration jobs)</label>
+                    <select id="vibration-tag-filter">
+                        <option value="">-- All tags --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Export Path (for manual/custom jobs)</label>
+                    <input type="text" id="export-path" placeholder="/path/to/export/data">
+                </div>
+                <div class="form-group">
+                    <label>Model Type</label>
+                    <select id="model-type">
+                        <option value="yolov8n">YOLOv8 Nano</option>
+                        <option value="yolov8s">YOLOv8 Small</option>
+                        <option value="yolov8m">YOLOv8 Medium</option>
+                        <option value="autoencoder">Autoencoder</option>
+                        <option value="custom">Custom</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label>Epochs</label>
+                    <input type="number" id="epochs" value="100" min="1" max="10000">
+                </div>
+                <div class="form-group">
+                    <label>Labels (comma-separated, for vibration jobs)</label>
+                    <input type="text" id="labels" placeholder="healthy, outer_race, inner_race, ball">
+                </div>
+                <div class="submit-actions">
+                    <button class="btn-primary" onclick="exportAndTrain()" id="export-train-btn" style="background:#27ae60;">Export &amp; Train</button>
+                    <button onclick="submitJob()" id="submit-btn" style="background:#7f8c8d;color:white;border:none;padding:8px 16px;border-radius:4px;cursor:pointer;">Submit Only (pre-exported)</button>
+                    <div id="submit-status" style="font-size:14px;"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tq-section">
+            <h2>Job History</h2>
+            <div id="jobs-container">
+                <div class="empty-state"><p>Loading...</p></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let refreshInterval;
+
+        async function fetchJSON(url, options) {
+            const resp = await fetch(url, options);
+            return resp.json();
+        }
+
+        async function loadQueueStatus() {
+            try {
+                const data = await fetchJSON('/api/training/queue-status');
+                if (data.success) {
+                    document.getElementById('queue-messages').textContent = data.queue_messages ?? '-';
+                    document.getElementById('queue-inflight').textContent = data.queue_in_flight ?? '-';
+                    document.getElementById('dlq-messages').textContent = data.dlq_messages ?? '-';
+
+                    document.getElementById('stat-dlq').classList.toggle('danger', (data.dlq_messages || 0) > 0);
+                    document.getElementById('stat-inflight').classList.toggle('warning', (data.queue_in_flight || 0) > 0);
+                }
+            } catch (e) {
+                console.error('Failed to load queue status', e);
+            }
+        }
+
+        async function loadJobs() {
+            try {
+                const data = await fetchJSON('/api/training/jobs?limit=100');
+                if (!data.success) return;
+
+                document.getElementById('local-total').textContent = data.jobs.length;
+                const container = document.getElementById('jobs-container');
+
+                if (data.jobs.length === 0) {
+                    container.innerHTML = '<div class="empty-state"><p>No training jobs yet</p><small>Submit a job above to get started</small></div>';
+                    return;
+                }
+
+                let html = '<table class="jobs-table"><thead><tr>' +
+                    '<th>Job ID</th><th>Type</th><th>Status</th><th>Submitted</th><th>Completed</th><th>Actions</th>' +
+                    '</tr></thead><tbody>';
+
+                for (const job of data.jobs) {
+                    const submitted = job.submitted_at ? new Date(job.submitted_at + 'Z').toLocaleString() : '-';
+                    const completed = job.completed_at ? new Date(job.completed_at + 'Z').toLocaleString() : '-';
+                    const shortId = job.job_id.substring(0, 8);
+                    const errorHtml = job.error_message
+                        ? '<br><small style="color:#e74c3c;">' + escapeHtml(job.error_message) + '</small>'
+                        : '';
+
+                    const cancelBtn = (job.status === 'queued' || job.status === 'processing' || job.status === 'uploading')
+                        ? '<button class="btn-danger" onclick="cancelJob(\'' + job.job_id + '\')">Cancel</button>'
+                        : '';
+
+                    html += '<tr>' +
+                        '<td><span class="job-id" title="' + escapeHtml(job.job_id) + '">' + shortId + '...</span></td>' +
+                        '<td>' + escapeHtml(job.job_type) + '</td>' +
+                        '<td><span class="status-badge status-' + job.status + '">' + job.status + '</span>' + errorHtml + '</td>' +
+                        '<td>' + submitted + '</td>' +
+                        '<td>' + completed + '</td>' +
+                        '<td>' + cancelBtn + '</td>' +
+                        '</tr>';
+                }
+
+                html += '</tbody></table>';
+                container.innerHTML = html;
+            } catch (e) {
+                console.error('Failed to load jobs', e);
+            }
+        }
+
+        async function loadExportConfigs() {
+            try {
+                const data = await fetchJSON('/api/yolo/configs');
+                if (!data.success) return;
+
+                const select = document.getElementById('export-config-id');
+                for (const config of data.configs) {
+                    const option = document.createElement('option');
+                    option.value = config.id;
+                    option.textContent = config.config_name + ' (' + (config.last_export_count || 0) + ' annotations)';
+                    select.appendChild(option);
+                }
+            } catch (e) {
+                console.error('Failed to load export configs', e);
+            }
+        }
+
+        async function loadVibrationTags() {
+            try {
+                const data = await fetchJSON('/api/vibration/tags');
+                const select = document.getElementById('vibration-tag-filter');
+                if (data.success && data.tags) {
+                    for (const tag of data.tags) {
+                        const option = document.createElement('option');
+                        option.value = tag.tag_name;
+                        option.textContent = tag.tag_name + ' (' + tag.count + ' annotations, ' + tag.negative_count + ' negative)';
+                        select.appendChild(option);
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load vibration tags', e);
+            }
+        }
+
+        async function exportAndTrain() {
+            const btn = document.getElementById('export-train-btn');
+            const statusEl = document.getElementById('submit-status');
+            btn.disabled = true;
+            statusEl.textContent = 'Exporting data & submitting...';
+            statusEl.style.color = '#f39c12';
+
+            const jobType = document.getElementById('job-type').value;
+            const exportConfigId = document.getElementById('export-config-id').value;
+            const tagFilter = document.getElementById('vibration-tag-filter').value;
+            const modelType = document.getElementById('model-type').value;
+            const epochs = parseInt(document.getElementById('epochs').value) || 100;
+            const labelsRaw = document.getElementById('labels').value.trim();
+            const labels = labelsRaw || '';
+
+            const body = {
+                model_type: modelType,
+                epochs: epochs,
+                labels: labels
+            };
+
+            if (jobType === 'yolo-training') {
+                body.job_type = 'yolo';
+                if (exportConfigId) body.export_config_id = parseInt(exportConfigId);
+            } else if (jobType === 'bearing-fault-training') {
+                body.job_type = 'bearing-fault';
+                if (tagFilter) body.tag_filter = tagFilter;
+            } else {
+                statusEl.textContent = 'Export & Train not available for custom jobs. Use Submit Only.';
+                statusEl.style.color = '#e74c3c';
+                btn.disabled = false;
+                return;
+            }
+
+            try {
+                const data = await fetchJSON('/api/training/export-and-train', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                if (data.success) {
+                    statusEl.textContent = data.message + ' (Job: ' + (data.job?.job_id || '').substring(0, 8) + '...)';
+                    statusEl.style.color = '#27ae60';
+                    refreshAll();
+                } else {
+                    statusEl.textContent = 'Error: ' + data.error;
+                    statusEl.style.color = '#e74c3c';
+                }
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e.message;
+                statusEl.style.color = '#e74c3c';
+            }
+
+            btn.disabled = false;
+        }
+
+        async function submitJob() {
+            const btn = document.getElementById('submit-btn');
+            const statusEl = document.getElementById('submit-status');
+            btn.disabled = true;
+            statusEl.textContent = 'Submitting...';
+            statusEl.style.color = '#f39c12';
+
+            const jobType = document.getElementById('job-type').value;
+            const exportConfigId = document.getElementById('export-config-id').value;
+            const exportPath = document.getElementById('export-path').value.trim();
+            const modelType = document.getElementById('model-type').value;
+            const epochs = parseInt(document.getElementById('epochs').value) || 100;
+            const labelsRaw = document.getElementById('labels').value.trim();
+            const labels = labelsRaw ? labelsRaw.split(',').map(l => l.trim()).filter(Boolean) : [];
+
+            const body = {
+                job_type: jobType,
+                config: { model_type: modelType, epochs: epochs }
+            };
+
+            if (labels.length > 0) body.config.labels = labels;
+            if (exportConfigId) body.export_config_id = parseInt(exportConfigId);
+            if (exportPath) body.export_path = exportPath;
+
+            try {
+                const data = await fetchJSON('/api/training/submit', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(body)
+                });
+
+                if (data.success) {
+                    statusEl.textContent = 'Submitted: ' + data.job_id.substring(0, 8) + '...';
+                    statusEl.style.color = '#27ae60';
+                    refreshAll();
+                } else {
+                    statusEl.textContent = 'Error: ' + data.error;
+                    statusEl.style.color = '#e74c3c';
+                }
+            } catch (e) {
+                statusEl.textContent = 'Error: ' + e.message;
+                statusEl.style.color = '#e74c3c';
+            }
+
+            btn.disabled = false;
+        }
+
+        async function cancelJob(jobId) {
+            if (!confirm('Cancel this training job?')) return;
+            try {
+                await fetchJSON('/api/training/jobs/' + jobId + '/cancel', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                refreshAll();
+            } catch (e) {
+                alert('Failed to cancel job: ' + e.message);
+            }
+        }
+
+        function escapeHtml(str) {
+            if (!str) return '';
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function refreshAll() {
+            loadQueueStatus();
+            loadJobs();
+        }
+
+        loadExportConfigs();
+        loadVibrationTags();
+        refreshAll();
+        refreshInterval = setInterval(refreshAll, 30000);
+    </script>
+</body>
+</html>

@@ -1,0 +1,753 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Topology - Groundtruth Studio</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        .topology-container {
+            max-width: 1600px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+
+        .topology-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-card .number {
+            font-size: 32px;
+            font-weight: bold;
+            color: #4CAF50;
+        }
+
+        .stat-card .label {
+            font-size: 14px;
+            color: #aaa;
+            margin-top: 5px;
+        }
+
+        .content-grid {
+            display: grid;
+            grid-template-columns: 1fr 400px;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .graph-panel {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            min-height: 600px;
+        }
+
+        .sidebar-panel {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .sidebar-panel h3 {
+            margin-top: 0;
+            border-bottom: 1px solid #444;
+            padding-bottom: 10px;
+        }
+
+        .person-list {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+
+        .person-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: #1a1a1a;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .person-item:hover {
+            background: #333;
+        }
+
+        .person-item.active {
+            background: #3a4a3a;
+            border-left: 3px solid #4CAF50;
+        }
+
+        .transition-list {
+            max-height: 300px;
+            overflow-y: auto;
+        }
+
+        .transition-item {
+            padding: 8px;
+            margin: 5px 0;
+            background: #1a1a1a;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .transition-item .camera-path {
+            color: #4CAF50;
+            font-weight: 500;
+        }
+
+        .transition-item .time {
+            color: #666;
+            font-size: 11px;
+        }
+
+        .suggestions-panel {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #444;
+        }
+
+        .suggestion-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: #1a1a1a;
+            border-radius: 4px;
+            border-left: 3px solid #FFA500;
+        }
+
+        .suggestion-item .confidence {
+            display: inline-block;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            background: #FFA500;
+            color: #000;
+            font-weight: bold;
+        }
+
+        .suggestion-item .reasoning {
+            font-size: 11px;
+            color: #888;
+            margin-top: 5px;
+        }
+
+        .suggestion-item button {
+            margin-top: 8px;
+            padding: 4px 8px;
+            font-size: 11px;
+        }
+
+        #topology-graph {
+            width: 100%;
+            height: 600px;
+        }
+
+        .node circle {
+            stroke: #4CAF50;
+            stroke-width: 2px;
+        }
+
+        .node text {
+            fill: #fff;
+            font-size: 12px;
+            pointer-events: none;
+        }
+
+        .link {
+            stroke: #666;
+            stroke-width: 2px;
+            marker-end: url(#arrowhead);
+        }
+
+        .link.highlighted {
+            stroke: #4CAF50;
+            stroke-width: 3px;
+        }
+
+        .link-label {
+            fill: #aaa;
+            font-size: 10px;
+            text-anchor: middle;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        /* Mobile Responsive Styles */
+        @media (max-width: 1024px) {
+            .topology-container {
+                padding: 15px;
+            }
+
+            .content-grid {
+                grid-template-columns: 1fr;
+                gap: 15px;
+            }
+
+            .sidebar-panel {
+                max-height: none;
+            }
+
+            .person-list {
+                max-height: 300px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .topology-container {
+                padding: 10px;
+            }
+
+            .topology-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 15px;
+            }
+
+            .topology-header h1 {
+                font-size: 22px;
+            }
+
+            .topology-header a {
+                padding: 8px 16px;
+                font-size: 14px;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+            }
+
+            .stat-card {
+                padding: 15px;
+            }
+
+            .stat-card .number {
+                font-size: 26px;
+            }
+
+            .stat-card .label {
+                font-size: 12px;
+            }
+
+            .content-grid {
+                grid-template-columns: 1fr;
+                gap: 15px;
+            }
+
+            .graph-panel {
+                min-height: 400px;
+                padding: 15px;
+            }
+
+            .sidebar-panel {
+                padding: 15px;
+            }
+
+            .person-list {
+                max-height: 300px;
+            }
+
+            .person-item {
+                padding: 12px;
+                font-size: 15px;
+            }
+
+            .transition-list {
+                max-height: 250px;
+            }
+
+            .transition-item {
+                padding: 10px;
+                font-size: 13px;
+            }
+
+            .suggestions-panel {
+                padding: 15px;
+            }
+
+            .suggestion-item {
+                padding: 12px;
+                font-size: 14px;
+            }
+
+            .suggestion-item button {
+                padding: 8px 12px;
+                font-size: 13px;
+            }
+
+            /* SVG adjustments */
+            svg {
+                max-width: 100%;
+                height: auto;
+            }
+
+            .node text {
+                font-size: 12px;
+            }
+
+            .link-label {
+                font-size: 9px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .topology-container {
+                padding: 8px;
+            }
+
+            .topology-header h1 {
+                font-size: 20px;
+            }
+
+            .stats-grid {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+
+            .stat-card {
+                padding: 12px;
+            }
+
+            .stat-card .number {
+                font-size: 22px;
+            }
+
+            .graph-panel {
+                min-height: 300px;
+                padding: 10px;
+            }
+
+            .sidebar-panel {
+                padding: 10px;
+            }
+
+            .person-list {
+                max-height: 250px;
+            }
+
+            .person-item {
+                padding: 10px;
+                font-size: 14px;
+            }
+
+            .transition-item {
+                padding: 8px;
+                font-size: 12px;
+            }
+
+            .suggestion-item {
+                padding: 10px;
+                font-size: 13px;
+            }
+
+            .node text {
+                font-size: 10px;
+            }
+
+            .link-label {
+                font-size: 8px;
+            }
+
+            .empty-state {
+                padding: 20px;
+                font-size: 14px;
+            }
+        }
+
+        /* Landscape mode optimization */
+        @media (max-width: 768px) and (orientation: landscape) {
+            .graph-panel {
+                min-height: 350px;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+
+        /* Touch device optimization */
+        @media (hover: none) and (pointer: coarse) {
+            .person-item,
+            .suggestion-item button,
+            button {
+                min-height: 44px;
+            }
+
+            .person-item {
+                padding: 14px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+            }
+
+            .person-item:hover {
+                background: #1a1a1a;
+            }
+
+            /* Make nodes easier to drag on touch devices */
+            .node circle {
+                r: 12;
+            }
+
+            /* Remove hover effects that don't work on touch */
+            .node:hover circle {
+                fill: #4CAF50;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="topology-container">
+        <div class="topology-header">
+            <div>
+                <h1>📹 Camera Topology</h1>
+                <p style="color: #666; margin-top: 5px;">Automatically learned from person tracking data</p>
+            </div>
+            <div>
+                <a href="/" class="btn btn-secondary">← Back to Library</a>
+            </div>
+        </div>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="number" id="stat-cameras">0</div>
+                <div class="label">Cameras</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="stat-transitions">0</div>
+                <div class="label">Transitions</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="stat-people">0</div>
+                <div class="label">Tracked People</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="stat-paths">0</div>
+                <div class="label">Known Paths</div>
+            </div>
+        </div>
+
+        <div class="content-grid">
+            <div class="graph-panel">
+                <h3>Camera Network Graph</h3>
+                <div id="topology-graph"></div>
+            </div>
+
+            <div class="sidebar-panel">
+                <h3>People</h3>
+                <div class="person-list" id="person-list">
+                    <div class="empty-state">Loading...</div>
+                </div>
+
+                <div id="person-details" style="display: none;">
+                    <h3 style="margin-top: 20px;">Movement Path</h3>
+                    <div class="transition-list" id="transition-list"></div>
+
+                    <div class="suggestions-panel" id="suggestions-panel">
+                        <h3>Suggested Matches</h3>
+                        <p style="font-size: 12px; color: #666;">Unassigned detections that might be this person</p>
+                        <div id="suggestions-list"></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let graphData = null;
+        let selectedPerson = null;
+        let svg, simulation;
+
+        // Load camera topology
+        async function loadTopology() {
+            try {
+                const response = await fetch('/api/camera-topology/graph');
+                const data = await response.json();
+
+                if (data.success) {
+                    graphData = data.graph;
+                    updateStats();
+                    renderGraph();
+                    await loadPeople();
+                }
+            } catch (error) {
+                console.error('Error loading topology:', error);
+            }
+        }
+
+        function updateStats() {
+            document.getElementById('stat-cameras').textContent = graphData.nodes.length;
+            document.getElementById('stat-transitions').textContent = graphData.total_transitions;
+            document.getElementById('stat-people').textContent = graphData.unique_people;
+            document.getElementById('stat-paths').textContent = graphData.edges.length;
+        }
+
+        async function loadPeople() {
+            try {
+                const response = await fetch('/api/person-names/recent?limit=100');
+                const data = await response.json();
+
+                if (data.success && data.names.length > 0) {
+                    const container = document.getElementById('person-list');
+                    container.innerHTML = data.names.map(name => `
+                        <div class="person-item" onclick="selectPerson('${name}')">
+                            ${name}
+                        </div>
+                    `).join('');
+                } else {
+                    document.getElementById('person-list').innerHTML = '<div class="empty-state">No tracked people yet</div>';
+                }
+            } catch (error) {
+                console.error('Error loading people:', error);
+            }
+        }
+
+        async function selectPerson(name) {
+            selectedPerson = name;
+
+            // Update active state
+            document.querySelectorAll('.person-item').forEach(item => {
+                item.classList.remove('active');
+                if (item.textContent.trim() === name) {
+                    item.classList.add('active');
+                }
+            });
+
+            // Load person's path
+            try {
+                const response = await fetch(`/api/camera-topology/person/${encodeURIComponent(name)}/path`);
+                const data = await response.json();
+
+                if (data.success) {
+                    displayPersonPath(data.path);
+                    highlightPersonPath(data.path);
+                }
+            } catch (error) {
+                console.error('Error loading person path:', error);
+            }
+
+            // Load suggestions
+            loadSuggestions(name);
+
+            document.getElementById('person-details').style.display = 'block';
+        }
+
+        function displayPersonPath(path) {
+            const container = document.getElementById('transition-list');
+
+            if (path.length === 0) {
+                container.innerHTML = '<div class="empty-state">No transitions recorded</div>';
+                return;
+            }
+
+            container.innerHTML = path.map(step => `
+                <div class="transition-item">
+                    <div class="camera-path">
+                        ${step.from_camera ? `${step.from_camera} → ` : ''}${step.camera}
+                    </div>
+                    ${step.transition_time_seconds ? `
+                        <div class="time">Transit time: ${step.transition_time_seconds.toFixed(1)}s</div>
+                    ` : ''}
+                </div>
+            `).join('');
+        }
+
+        async function loadSuggestions(name) {
+            try {
+                const response = await fetch('/api/camera-topology/suggest-links', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({person_name: name, time_window_seconds: 300})
+                });
+                const data = await response.json();
+
+                if (data.success && data.suggestions.length > 0) {
+                    const container = document.getElementById('suggestions-list');
+                    container.innerHTML = data.suggestions.slice(0, 5).map(sug => `
+                        <div class="suggestion-item">
+                            <div>
+                                <span class="confidence">${(sug.confidence * 100).toFixed(0)}%</span>
+                                ${sug.unknown_camera} @ ${sug.unknown_timestamp.toFixed(1)}s
+                            </div>
+                            <div class="reasoning">${sug.reasoning.join(', ')}</div>
+                            <button class="btn btn-primary btn-small" onclick="assignSuggestion(${sug.unknown_detection_id}, '${name}')">
+                                Assign to ${name}
+                            </button>
+                        </div>
+                    `).join('');
+                } else {
+                    document.getElementById('suggestions-list').innerHTML = '<div class="empty-state">No suggestions</div>';
+                }
+            } catch (error) {
+                console.error('Error loading suggestions:', error);
+            }
+        }
+
+        async function assignSuggestion(detectionId, name) {
+            try {
+                const response = await fetch('/api/person-detections/assign-name', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({detection_ids: [detectionId], person_name: name})
+                });
+                const data = await response.json();
+
+                if (data.success) {
+                    alert('Assigned successfully!');
+                    // Reload topology and person data
+                    await loadTopology();
+                    selectPerson(name);
+                }
+            } catch (error) {
+                console.error('Error assigning:', error);
+                alert('Error assigning detection');
+            }
+        }
+
+        function highlightPersonPath(path) {
+            // Highlight edges in the graph for this person's path
+            if (!svg) return;
+
+            // Reset all links
+            svg.selectAll('.link').classed('highlighted', false);
+
+            // Highlight path links
+            for (let i = 0; i < path.length - 1; i++) {
+                const from = path[i].camera;
+                const to = path[i + 1].camera;
+
+                svg.selectAll('.link')
+                    .filter(d => d.source.id === from && d.target.id === to)
+                    .classed('highlighted', true);
+            }
+        }
+
+        function renderGraph() {
+            const container = document.getElementById('topology-graph');
+            const width = container.offsetWidth;
+            const height = 600;
+
+            // Clear existing
+            container.innerHTML = '';
+
+            if (graphData.nodes.length === 0) {
+                container.innerHTML = '<div class="empty-state">No camera connections yet.<br>Start tagging the same person across multiple videos!</div>';
+                return;
+            }
+
+            svg = d3.select('#topology-graph')
+                .append('svg')
+                .attr('width', width)
+                .attr('height', height);
+
+            // Add arrow marker
+            svg.append('defs').append('marker')
+                .attr('id', 'arrowhead')
+                .attr('markerWidth', 10)
+                .attr('markerHeight', 10)
+                .attr('refX', 20)
+                .attr('refY', 3)
+                .attr('orient', 'auto')
+                .append('polygon')
+                .attr('points', '0 0, 10 3, 0 6')
+                .style('fill', '#666');
+
+            // Create force simulation
+            simulation = d3.forceSimulation(graphData.nodes)
+                .force('link', d3.forceLink(graphData.edges).id(d => d.id).distance(150))
+                .force('charge', d3.forceManyBody().strength(-500))
+                .force('center', d3.forceCenter(width / 2, height / 2));
+
+            // Draw links
+            const link = svg.append('g')
+                .selectAll('line')
+                .data(graphData.edges)
+                .join('line')
+                .attr('class', 'link');
+
+            // Draw link labels
+            const linkLabel = svg.append('g')
+                .selectAll('text')
+                .data(graphData.edges)
+                .join('text')
+                .attr('class', 'link-label')
+                .text(d => `${d.transition_count} (${d.avg_time_seconds.toFixed(0)}s)`);
+
+            // Draw nodes
+            const node = svg.append('g')
+                .selectAll('g')
+                .data(graphData.nodes)
+                .join('g')
+                .attr('class', 'node')
+                .call(d3.drag()
+                    .on('start', dragstarted)
+                    .on('drag', dragged)
+                    .on('end', dragended));
+
+            node.append('circle')
+                .attr('r', d => 10 + (d.detection_count / 2))
+                .attr('fill', '#1a1a1a');
+
+            node.append('text')
+                .attr('dx', 15)
+                .attr('dy', 4)
+                .text(d => `${d.label} (${d.detection_count})`);
+
+            // Update positions
+            simulation.on('tick', () => {
+                link
+                    .attr('x1', d => d.source.x)
+                    .attr('y1', d => d.source.y)
+                    .attr('x2', d => d.target.x)
+                    .attr('y2', d => d.target.y);
+
+                linkLabel
+                    .attr('x', d => (d.source.x + d.target.x) / 2)
+                    .attr('y', d => (d.source.y + d.target.y) / 2);
+
+                node.attr('transform', d => `translate(${d.x},${d.y})`);
+            });
+
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', loadTopology);
+    </script>
+</body>
+</html>

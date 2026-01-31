@@ -1,0 +1,673 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Person Name Manager - Groundtruth Studio</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .person-manager-container {
+            max-width: 1400px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+
+        .manager-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .manager-header h1 {
+            margin: 0;
+            font-size: 28px;
+        }
+
+        .stats-panel {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: #2a2a2a;
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-card .number {
+            font-size: 36px;
+            font-weight: bold;
+            color: #4CAF50;
+            margin-bottom: 5px;
+        }
+
+        .stat-card .label {
+            font-size: 14px;
+            color: #aaa;
+        }
+
+        .filter-bar {
+            background: #2a2a2a;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+        }
+
+        .filter-bar input[type="text"] {
+            flex: 1;
+            padding: 8px 12px;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            color: #fff;
+            border-radius: 4px;
+        }
+
+        .filter-bar select {
+            padding: 8px 12px;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            color: #fff;
+            border-radius: 4px;
+        }
+
+        .person-list {
+            display: flex;
+            gap: 20px;
+        }
+
+        .person-names-panel {
+            width: 300px;
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 15px;
+            max-height: 700px;
+            overflow-y: auto;
+        }
+
+        .person-names-panel h3 {
+            margin-top: 0;
+            font-size: 18px;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #444;
+        }
+
+        .person-name-item {
+            padding: 10px;
+            margin: 5px 0;
+            background: #1a1a1a;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            transition: background 0.2s;
+        }
+
+        .person-name-item:hover {
+            background: #333;
+        }
+
+        .person-name-item.active {
+            background: #3a4a3a;
+            border-left: 3px solid #4CAF50;
+        }
+
+        .person-name-item .name {
+            font-weight: 500;
+        }
+
+        .person-name-item .count {
+            background: #444;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 12px;
+        }
+
+        .detections-panel {
+            flex: 1;
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .detections-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid #444;
+        }
+
+        .bulk-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .detection-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 15px;
+        }
+
+        .detection-card {
+            background: #1a1a1a;
+            border-radius: 8px;
+            overflow: hidden;
+            position: relative;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+
+        .detection-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+
+        .detection-card.selected {
+            outline: 3px solid #4CAF50;
+        }
+
+        .detection-checkbox {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            z-index: 10;
+            width: 20px;
+            height: 20px;
+            cursor: pointer;
+        }
+
+        .detection-thumbnail {
+            width: 100%;
+            height: 150px;
+            background: #000;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .detection-thumbnail img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .bbox-overlay {
+            position: absolute;
+            border: 2px solid #4CAF50;
+            pointer-events: none;
+        }
+
+        .detection-info {
+            padding: 12px;
+        }
+
+        .detection-info .video-title {
+            font-size: 13px;
+            color: #aaa;
+            margin-bottom: 5px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .detection-info .timestamp {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .detection-info .tags {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 5px;
+        }
+
+        .detection-info .tag {
+            background: #333;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 11px;
+            color: #aaa;
+        }
+
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.8);
+            z-index: 1000;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal.show {
+            display: flex;
+        }
+
+        .modal-content {
+            background: #2a2a2a;
+            padding: 30px;
+            border-radius: 8px;
+            max-width: 500px;
+            width: 90%;
+        }
+
+        .modal-content h3 {
+            margin-top: 0;
+        }
+
+        .modal-content input,
+        .modal-content select {
+            width: 100%;
+            padding: 10px;
+            margin: 10px 0;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            color: #fff;
+            border-radius: 4px;
+            box-sizing: border-box;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+            margin-top: 20px;
+        }
+
+        .btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: background 0.2s;
+        }
+
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-primary:hover {
+            background: #45a049;
+        }
+
+        .btn-secondary {
+            background: #555;
+            color: white;
+        }
+
+        .btn-secondary:hover {
+            background: #666;
+        }
+
+        .btn-danger {
+            background: #f44336;
+            color: white;
+        }
+
+        .btn-danger:hover {
+            background: #da190b;
+        }
+
+        .btn-small {
+            padding: 4px 8px;
+            font-size: 12px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #666;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .name-autocomplete {
+            position: relative;
+        }
+
+        .autocomplete-suggestions {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            border-top: none;
+            max-height: 200px;
+            overflow-y: auto;
+            z-index: 100;
+            display: none;
+        }
+
+        .autocomplete-suggestions.show {
+            display: block;
+        }
+
+        .autocomplete-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            border-bottom: 1px solid #333;
+        }
+
+        .autocomplete-item:hover {
+            background: #333;
+        }
+
+        .autocomplete-item .count {
+            float: right;
+            color: #666;
+            font-size: 11px;
+        }
+
+        /* Mobile Responsive Styles */
+        @media (max-width: 1024px) {
+            .person-list {
+                flex-direction: column;
+            }
+
+            .person-names-panel {
+                width: 100%;
+                max-height: 300px;
+                margin-bottom: 20px;
+            }
+
+            .detection-grid {
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            }
+        }
+
+        @media (max-width: 768px) {
+            .person-manager-container {
+                padding: 10px;
+            }
+
+            .manager-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 15px;
+            }
+
+            .manager-header h1 {
+                font-size: 22px;
+            }
+
+            .manager-header a {
+                padding: 8px 16px;
+                font-size: 14px;
+            }
+
+            .stats-panel {
+                grid-template-columns: repeat(2, 1fr);
+                gap: 10px;
+            }
+
+            .stat-card {
+                padding: 15px;
+            }
+
+            .stat-card .number {
+                font-size: 28px;
+            }
+
+            .stat-card .label {
+                font-size: 12px;
+            }
+
+            .filter-bar {
+                flex-direction: column;
+                gap: 10px;
+            }
+
+            .filter-bar input[type="text"],
+            .filter-bar select,
+            .filter-bar button {
+                width: 100%;
+            }
+
+            .person-list {
+                flex-direction: column;
+            }
+
+            .person-names-panel {
+                width: 100%;
+                max-height: 250px;
+                margin-bottom: 15px;
+            }
+
+            .detections-panel {
+                padding: 15px;
+            }
+
+            .detections-header {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 10px;
+            }
+
+            .detections-header h3 {
+                margin-bottom: 10px;
+            }
+
+            .bulk-actions {
+                flex-direction: column;
+                width: 100%;
+                gap: 8px;
+            }
+
+            .bulk-actions button {
+                width: 100%;
+                padding: 10px;
+            }
+
+            .detection-grid {
+                grid-template-columns: 1fr;
+            }
+
+            .detection-card {
+                max-width: 100%;
+            }
+
+            .detection-thumbnail {
+                height: 200px;
+            }
+
+            .person-name-item {
+                padding: 12px;
+                font-size: 15px;
+            }
+
+            .person-name-item .count {
+                font-size: 13px;
+                padding: 3px 10px;
+            }
+
+            .modal-dialog {
+                margin: 10px;
+                max-width: calc(100% - 20px);
+            }
+
+            .modal-body {
+                padding: 15px;
+            }
+
+            .modal-footer {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .modal-footer button {
+                width: 100%;
+            }
+
+            .detection-checkbox {
+                width: 24px;
+                height: 24px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .person-manager-container {
+                padding: 8px;
+            }
+
+            .manager-header h1 {
+                font-size: 20px;
+            }
+
+            .stats-panel {
+                grid-template-columns: 1fr;
+                gap: 8px;
+            }
+
+            .stat-card {
+                padding: 12px;
+            }
+
+            .stat-card .number {
+                font-size: 24px;
+            }
+
+            .person-names-panel {
+                max-height: 200px;
+                padding: 10px;
+            }
+
+            .detections-panel {
+                padding: 10px;
+            }
+
+            .detection-thumbnail {
+                height: 180px;
+            }
+        }
+
+        /* Touch device optimization */
+        @media (hover: none) and (pointer: coarse) {
+            .person-name-item,
+            .detection-card,
+            .detection-checkbox,
+            button {
+                min-height: 44px;
+            }
+
+            .person-name-item {
+                padding: 14px;
+            }
+
+            .detection-checkbox {
+                width: 28px;
+                height: 28px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="person-manager-container">
+        <div class="manager-header">
+            <div>
+                <h1>👤 Person Name Manager</h1>
+                <p style="color: #666; margin-top: 5px;">Manage person identifications across all annotations</p>
+            </div>
+            <div>
+                <a href="/" class="btn btn-secondary">← Back to Library</a>
+            </div>
+        </div>
+
+        <div class="stats-panel">
+            <div class="stat-card">
+                <div class="number" id="stat-total-detections">0</div>
+                <div class="label">Total Detections</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="stat-named-people">0</div>
+                <div class="label">Named People</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="stat-unknown">0</div>
+                <div class="label">Unknown</div>
+            </div>
+            <div class="stat-card">
+                <div class="number" id="stat-videos">0</div>
+                <div class="label">Videos with People</div>
+            </div>
+        </div>
+
+        <div class="filter-bar">
+            <input type="text" id="search-filter" placeholder="Search detections...">
+            <select id="sort-filter">
+                <option value="recent">Most Recent</option>
+                <option value="oldest">Oldest First</option>
+                <option value="video">By Video</option>
+                <option value="timestamp">By Timestamp</option>
+            </select>
+        </div>
+
+        <div class="person-list">
+            <div class="person-names-panel">
+                <h3>People</h3>
+                <div id="person-names-list">
+                    <div class="loading">Loading...</div>
+                </div>
+            </div>
+
+            <div class="detections-panel">
+                <div class="detections-header">
+                    <div>
+                        <h3 id="detections-title">All Detections</h3>
+                        <p id="detections-subtitle" style="color: #666; font-size: 13px; margin: 5px 0 0 0;"></p>
+                    </div>
+                    <div class="bulk-actions">
+                        <button id="select-all-btn" class="btn btn-secondary btn-small">Select All</button>
+                        <button id="bulk-assign-btn" class="btn btn-primary btn-small" disabled>Assign Name</button>
+                        <button id="bulk-unassign-btn" class="btn btn-secondary btn-small" disabled>Unassign</button>
+                    </div>
+                </div>
+                <div id="detections-grid" class="detection-grid">
+                    <div class="loading">Loading detections...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Assign Name Modal -->
+    <div id="assign-modal" class="modal">
+        <div class="modal-content">
+            <h3>Assign Person Name</h3>
+            <p style="color: #aaa; font-size: 13px;">Assigning to <span id="assign-count">0</span> detection(s)</p>
+            <div class="name-autocomplete">
+                <input type="text" id="assign-name-input" placeholder="Enter person name">
+                <div id="assign-name-suggestions" class="autocomplete-suggestions"></div>
+            </div>
+            <div class="modal-actions">
+                <button class="btn btn-secondary" onclick="closeAssignModal()">Cancel</button>
+                <button class="btn btn-primary" onclick="confirmAssignName()">Assign</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/person-manager.js"></script>
+</body>
+</html>

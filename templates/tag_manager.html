@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groundtruth Studio - Tag Manager</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="/static/css/tag_manager.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>Groundtruth Studio - Tag Manager</h1>
+            <div>
+                <a href="/" class="btn-secondary">← Back to Library</a>
+            </div>
+        </header>
+
+        <div class="manager-content">
+            <div class="actions-bar">
+                <button onclick="showAddModal()" class="btn-primary">+ Add Tag Suggestion</button>
+                <button onclick="seedDefaults()" class="btn-secondary">Seed Default Tags</button>
+            </div>
+
+            <div class="categories-section">
+                <h2>Categories</h2>
+                <div id="categories-list" class="categories-list">
+                    <div class="loading">Loading categories...</div>
+                </div>
+            </div>
+
+            <div class="suggestions-section">
+                <h2 id="current-category-title">All Tag Suggestions</h2>
+                <div id="suggestions-list" class="suggestions-list">
+                    <div class="loading">Loading suggestions...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Add/Edit Modal -->
+    <div id="suggestion-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <h3 id="modal-title">Add Tag Suggestion</h3>
+
+            <div class="form-group">
+                <label>Category</label>
+                <input type="text" id="modal-category" placeholder="e.g., power_loading, license_plate, person_face" list="category-suggestions">
+                <datalist id="category-suggestions"></datalist>
+            </div>
+
+            <div class="form-group">
+                <label>Tag Text</label>
+                <input type="text" id="modal-tag-text" placeholder="e.g., Visually similar to real violation">
+            </div>
+
+            <div class="form-group">
+                <label>
+                    <input type="checkbox" id="modal-is-negative"> Negative Example Tag
+                </label>
+                <p class="help-text-small">Check this if the tag is for marking negative examples</p>
+            </div>
+
+            <div class="form-group">
+                <label>Description (optional)</label>
+                <textarea id="modal-description" rows="3" placeholder="Describe when this tag should be used..."></textarea>
+            </div>
+
+            <div class="form-group">
+                <label>Sort Order (optional)</label>
+                <input type="number" id="modal-sort-order" value="0" min="0">
+                <p class="help-text-small">Lower numbers appear first in the list</p>
+            </div>
+
+            <input type="hidden" id="modal-suggestion-id">
+
+            <div class="modal-actions">
+                <button onclick="saveSuggestion()" class="btn-primary" id="save-btn">Save</button>
+                <button onclick="closeModal()" class="btn-secondary">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/tag_manager.js"></script>
+</body>
+</html>

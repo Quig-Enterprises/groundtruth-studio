@@ -1,0 +1,237 @@
+/* Dynamic Tag Form Styles */
+
+.tag-form-section {
+    margin-bottom: 15px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.tag-form-section-header {
+    background: #34495e;
+    color: white;
+    padding: 10px 15px;
+    cursor: pointer;
+    user-select: none;
+    font-weight: 600;
+    position: relative;
+}
+
+.tag-form-section-header::after {
+    content: '▼';
+    position: absolute;
+    right: 15px;
+    transition: transform 0.2s;
+}
+
+.tag-form-section-header.collapsed::after {
+    transform: rotate(-90deg);
+}
+
+.tag-form-section-header:hover {
+    background: #2c3e50;
+}
+
+.tag-form-section-content {
+    padding: 15px;
+    background: white;
+    max-height: 1000px;
+    overflow: hidden;
+    transition: max-height 0.3s ease-out, padding 0.3s ease-out;
+}
+
+.tag-form-section-content.collapsed {
+    max-height: 0;
+    padding-top: 0;
+    padding-bottom: 0;
+}
+
+/* Form Groups */
+.form-group .required {
+    color: #e74c3c;
+    font-weight: bold;
+}
+
+.tag-form-dropdown {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    background: white;
+}
+
+.tag-form-dropdown:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+}
+
+.tag-form-text,
+.tag-form-textarea {
+    width: 100%;
+    padding: 8px 12px;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    font-family: inherit;
+}
+
+.tag-form-textarea {
+    resize: vertical;
+    min-height: 80px;
+}
+
+.tag-form-text:focus,
+.tag-form-textarea:focus {
+    outline: none;
+    border-color: #3498db;
+    box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
+}
+
+/* Checkbox Group */
+.checkbox-group {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-top: 8px;
+}
+
+.checkbox-item {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.tag-form-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+}
+
+.checkbox-item label {
+    cursor: pointer;
+    margin: 0;
+    font-weight: normal;
+    font-size: 14px;
+}
+
+.checkbox-item label:hover {
+    color: #3498db;
+}
+
+/* Help Text */
+.help-text-small {
+    font-size: 12px;
+    color: #7f8c8d;
+    margin-top: 5px;
+    margin-bottom: 5px;
+    font-style: italic;
+}
+
+/* Responsive Design */
+@media (max-width: 768px) {
+    .tag-form-section {
+        margin-bottom: 12px;
+    }
+
+    .tag-form-section-header {
+        padding: 12px 15px;
+        font-size: 15px;
+    }
+
+    .tag-form-section-content {
+        padding: 12px;
+    }
+
+    .tag-form-dropdown,
+    .tag-form-text,
+    .tag-form-textarea {
+        padding: 10px;
+        font-size: 15px;
+    }
+
+    .tag-form-textarea {
+        min-height: 100px;
+    }
+
+    .checkbox-group {
+        gap: 10px;
+    }
+
+    .checkbox-item {
+        padding: 4px 0;
+    }
+
+    .tag-form-checkbox {
+        width: 22px;
+        height: 22px;
+    }
+
+    .checkbox-item label {
+        font-size: 15px;
+    }
+
+    .help-text-small {
+        font-size: 13px;
+    }
+
+    .form-group {
+        margin-bottom: 12px;
+    }
+}
+
+@media (max-width: 480px) {
+    .tag-form-section-header {
+        padding: 10px 12px;
+        font-size: 14px;
+    }
+
+    .tag-form-section-content {
+        padding: 10px;
+    }
+
+    .tag-form-dropdown,
+    .tag-form-text,
+    .tag-form-textarea {
+        font-size: 14px;
+    }
+
+    .checkbox-item label {
+        font-size: 14px;
+    }
+}
+
+/* Touch device optimization */
+@media (hover: none) and (pointer: coarse) {
+    .tag-form-section-header {
+        padding: 14px 15px;
+        min-height: 44px;
+    }
+
+    .tag-form-checkbox {
+        width: 24px;
+        height: 24px;
+    }
+
+    .checkbox-item {
+        padding: 8px 0;
+        min-height: 44px;
+    }
+
+    .tag-form-dropdown,
+    .tag-form-text,
+    .tag-form-textarea {
+        padding: 12px;
+        font-size: 16px;
+    }
+
+    /* Remove hover effects */
+    .tag-form-section-header:hover {
+        background: #34495e;
+    }
+
+    .checkbox-item label:hover {
+        color: inherit;
+    }
+}

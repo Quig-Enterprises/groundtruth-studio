@@ -1,0 +1,544 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sync Settings - Groundtruth Studio</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .sync-container {
+            max-width: 1200px;
+            margin: 20px auto;
+            padding: 20px;
+        }
+
+        .sync-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 30px;
+        }
+
+        .sync-section {
+            background: white;
+            border-radius: 8px;
+            padding: 25px;
+            margin-bottom: 25px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .sync-section h2 {
+            margin-top: 0;
+            color: #2c3e50;
+            border-bottom: 2px solid #3498db;
+            padding-bottom: 10px;
+        }
+
+        .status-indicator {
+            display: inline-block;
+            padding: 6px 16px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+        }
+
+        .status-configured {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-not-configured {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: 500;
+            color: #2c3e50;
+        }
+
+        .form-group input[type="text"],
+        .form-group input[type="password"],
+        .form-group input[type="number"] {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 20px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .stat-card {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 6px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-size: 28px;
+            font-weight: bold;
+            color: #3498db;
+        }
+
+        .stat-label {
+            font-size: 13px;
+            color: #6c757d;
+            margin-top: 5px;
+        }
+
+        .history-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .history-table th,
+        .history-table td {
+            padding: 10px;
+            text-align: left;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .history-table th {
+            background: #f8f9fa;
+            font-weight: 600;
+            color: #2c3e50;
+        }
+
+        .sync-status-running {
+            color: #ffc107;
+        }
+
+        .sync-status-completed {
+            color: #28a745;
+        }
+
+        .sync-status-failed {
+            color: #dc3545;
+        }
+
+        @media (max-width: 768px) {
+            .sync-container {
+                padding: 10px;
+            }
+
+            .sync-section {
+                padding: 15px;
+            }
+
+            .button-group {
+                flex-direction: column;
+            }
+
+            .button-group button {
+                width: 100%;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="sync-container">
+        <div class="sync-header">
+            <div>
+                <h1>Sync Settings</h1>
+                <p style="color: #6c757d;">Configure external data sources</p>
+            </div>
+            <a href="/" class="btn-secondary">← Back to Library</a>
+        </div>
+
+        <!-- EcoEye Section -->
+        <div class="sync-section">
+            <h2>EcoEye Alerts (alerts.ecoeyetech.com)</h2>
+
+            <div style="margin-bottom: 20px;">
+                <span id="ecoeye-status" class="status-indicator">Checking...</span>
+            </div>
+
+            <div class="form-group">
+                <label>API Key</label>
+                <input type="text" id="ecoeye-api-key" placeholder="Enter API key">
+            </div>
+
+            <div class="form-group">
+                <label>API Secret</label>
+                <input type="password" id="ecoeye-api-secret" placeholder="Enter API secret">
+            </div>
+
+            <div class="button-group">
+                <button onclick="saveEcoEyeCredentials()" class="btn-primary">Save Credentials</button>
+                <button onclick="testEcoEyeConnection()" class="btn-secondary">Test Connection</button>
+                <button onclick="syncEcoEyeAlerts()" class="btn-secondary">Sync Alerts</button>
+                <button onclick="downloadEcoEyeVideos()" class="btn-secondary">Download Videos</button>
+            </div>
+
+            <div id="ecoeye-stats" class="stats-grid" style="display: none;">
+                <div class="stat-card">
+                    <div class="stat-number" id="stat-total-alerts">0</div>
+                    <div class="stat-label">Total Alerts</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="stat-with-video">0</div>
+                    <div class="stat-label">With Video</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="stat-downloaded">0</div>
+                    <div class="stat-label">Downloaded</div>
+                </div>
+                <div class="stat-card">
+                    <div class="stat-number" id="stat-pending">0</div>
+                    <div class="stat-label">Pending</div>
+                </div>
+            </div>
+
+            <div id="ecoeye-message" style="margin-top: 15px;"></div>
+        </div>
+
+        <!-- UniFi Protect Section -->
+        <div class="sync-section">
+            <h2>UniFi Protect (Direct Download)</h2>
+
+            <div style="margin-bottom: 20px;">
+                <span id="unifi-status" class="status-indicator">Checking...</span>
+                <p style="color: #856404; background: #fff3cd; padding: 10px; border-radius: 4px; margin-top: 10px;">
+                    <strong>Note:</strong> UniFi Protect integration requires library package (coming soon)
+                </p>
+            </div>
+
+            <div class="form-group">
+                <label>UniFi Protect Host</label>
+                <input type="text" id="unifi-host" placeholder="e.g., unifi.local or 192.168.1.1">
+            </div>
+
+            <div class="form-group">
+                <label>Port</label>
+                <input type="number" id="unifi-port" value="443" placeholder="443">
+            </div>
+
+            <div class="form-group">
+                <label>Username</label>
+                <input type="text" id="unifi-username" placeholder="UniFi username">
+            </div>
+
+            <div class="form-group">
+                <label>Password</label>
+                <input type="password" id="unifi-password" placeholder="UniFi password">
+            </div>
+
+            <div class="button-group">
+                <button onclick="saveUniFiCredentials()" class="btn-primary">Save Credentials</button>
+                <button onclick="testUniFiConnection()" class="btn-secondary">Test Connection</button>
+            </div>
+
+            <div id="unifi-message" style="margin-top: 15px;"></div>
+        </div>
+
+        <!-- Sync History Section -->
+        <div class="sync-section">
+            <h2>Sync History</h2>
+
+            <table class="history-table" id="sync-history">
+                <thead>
+                    <tr>
+                        <th>Type</th>
+                        <th>Status</th>
+                        <th>Started</th>
+                        <th>Items</th>
+                        <th>Success/Failed</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td colspan="5" style="text-align: center; color: #6c757d;">Loading...</td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <script>
+        // Load configuration status on page load
+        window.addEventListener('DOMContentLoaded', function() {
+            checkEcoEyeStatus();
+            checkUniFiStatus();
+            loadSyncHistory();
+            loadEcoEyeStats();
+        });
+
+        async function checkEcoEyeStatus() {
+            try {
+                const response = await fetch('/api/sync/ecoeye/config');
+                const data = await response.json();
+
+                const statusEl = document.getElementById('ecoeye-status');
+                if (data.configured) {
+                    statusEl.textContent = 'Configured';
+                    statusEl.className = 'status-indicator status-configured';
+                } else {
+                    statusEl.textContent = 'Not Configured';
+                    statusEl.className = 'status-indicator status-not-configured';
+                }
+            } catch (error) {
+                console.error('Error checking EcoEye status:', error);
+            }
+        }
+
+        async function checkUniFiStatus() {
+            try {
+                const response = await fetch('/api/sync/unifi/config');
+                const data = await response.json();
+
+                const statusEl = document.getElementById('unifi-status');
+                if (data.configured) {
+                    statusEl.textContent = 'Configured';
+                    statusEl.className = 'status-indicator status-configured';
+                    document.getElementById('unifi-host').value = data.host || '';
+                    document.getElementById('unifi-port').value = data.port || 443;
+                } else {
+                    statusEl.textContent = 'Not Configured';
+                    statusEl.className = 'status-indicator status-not-configured';
+                }
+            } catch (error) {
+                console.error('Error checking UniFi status:', error);
+            }
+        }
+
+        async function saveEcoEyeCredentials() {
+            const apiKey = document.getElementById('ecoeye-api-key').value;
+            const apiSecret = document.getElementById('ecoeye-api-secret').value;
+
+            if (!apiKey || !apiSecret) {
+                showMessage('ecoeye', 'Please enter both API key and secret', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/sync/ecoeye/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({api_key: apiKey, api_secret: apiSecret})
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showMessage('ecoeye', 'Credentials saved successfully', 'success');
+                    checkEcoEyeStatus();
+                    // Clear fields for security
+                    document.getElementById('ecoeye-api-key').value = '';
+                    document.getElementById('ecoeye-api-secret').value = '';
+                } else {
+                    showMessage('ecoeye', 'Error: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('ecoeye', 'Error saving credentials: ' + error, 'error');
+            }
+        }
+
+        async function testEcoEyeConnection() {
+            showMessage('ecoeye', 'Testing connection...', 'info');
+
+            try {
+                const response = await fetch('/api/sync/ecoeye/test', {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showMessage('ecoeye', 'Connection successful! Server time: ' + data.server_time, 'success');
+                } else {
+                    showMessage('ecoeye', 'Connection failed: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('ecoeye', 'Error testing connection: ' + error, 'error');
+            }
+        }
+
+        async function syncEcoEyeAlerts() {
+            showMessage('ecoeye', 'Syncing alerts (last 24 hours)...', 'info');
+
+            try {
+                const response = await fetch('/api/sync/ecoeye/alerts', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({})
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showMessage('ecoeye',
+                        `Sync complete! Total: ${data.total_synced}, New: ${data.new_alerts}, Updated: ${data.updated_alerts}`,
+                        'success');
+                    loadSyncHistory();
+                    loadEcoEyeStats();
+                } else {
+                    showMessage('ecoeye', 'Sync failed: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('ecoeye', 'Error syncing alerts: ' + error, 'error');
+            }
+        }
+
+        async function downloadEcoEyeVideos() {
+            const limit = 10;
+            showMessage('ecoeye', `Downloading up to ${limit} pending videos...`, 'info');
+
+            try {
+                const response = await fetch('/api/sync/ecoeye/videos', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({limit: limit})
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showMessage('ecoeye',
+                        `Download complete! Downloaded: ${data.downloaded}, Failed: ${data.failed}`,
+                        'success');
+                    loadSyncHistory();
+                    loadEcoEyeStats();
+                } else {
+                    showMessage('ecoeye', 'Download failed: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('ecoeye', 'Error downloading videos: ' + error, 'error');
+            }
+        }
+
+        async function loadEcoEyeStats() {
+            try {
+                const response = await fetch('/api/sync/ecoeye/status');
+                const data = await response.json();
+
+                if (data.success) {
+                    document.getElementById('stat-total-alerts').textContent = data.total_alerts;
+                    document.getElementById('stat-with-video').textContent = data.alerts_with_video;
+                    document.getElementById('stat-downloaded').textContent = data.videos_downloaded;
+                    document.getElementById('stat-pending').textContent = data.pending_downloads;
+                    document.getElementById('ecoeye-stats').style.display = 'grid';
+                }
+            } catch (error) {
+                console.error('Error loading stats:', error);
+            }
+        }
+
+        async function saveUniFiCredentials() {
+            const host = document.getElementById('unifi-host').value;
+            const port = document.getElementById('unifi-port').value;
+            const username = document.getElementById('unifi-username').value;
+            const password = document.getElementById('unifi-password').value;
+
+            if (!host || !username || !password) {
+                showMessage('unifi', 'Please enter host, username, and password', 'error');
+                return;
+            }
+
+            try {
+                const response = await fetch('/api/sync/unifi/config', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        host: host,
+                        port: parseInt(port),
+                        username: username,
+                        password: password
+                    })
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showMessage('unifi', 'Credentials saved successfully', 'success');
+                    checkUniFiStatus();
+                    // Clear password for security
+                    document.getElementById('unifi-password').value = '';
+                } else {
+                    showMessage('unifi', 'Error: ' + data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('unifi', 'Error saving credentials: ' + error, 'error');
+            }
+        }
+
+        async function testUniFiConnection() {
+            showMessage('unifi', 'Testing connection...', 'info');
+
+            try {
+                const response = await fetch('/api/sync/unifi/test', {
+                    method: 'POST'
+                });
+
+                const data = await response.json();
+
+                if (data.success) {
+                    showMessage('unifi', 'Connection successful!', 'success');
+                } else {
+                    showMessage('unifi', data.message || data.error, 'error');
+                }
+            } catch (error) {
+                showMessage('unifi', 'Error testing connection: ' + error, 'error');
+            }
+        }
+
+        async function loadSyncHistory() {
+            try {
+                const response = await fetch('/api/sync/history?limit=20');
+                const data = await response.json();
+
+                const tbody = document.querySelector('#sync-history tbody');
+
+                if (data.success && data.history.length > 0) {
+                    tbody.innerHTML = data.history.map(item => `
+                        <tr>
+                            <td>${item.sync_type}</td>
+                            <td><span class="sync-status-${item.status}">${item.status}</span></td>
+                            <td>${new Date(item.started_at).toLocaleString()}</td>
+                            <td>${item.items_processed || 0}</td>
+                            <td>${item.items_succeeded || 0} / ${item.items_failed || 0}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="5" style="text-align: center; color: #6c757d;">No sync history</td></tr>';
+                }
+            } catch (error) {
+                console.error('Error loading history:', error);
+            }
+        }
+
+        function showMessage(section, message, type) {
+            const messageEl = document.getElementById(section + '-message');
+            messageEl.innerHTML = `<div class="status-message ${type}">${message}</div>`;
+
+            setTimeout(() => {
+                messageEl.innerHTML = '';
+            }, 5000);
+        }
+    </script>
+</body>
+</html>

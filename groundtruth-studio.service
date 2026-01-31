@@ -1,0 +1,20 @@
+[Unit]
+Description=Groundtruth Studio - Video Annotation System
+After=network.target
+
+[Service]
+Type=simple
+User=ublirnevire
+Group=www-data
+WorkingDirectory=/var/www/html/groundtruth-studio
+Environment="PATH=/var/www/html/groundtruth-studio/venv/bin:/usr/bin:/usr/local/bin"
+ExecStart=/var/www/html/groundtruth-studio/venv/bin/python /var/www/html/groundtruth-studio/app/api.py
+Restart=always
+RestartSec=10
+
+# Logging
+StandardOutput=append:/var/log/groundtruth-studio.log
+StandardError=append:/var/log/groundtruth-studio-error.log
+
+[Install]
+WantedBy=multi-user.target

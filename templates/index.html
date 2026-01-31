@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groundtruth Studio</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/css/style.css">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div>
+                <h1>Groundtruth Studio</h1>
+                <div style="margin-top: 8px;">
+                    <a href="/person-manager" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none; margin-right: 8px;">👤 Person Manager</a>
+                    <a href="/camera-topology" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none; margin-right: 8px;">📹 Camera Topology</a>
+                    <a href="/sync-settings" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none; margin-right: 8px;">🔄 Sync Settings</a>
+                    <a href="/yolo-export" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none; margin-right: 8px;">🎯 YOLO Export</a>
+                    <a href="/training-queue" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none; margin-right: 8px;">🚀 Training Queue</a>
+                    <a href="/ecoeye-preview" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none;">👁️ EcoEye Preview</a>
+                </div>
+            </div>
+            <div class="system-status">
+                <span id="status-indicator" class="status-loading">Checking system...</span>
+            </div>
+        </header>
+
+        <div class="actions-panel">
+            <div class="action-section">
+                <h2>Download Video</h2>
+                <div class="input-group">
+                    <input type="text" id="video-url" placeholder="Paste video URL (YouTube, Vimeo, etc.)" />
+                    <button onclick="previewVideo()" class="btn-secondary">Preview Info</button>
+                    <button onclick="downloadVideo()" class="btn-primary">Download & Add</button>
+                </div>
+                <div id="preview-info" class="preview-info" style="display: none;"></div>
+                <div id="download-status" class="status-message"></div>
+            </div>
+
+            <div class="action-section">
+                <h2>Download Queue</h2>
+                <div id="download-queue-status">
+                    <div class="loading">Loading queue status...</div>
+                </div>
+            </div>
+
+            <div class="action-section" style="display: flex; align-items: center; justify-content: center;">
+                <button onclick="openUploadModal()" class="btn-primary" style="font-size: 16px; padding: 12px 24px;">
+                    📤 Upload Videos
+                </button>
+            </div>
+        </div>
+
+        <div class="search-panel">
+            <input type="text" id="search-input" placeholder="Search videos by title, annotations, or notes..." />
+            <button onclick="searchVideos()" class="btn-secondary">Search</button>
+            <button onclick="loadVideos()" class="btn-secondary">Show All</button>
+        </div>
+
+        <div class="videos-grid" id="videos-grid">
+            <div class="loading">Loading videos...</div>
+        </div>
+    </div>
+
+    <div id="video-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close" onclick="closeModal()">&times;</span>
+            <div id="modal-body"></div>
+        </div>
+    </div>
+
+    <div id="upload-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <span class="close" onclick="closeUploadModal()">&times;</span>
+            <h2>Upload Videos</h2>
+            <form id="upload-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label>Select Video Files (multiple allowed):</label>
+                    <input type="file" id="video-files" accept=".mp4,.avi,.mov,.mkv,.webm" multiple />
+                    <div id="file-list" style="margin-top: 10px; font-size: 13px; color: #7f8c8d;"></div>
+                </div>
+                <div class="form-group">
+                    <label>Notes (optional, applies to all files):</label>
+                    <textarea id="upload-notes" placeholder="Add notes about these videos..." rows="3"></textarea>
+                </div>
+                <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button type="submit" class="btn-primary" style="flex: 1;">Upload Files</button>
+                    <button type="button" onclick="closeUploadModal()" class="btn-secondary">Cancel</button>
+                </div>
+            </form>
+            <div id="upload-status" class="status-message" style="margin-top: 15px;"></div>
+            <div id="upload-progress" style="margin-top: 15px;"></div>
+        </div>
+    </div>
+
+    <script src="/static/js/app.js"></script>
+</body>
+</html>
