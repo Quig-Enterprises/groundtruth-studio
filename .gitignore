@@ -1,7 +1,11 @@
 venv/
 __pycache__/
 *.pyc
+# Database files
 *.db
+*.db-journal
+*.db-shm
+*.db-wal
 *.log
 .DS_Store
 downloads/
