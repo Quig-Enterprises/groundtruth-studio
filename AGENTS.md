@@ -11,7 +11,8 @@
 | **Port** | 5050 (Flask behind nginx) |
 | **Service** | `sudo systemctl restart groundtruth-studio` |
 | **Logs** | `tail -f /opt/groundtruth-studio/flask.log` or `server.log` |
-| **Database** | `video_archive.db` (SQLite) |
+| **Database** | PostgreSQL (`groundtruth_studio`) |
+| **DB Connection** | `app/db_connection.py` + `DATABASE_URL` environment variable |
 
 ## Architecture
 
@@ -41,9 +42,9 @@
         ┌─────────────┼─────────────┐
         ▼             ▼             ▼
 ┌───────────┐  ┌───────────┐  ┌───────────┐
-│  SQLite   │  │  EcoEye   │  │  UniFi    │
-│video_archive│ │   API     │  │ Protect   │
-│    .db    │  │alert.eco..│  │  NVR      │
+│PostgreSQL │  │  EcoEye   │  │  UniFi    │
+│groundtruth│  │   API     │  │ Protect   │
+│  _studio  │  │alert.eco..│  │  NVR      │
 └───────────┘  └───────────┘  └───────────┘
 ```
 
@@ -54,7 +55,9 @@
 | File | Size | Purpose |
 |------|------|---------|
 | `api.py` | 79KB | **Main Flask app** - all routes and API endpoints |
-| `database.py` | 58KB | SQLite models, queries for videos/annotations/tags |
+| `db_connection.py` | 5KB | PostgreSQL connection pool and engine setup |
+| `schema.py` | 12KB | SQLAlchemy ORM models for all tables |
+| `database.py` | 58KB | Query builders for videos/annotations/tags |
 | `ecoeye_sync.py` | 23KB | Sync videos from EcoEye alert system |
 | `yolo_exporter.py` | 16KB | Export annotations to YOLO format for training |
 | `unifi_protect_client.py` | 9KB | Download clips from UniFi Protect NVR |
@@ -83,7 +86,13 @@
 - `js/app.js` - Library interface logic
 - `js/annotate.js` - Annotation interface logic
 
-## Database Schema (video_archive.db)
+## Database Schema (PostgreSQL: groundtruth_studio)
+
+**Connection:**
+- Configured via `app/db_connection.py`
+- Connection string: `DATABASE_URL` environment variable
+- ORM definitions: `app/schema.py`
+- Query builders: `app/database.py`
 
 **Core Tables:**
 - `videos` - Video metadata (filename, title, duration, resolution, etc.)
@@ -130,9 +139,10 @@
 3. Add navigation link in `templates/index.html` if needed
 
 ### Modifying Database Schema
-1. Edit `app/database.py` - add table creation in `__init__`
-2. For migrations, add `ALTER TABLE` in a new method
-3. Database auto-creates tables on startup
+1. Edit `app/schema.py` - add/update SQLAlchemy ORM model
+2. Create migration in `migrations/versions/` using Alembic
+3. Run migration: `alembic upgrade head`
+4. Or update queries in `app/database.py` to work with new schema
 
 ### Testing Changes
 1. Make code changes
