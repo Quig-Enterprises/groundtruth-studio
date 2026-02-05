@@ -3,20 +3,20 @@ Camera Topology Learning
 Automatically learns spatial relationships between cameras based on person tracking data
 """
 
-import sqlite3
+from app.db_connection import get_connection as db_get_connection, get_cursor
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 import json
 from datetime import datetime
 
 class CameraTopologyLearner:
-    def __init__(self, db_path: str):
-        self.db_path = db_path
+    def __init__(self, db_path: str = None):
+        # db_path parameter kept for backwards compatibility but ignored
+        # Now using shared PostgreSQL connection pool
+        pass
 
     def get_connection(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
+        return db_get_connection()
 
     def analyze_person_transitions(self, person_name: str) -> List[Dict]:
         """
@@ -39,7 +39,7 @@ class CameraTopologyLearner:
             JOIN videos v ON ka.video_id = v.id
             JOIN annotation_tags at ON ka.id = at.annotation_id
             WHERE at.annotation_type = 'keyframe'
-            AND at.tag_value LIKE ?
+            AND at.tag_value LIKE %s
             ORDER BY ka.created_date, ka.timestamp
         ''', (f'%{person_name}%',))
 
@@ -88,7 +88,7 @@ class CameraTopologyLearner:
         # Try video notes first (more likely to have structured data)
         if video_notes:
             # Look for camera_id in notes
-            match = re.search(r'camera[_\s]*(?:id)?[_\s]*[:]?\s*([a-zA-Z0-9_-]+)', video_notes.lower())
+            match = re.search(r'camera[_\s]*(%s:id)%s[_\s]*[:]%s\s*([a-zA-Z0-9_-]+)', video_notes.lower())
             if match:
                 return match.group(1)
 
@@ -217,7 +217,7 @@ class CameraTopologyLearner:
             JOIN videos v ON ka.video_id = v.id
             JOIN annotation_tags at ON ka.id = at.annotation_id
             WHERE at.annotation_type = 'keyframe'
-            AND at.tag_value LIKE ?
+            AND at.tag_value LIKE %s
             ORDER BY ka.created_date
         ''', (f'%{person_name}%',))
 
