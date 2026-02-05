@@ -1,757 +1,401 @@
-import sqlite3
 import os
 from datetime import datetime
 from typing import List, Dict, Optional
 
+import psycopg2
+from psycopg2 import extras
+
+from app.db_connection import get_connection, get_cursor
+
+
 class VideoDatabase:
-    def __init__(self, db_path='video_archive.db'):
-        self.db_path = db_path
-        self.init_database()
+    def __init__(self, db_path=None):
+        """
+        Initialize VideoDatabase.
 
-    def get_connection(self):
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-
-    def init_database(self):
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS videos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                filename TEXT NOT NULL UNIQUE,
-                original_url TEXT,
-                title TEXT,
-                duration REAL,
-                width INTEGER,
-                height INTEGER,
-                file_size INTEGER,
-                thumbnail_path TEXT,
-                upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                notes TEXT
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS tags (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                name TEXT NOT NULL UNIQUE,
-                category TEXT,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS video_tags (
-                video_id INTEGER,
-                tag_id INTEGER,
-                added_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (video_id, tag_id),
-                FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE,
-                FOREIGN KEY (tag_id) REFERENCES tags(id) ON DELETE CASCADE
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS behaviors (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                video_id INTEGER,
-                behavior_type TEXT NOT NULL,
-                start_time REAL,
-                end_time REAL,
-                confidence REAL,
-                notes TEXT,
-                annotated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS time_range_tags (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                video_id INTEGER NOT NULL,
-                tag_name TEXT NOT NULL,
-                start_time REAL NOT NULL,
-                end_time REAL,
-                is_negative INTEGER DEFAULT 0,
-                comment TEXT,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS keyframe_annotations (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                video_id INTEGER NOT NULL,
-                timestamp REAL NOT NULL,
-                bbox_x INTEGER NOT NULL,
-                bbox_y INTEGER NOT NULL,
-                bbox_width INTEGER NOT NULL,
-                bbox_height INTEGER NOT NULL,
-                activity_tag TEXT,
-                moment_tag TEXT,
-                is_negative INTEGER DEFAULT 0,
-                comment TEXT,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS tag_groups (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                group_name TEXT NOT NULL UNIQUE,
-                display_name TEXT NOT NULL,
-                group_type TEXT NOT NULL,
-                description TEXT,
-                is_required INTEGER DEFAULT 0,
-                applies_to TEXT,
-                sort_order INTEGER DEFAULT 0,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS tag_options (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                group_id INTEGER NOT NULL,
-                option_value TEXT NOT NULL,
-                display_text TEXT NOT NULL,
-                is_negative INTEGER DEFAULT 0,
-                description TEXT,
-                sort_order INTEGER DEFAULT 0,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (group_id) REFERENCES tag_groups(id) ON DELETE CASCADE
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS annotation_tags (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                annotation_id INTEGER NOT NULL,
-                annotation_type TEXT NOT NULL,
-                group_id INTEGER NOT NULL,
-                tag_value TEXT NOT NULL,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (group_id) REFERENCES tag_groups(id) ON DELETE CASCADE
-            )
-        ''')
-
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS tag_suggestions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                category TEXT NOT NULL,
-                tag_text TEXT NOT NULL,
-                is_negative INTEGER DEFAULT 0,
-                description TEXT,
-                sort_order INTEGER DEFAULT 0,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        # YOLO Training Export Configurations
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS yolo_export_configs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                config_name TEXT NOT NULL UNIQUE,
-                description TEXT,
-                class_mapping TEXT NOT NULL,
-                include_reviewed_only INTEGER DEFAULT 0,
-                include_ai_generated INTEGER DEFAULT 1,
-                include_negative_examples INTEGER DEFAULT 1,
-                min_confidence REAL DEFAULT 0.0,
-                export_format TEXT DEFAULT 'yolov8',
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_export_date TIMESTAMP,
-                last_export_count INTEGER DEFAULT 0
-            )
-        ''')
-
-        # Video-to-Export mappings (many-to-many)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS yolo_export_videos (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                export_config_id INTEGER NOT NULL,
-                video_id INTEGER NOT NULL,
-                included INTEGER DEFAULT 1,
-                notes TEXT,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (export_config_id) REFERENCES yolo_export_configs(id) ON DELETE CASCADE,
-                FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE,
-                UNIQUE(export_config_id, video_id)
-            )
-        ''')
-
-        # Filter rules for automatic video selection
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS yolo_export_filters (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                export_config_id INTEGER NOT NULL,
-                filter_type TEXT NOT NULL,
-                filter_value TEXT NOT NULL,
-                is_exclusion INTEGER DEFAULT 0,
-                created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (export_config_id) REFERENCES yolo_export_configs(id) ON DELETE CASCADE
-            )
-        ''')
-
-        # Export history/logs
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS yolo_export_logs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                export_config_id INTEGER NOT NULL,
-                export_path TEXT NOT NULL,
-                video_count INTEGER NOT NULL,
-                annotation_count INTEGER NOT NULL,
-                export_format TEXT NOT NULL,
-                export_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                notes TEXT,
-                FOREIGN KEY (export_config_id) REFERENCES yolo_export_configs(id) ON DELETE CASCADE
-            )
-        ''')
-
-        # Fleet vehicle tracking
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS fleet_vehicles (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                fleet_id TEXT NOT NULL UNIQUE,
-                fleet_type TEXT,
-                vehicle_type TEXT,
-                vehicle_make TEXT,
-                vehicle_model TEXT,
-                primary_color TEXT,
-                secondary_color TEXT,
-                agency_name TEXT,
-                plate_number TEXT,
-                plate_state TEXT,
-                first_seen_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_seen_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                total_detections INTEGER DEFAULT 0,
-                notes TEXT
-            )
-        ''')
-
-        # Vehicle-Person relationships (many-to-many)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS vehicle_person_links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                vehicle_fleet_id TEXT NOT NULL,
-                person_name TEXT NOT NULL,
-                first_seen_together TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_seen_together TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                times_seen_together INTEGER DEFAULT 1,
-                FOREIGN KEY (vehicle_fleet_id) REFERENCES fleet_vehicles(fleet_id) ON DELETE CASCADE
-            )
-        ''')
-
-        # Trailer tracking (separate from vehicles)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS trailers (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                trailer_id TEXT NOT NULL UNIQUE,
-                trailer_type TEXT,
-                trailer_color TEXT,
-                plate_number TEXT,
-                plate_state TEXT,
-                first_seen_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_seen_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                total_detections INTEGER DEFAULT 0,
-                notes TEXT
-            )
-        ''')
-
-        # Vehicle-Trailer relationships (one-to-many, trailers can swap vehicles)
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS vehicle_trailer_links (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                vehicle_fleet_id TEXT NOT NULL,
-                trailer_id TEXT NOT NULL,
-                first_seen_together TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                last_seen_together TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                times_seen_together INTEGER DEFAULT 1,
-                FOREIGN KEY (vehicle_fleet_id) REFERENCES fleet_vehicles(fleet_id) ON DELETE CASCADE,
-                FOREIGN KEY (trailer_id) REFERENCES trailers(trailer_id) ON DELETE CASCADE
-            )
-        ''')
-
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_videos_filename ON videos(filename)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tags_name ON tags(name)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_behaviors_video ON behaviors(video_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_time_range_tags_video ON time_range_tags(video_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_keyframe_annotations_video ON keyframe_annotations(video_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_suggestions_category ON tag_suggestions(category)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_groups_name ON tag_groups(group_name)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_tag_options_group ON tag_options(group_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_annotation_tags_annotation ON annotation_tags(annotation_id, annotation_type)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_yolo_export_videos_config ON yolo_export_videos(export_config_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_yolo_export_filters_config ON yolo_export_filters(export_config_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_yolo_export_logs_config ON yolo_export_logs(export_config_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_fleet_vehicles_fleet_id ON fleet_vehicles(fleet_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_fleet_vehicles_type ON fleet_vehicles(fleet_type)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vehicle_person_links_vehicle ON vehicle_person_links(vehicle_fleet_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vehicle_person_links_person ON vehicle_person_links(person_name)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_trailers_trailer_id ON trailers(trailer_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vehicle_trailer_links_vehicle ON vehicle_trailer_links(vehicle_fleet_id)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_vehicle_trailer_links_trailer ON vehicle_trailer_links(trailer_id)')
-
-        conn.commit()
-        conn.close()
+        Args:
+            db_path: Ignored (kept for backwards compatibility).
+                     PostgreSQL connection is configured via DATABASE_URL env var.
+        """
+        # db_path parameter kept for API compatibility but is ignored
+        # Schema initialization is handled by app.schema module
+        pass
 
     def add_video(self, filename: str, original_url: str = None, title: str = None,
                   duration: float = None, width: int = None, height: int = None,
                   file_size: int = None, thumbnail_path: str = None, notes: str = None) -> int:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-
-        cursor.execute('''
-            INSERT INTO videos (filename, original_url, title, duration, width, height,
-                              file_size, thumbnail_path, notes)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (filename, original_url, title, duration, width, height, file_size, thumbnail_path, notes))
-
-        video_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return video_id
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO videos (filename, original_url, title, duration, width, height,
+                                  file_size, thumbnail_path, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (filename, original_url, title, duration, width, height, file_size, thumbnail_path, notes))
+            result = cursor.fetchone()
+            return result['id']
 
     def get_video(self, video_id: int) -> Optional[Dict]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM videos WHERE id = ?', (video_id,))
-        row = cursor.fetchone()
-        conn.close()
-        return dict(row) if row else None
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT * FROM videos WHERE id = %s', (video_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     def get_all_videos(self, limit: int = 100, offset: int = 0) -> List[Dict]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT v.*,
-                   GROUP_CONCAT(t.name, ', ') as tags,
-                   COUNT(DISTINCT ka.id) as annotation_count
-            FROM videos v
-            LEFT JOIN video_tags vt ON v.id = vt.video_id
-            LEFT JOIN tags t ON vt.tag_id = t.id
-            LEFT JOIN keyframe_annotations ka ON v.id = ka.video_id
-            GROUP BY v.id
-            ORDER BY v.upload_date DESC
-            LIMIT ? OFFSET ?
-        ''', (limit, offset))
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT v.*,
+                       STRING_AGG(DISTINCT t.name, ', ') as tags,
+                       COUNT(DISTINCT ka.id) as annotation_count
+                FROM videos v
+                LEFT JOIN video_tags vt ON v.id = vt.video_id
+                LEFT JOIN tags t ON vt.tag_id = t.id
+                LEFT JOIN keyframe_annotations ka ON v.id = ka.video_id
+                GROUP BY v.id
+                ORDER BY v.upload_date DESC
+                LIMIT %s OFFSET %s
+            ''', (limit, offset))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
     def search_videos(self, query: str) -> List[Dict]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        search_term = f'%{query}%'
-        cursor.execute('''
-            SELECT v.*,
-                   (SELECT GROUP_CONCAT(DISTINCT t2.name, ', ')
-                    FROM video_tags vt2
-                    JOIN tags t2 ON vt2.tag_id = t2.id
-                    WHERE vt2.video_id = v.id) as tags,
-                   (SELECT COUNT(*)
-                    FROM keyframe_annotations ka2
-                    WHERE ka2.video_id = v.id) as annotation_count
-            FROM videos v
-            LEFT JOIN video_tags vt ON v.id = vt.video_id
-            LEFT JOIN tags t ON vt.tag_id = t.id
-            LEFT JOIN keyframe_annotations ka ON v.id = ka.video_id
-            LEFT JOIN annotation_tags at ON ka.id = at.annotation_id AND at.annotation_type = 'keyframe'
-            LEFT JOIN tag_groups tg ON at.group_id = tg.id
-            WHERE v.title LIKE ? OR v.filename LIKE ? OR v.notes LIKE ? OR t.name LIKE ?
-               OR ka.activity_tag LIKE ? OR ka.comment LIKE ?
-               OR tg.group_name LIKE ? OR at.tag_value LIKE ?
-            GROUP BY v.id
-            ORDER BY v.upload_date DESC
-        ''', (search_term, search_term, search_term, search_term,
-              search_term, search_term, search_term, search_term))
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        with get_cursor(commit=False) as cursor:
+            search_term = f'%{query}%'
+            cursor.execute('''
+                SELECT v.*,
+                       (SELECT STRING_AGG(DISTINCT t2.name, ', ')
+                        FROM video_tags vt2
+                        JOIN tags t2 ON vt2.tag_id = t2.id
+                        WHERE vt2.video_id = v.id) as tags,
+                       (SELECT COUNT(*)
+                        FROM keyframe_annotations ka2
+                        WHERE ka2.video_id = v.id) as annotation_count
+                FROM videos v
+                LEFT JOIN video_tags vt ON v.id = vt.video_id
+                LEFT JOIN tags t ON vt.tag_id = t.id
+                LEFT JOIN keyframe_annotations ka ON v.id = ka.video_id
+                LEFT JOIN annotation_tags at ON ka.id = at.annotation_id AND at.annotation_type = 'keyframe'
+                LEFT JOIN tag_groups tg ON at.group_id = tg.id
+                WHERE v.title LIKE %s OR v.filename LIKE %s OR v.notes LIKE %s OR t.name LIKE %s
+                   OR ka.activity_tag LIKE %s OR ka.comment LIKE %s
+                   OR tg.group_name LIKE %s OR at.tag_value LIKE %s
+                GROUP BY v.id
+                ORDER BY v.upload_date DESC
+            ''', (search_term, search_term, search_term, search_term,
+                  search_term, search_term, search_term, search_term))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
     def add_tag(self, name: str, category: str = None) -> int:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('INSERT INTO tags (name, category) VALUES (?, ?)', (name, category))
-            tag_id = cursor.lastrowid
-            conn.commit()
-        except sqlite3.IntegrityError:
-            cursor.execute('SELECT id FROM tags WHERE name = ?', (name,))
-            tag_id = cursor.fetchone()[0]
-        conn.close()
-        return tag_id
+        with get_cursor() as cursor:
+            try:
+                cursor.execute('''
+                    INSERT INTO tags (name, category) VALUES (%s, %s)
+                    RETURNING id
+                ''', (name, category))
+                result = cursor.fetchone()
+                return result['id']
+            except psycopg2.IntegrityError:
+                # Tag already exists, fetch its id
+                cursor.connection.rollback()
+                cursor.execute('SELECT id FROM tags WHERE name = %s', (name,))
+                result = cursor.fetchone()
+                return result['id']
 
     def tag_video(self, video_id: int, tag_name: str) -> bool:
         tag_id = self.add_tag(tag_name)
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        try:
-            cursor.execute('INSERT INTO video_tags (video_id, tag_id) VALUES (?, ?)',
-                         (video_id, tag_id))
-            conn.commit()
-            success = True
-        except sqlite3.IntegrityError:
-            success = False
-        conn.close()
-        return success
+        with get_cursor() as cursor:
+            try:
+                cursor.execute('INSERT INTO video_tags (video_id, tag_id) VALUES (%s, %s)',
+                             (video_id, tag_id))
+                return True
+            except psycopg2.IntegrityError:
+                return False
 
     def untag_video(self, video_id: int, tag_name: str) -> bool:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            DELETE FROM video_tags
-            WHERE video_id = ? AND tag_id = (SELECT id FROM tags WHERE name = ?)
-        ''', (video_id, tag_name))
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return success
+        with get_cursor() as cursor:
+            cursor.execute('''
+                DELETE FROM video_tags
+                WHERE video_id = %s AND tag_id = (SELECT id FROM tags WHERE name = %s)
+            ''', (video_id, tag_name))
+            return cursor.rowcount > 0
 
     def get_all_tags(self) -> List[Dict]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT t.*, COUNT(vt.video_id) as video_count
-            FROM tags t
-            LEFT JOIN video_tags vt ON t.id = vt.tag_id
-            GROUP BY t.id
-            ORDER BY t.name
-        ''')
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT t.*, COUNT(vt.video_id) as video_count
+                FROM tags t
+                LEFT JOIN video_tags vt ON t.id = vt.tag_id
+                GROUP BY t.id
+                ORDER BY t.name
+            ''')
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
     def add_behavior_annotation(self, video_id: int, behavior_type: str,
                                start_time: float = None, end_time: float = None,
                                confidence: float = None, notes: str = None) -> int:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO behaviors (video_id, behavior_type, start_time, end_time, confidence, notes)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (video_id, behavior_type, start_time, end_time, confidence, notes))
-        behavior_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return behavior_id
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO behaviors (video_id, behavior_type, start_time, end_time, confidence, notes)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (video_id, behavior_type, start_time, end_time, confidence, notes))
+            result = cursor.fetchone()
+            return result['id']
 
     def get_video_behaviors(self, video_id: int) -> List[Dict]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM behaviors WHERE video_id = ? ORDER BY start_time', (video_id,))
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT * FROM behaviors WHERE video_id = %s ORDER BY start_time', (video_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
     def delete_video(self, video_id: int) -> bool:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM videos WHERE id = ?', (video_id,))
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return success
+        with get_cursor() as cursor:
+            cursor.execute('DELETE FROM videos WHERE id = %s', (video_id,))
+            return cursor.rowcount > 0
 
     def add_time_range_tag(self, video_id: int, tag_name: str, start_time: float,
                           end_time: float = None, is_negative: bool = False, comment: str = None) -> int:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO time_range_tags (video_id, tag_name, start_time, end_time, is_negative, comment)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (video_id, tag_name, start_time, end_time, 1 if is_negative else 0, comment))
-        tag_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return tag_id
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO time_range_tags (video_id, tag_name, start_time, end_time, is_negative, comment)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (video_id, tag_name, start_time, end_time, is_negative, comment))
+            result = cursor.fetchone()
+            return result['id']
 
     def update_time_range_tag(self, tag_id: int, tag_name: str = None, end_time: float = None,
                              is_negative: bool = None, comment: str = None) -> bool:
-        conn = self.get_connection()
-        cursor = conn.cursor()
         updates = []
         values = []
         if tag_name is not None:
-            updates.append('tag_name = ?')
+            updates.append('tag_name = %s')
             values.append(tag_name)
         if end_time is not None:
-            updates.append('end_time = ?')
+            updates.append('end_time = %s')
             values.append(end_time)
         if is_negative is not None:
-            updates.append('is_negative = ?')
-            values.append(1 if is_negative else 0)
+            updates.append('is_negative = %s')
+            values.append(is_negative)
         if comment is not None:
-            updates.append('comment = ?')
+            updates.append('comment = %s')
             values.append(comment)
 
         if not updates:
-            conn.close()
             return False
 
         values.append(tag_id)
-        cursor.execute(f'''
-            UPDATE time_range_tags SET {', '.join(updates)}
-            WHERE id = ?
-        ''', values)
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return success
+        with get_cursor() as cursor:
+            cursor.execute(f'''
+                UPDATE time_range_tags SET {', '.join(updates)}
+                WHERE id = %s
+            ''', values)
+            return cursor.rowcount > 0
 
     def get_time_range_tags(self, video_id: int) -> List[Dict]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM time_range_tags
-            WHERE video_id = ?
-            ORDER BY start_time
-        ''', (video_id,))
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT * FROM time_range_tags
+                WHERE video_id = %s
+                ORDER BY start_time
+            ''', (video_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
     def get_time_range_tag_by_id(self, tag_id: int) -> Dict:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM time_range_tags
-            WHERE id = ?
-        ''', (tag_id,))
-        row = cursor.fetchone()
-        conn.close()
-        return dict(row) if row else None
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT * FROM time_range_tags
+                WHERE id = %s
+            ''', (tag_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     def delete_time_range_tag(self, tag_id: int) -> bool:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM time_range_tags WHERE id = ?', (tag_id,))
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return success
+        with get_cursor() as cursor:
+            cursor.execute('DELETE FROM time_range_tags WHERE id = %s', (tag_id,))
+            return cursor.rowcount > 0
 
     def get_all_time_range_tag_names(self) -> List[str]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT DISTINCT tag_name FROM time_range_tags ORDER BY tag_name')
-        rows = cursor.fetchall()
-        conn.close()
-        return [row[0] for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT DISTINCT tag_name FROM time_range_tags ORDER BY tag_name')
+            rows = cursor.fetchall()
+            return [row['tag_name'] for row in rows]
 
     def add_keyframe_annotation(self, video_id: int, timestamp: float,
                                bbox_x: int, bbox_y: int, bbox_width: int, bbox_height: int,
                                activity_tag: str = None, moment_tag: str = None,
                                is_negative: bool = False, comment: str = None, reviewed: bool = True) -> int:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO keyframe_annotations
-            (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
-             activity_tag, moment_tag, is_negative, comment, reviewed)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
-              activity_tag, moment_tag, 1 if is_negative else 0, comment, 1 if reviewed else 0))
-        annotation_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return annotation_id
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO keyframe_annotations
+                (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
+                 activity_tag, moment_tag, is_negative, comment, reviewed)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
+                  activity_tag, moment_tag, is_negative, comment, reviewed))
+            result = cursor.fetchone()
+            return result['id']
 
     def get_keyframe_annotations(self, video_id: int) -> List[Dict]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM keyframe_annotations
-            WHERE video_id = ?
-            ORDER BY timestamp
-        ''', (video_id,))
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT * FROM keyframe_annotations
+                WHERE video_id = %s
+                ORDER BY timestamp
+            ''', (video_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
     def get_annotation_count(self, video_id: int) -> int:
         """Get total count of keyframe annotations for a video"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT COUNT(*) as count FROM keyframe_annotations
-            WHERE video_id = ?
-        ''', (video_id,))
-        result = cursor.fetchone()
-        conn.close()
-        return result['count'] if result else 0
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT COUNT(*) as count FROM keyframe_annotations
+                WHERE video_id = %s
+            ''', (video_id,))
+            result = cursor.fetchone()
+            return result['count'] if result else 0
 
     def get_keyframe_annotation_by_id(self, annotation_id: int) -> Dict:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM keyframe_annotations
-            WHERE id = ?
-        ''', (annotation_id,))
-        row = cursor.fetchone()
-        conn.close()
-        return dict(row) if row else None
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT * FROM keyframe_annotations
+                WHERE id = %s
+            ''', (annotation_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     def update_keyframe_annotation(self, annotation_id: int, bbox_x: int = None, bbox_y: int = None,
                                   bbox_width: int = None, bbox_height: int = None,
                                   activity_tag: str = None, moment_tag: str = None,
                                   is_negative: bool = None, comment: str = None, reviewed: bool = None) -> bool:
-        conn = self.get_connection()
-        cursor = conn.cursor()
         updates = []
         values = []
         if bbox_x is not None:
-            updates.append('bbox_x = ?')
+            updates.append('bbox_x = %s')
             values.append(bbox_x)
         if bbox_y is not None:
-            updates.append('bbox_y = ?')
+            updates.append('bbox_y = %s')
             values.append(bbox_y)
         if bbox_width is not None:
-            updates.append('bbox_width = ?')
+            updates.append('bbox_width = %s')
             values.append(bbox_width)
         if bbox_height is not None:
-            updates.append('bbox_height = ?')
+            updates.append('bbox_height = %s')
             values.append(bbox_height)
         if activity_tag is not None:
-            updates.append('activity_tag = ?')
+            updates.append('activity_tag = %s')
             values.append(activity_tag)
         if moment_tag is not None:
-            updates.append('moment_tag = ?')
+            updates.append('moment_tag = %s')
             values.append(moment_tag)
         if is_negative is not None:
-            updates.append('is_negative = ?')
-            values.append(1 if is_negative else 0)
+            updates.append('is_negative = %s')
+            values.append(is_negative)
         if comment is not None:
-            updates.append('comment = ?')
+            updates.append('comment = %s')
             values.append(comment)
         if reviewed is not None:
-            updates.append('reviewed = ?')
-            values.append(1 if reviewed else 0)
+            updates.append('reviewed = %s')
+            values.append(reviewed)
 
         if not updates:
-            conn.close()
             return False
 
         values.append(annotation_id)
-        cursor.execute(f'''
-            UPDATE keyframe_annotations SET {', '.join(updates)}
-            WHERE id = ?
-        ''', values)
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return success
+        with get_cursor() as cursor:
+            cursor.execute(f'''
+                UPDATE keyframe_annotations SET {', '.join(updates)}
+                WHERE id = %s
+            ''', values)
+            return cursor.rowcount > 0
 
     def delete_keyframe_annotation(self, annotation_id: int) -> bool:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM keyframe_annotations WHERE id = ?', (annotation_id,))
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return success
+        with get_cursor() as cursor:
+            cursor.execute('DELETE FROM keyframe_annotations WHERE id = %s', (annotation_id,))
+            return cursor.rowcount > 0
 
     def get_all_activity_tags(self) -> List[str]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT DISTINCT activity_tag FROM keyframe_annotations WHERE activity_tag IS NOT NULL ORDER BY activity_tag')
-        rows = cursor.fetchall()
-        conn.close()
-        return [row[0] for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT DISTINCT activity_tag FROM keyframe_annotations WHERE activity_tag IS NOT NULL ORDER BY activity_tag')
+            rows = cursor.fetchall()
+            return [row['activity_tag'] for row in rows]
 
     def get_all_moment_tags(self) -> List[str]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT DISTINCT moment_tag FROM keyframe_annotations WHERE moment_tag IS NOT NULL ORDER BY moment_tag')
-        rows = cursor.fetchall()
-        conn.close()
-        return [row[0] for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT DISTINCT moment_tag FROM keyframe_annotations WHERE moment_tag IS NOT NULL ORDER BY moment_tag')
+            rows = cursor.fetchall()
+            return [row['moment_tag'] for row in rows]
 
     def add_tag_suggestion(self, category: str, tag_text: str, is_negative: bool = False,
                           description: str = None, sort_order: int = 0) -> int:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO tag_suggestions (category, tag_text, is_negative, description, sort_order)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (category, tag_text, 1 if is_negative else 0, description, sort_order))
-        suggestion_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return suggestion_id
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO tag_suggestions (category, tag_text, is_negative, description, sort_order)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (category, tag_text, is_negative, description, sort_order))
+            result = cursor.fetchone()
+            return result['id']
 
     def get_tag_suggestions_by_category(self, category: str = None) -> List[Dict]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        if category:
-            cursor.execute('''
-                SELECT * FROM tag_suggestions
-                WHERE category = ?
-                ORDER BY sort_order, tag_text
-            ''', (category,))
-        else:
-            cursor.execute('SELECT * FROM tag_suggestions ORDER BY category, sort_order, tag_text')
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        with get_cursor(commit=False) as cursor:
+            if category:
+                cursor.execute('''
+                    SELECT * FROM tag_suggestions
+                    WHERE category = %s
+                    ORDER BY sort_order, tag_text
+                ''', (category,))
+            else:
+                cursor.execute('SELECT * FROM tag_suggestions ORDER BY category, sort_order, tag_text')
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
     def get_all_suggestion_categories(self) -> List[str]:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT DISTINCT category FROM tag_suggestions ORDER BY category')
-        rows = cursor.fetchall()
-        conn.close()
-        return [row[0] for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT DISTINCT category FROM tag_suggestions ORDER BY category')
+            rows = cursor.fetchall()
+            return [row['category'] for row in rows]
 
     def update_tag_suggestion(self, suggestion_id: int, category: str = None, tag_text: str = None,
                              is_negative: bool = None, description: str = None, sort_order: int = None) -> bool:
-        conn = self.get_connection()
-        cursor = conn.cursor()
         updates = []
         values = []
 
         if category is not None:
-            updates.append('category = ?')
+            updates.append('category = %s')
             values.append(category)
         if tag_text is not None:
-            updates.append('tag_text = ?')
+            updates.append('tag_text = %s')
             values.append(tag_text)
         if is_negative is not None:
-            updates.append('is_negative = ?')
-            values.append(1 if is_negative else 0)
+            updates.append('is_negative = %s')
+            values.append(is_negative)
         if description is not None:
-            updates.append('description = ?')
+            updates.append('description = %s')
             values.append(description)
         if sort_order is not None:
-            updates.append('sort_order = ?')
+            updates.append('sort_order = %s')
             values.append(sort_order)
 
         if not updates:
-            conn.close()
             return False
 
         values.append(suggestion_id)
-        cursor.execute(f'''
-            UPDATE tag_suggestions SET {', '.join(updates)}
-            WHERE id = ?
-        ''', values)
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return success
+        with get_cursor() as cursor:
+            cursor.execute(f'''
+                UPDATE tag_suggestions SET {', '.join(updates)}
+                WHERE id = %s
+            ''', values)
+            return cursor.rowcount > 0
 
     def delete_tag_suggestion(self, suggestion_id: int) -> bool:
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM tag_suggestions WHERE id = ?', (suggestion_id,))
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return success
+        with get_cursor() as cursor:
+            cursor.execute('DELETE FROM tag_suggestions WHERE id = %s', (suggestion_id,))
+            return cursor.rowcount > 0
 
     def seed_default_tag_suggestions(self):
         """Seed database with default tag suggestions"""
@@ -788,110 +432,92 @@ class VideoDatabase:
                       description: str = None, is_required: bool = False,
                       applies_to: str = 'both', sort_order: int = 0) -> int:
         """Add a new tag group"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO tag_groups (group_name, display_name, group_type, description, is_required, applies_to, sort_order)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-        ''', (group_name, display_name, group_type, description, 1 if is_required else 0, applies_to, sort_order))
-        group_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return group_id
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO tag_groups (group_name, display_name, group_type, description, is_required, applies_to, sort_order)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (group_name, display_name, group_type, description, is_required, applies_to, sort_order))
+            result = cursor.fetchone()
+            return result['id']
 
     def get_tag_groups(self, annotation_type: str = None) -> List[Dict]:
         """Get all tag groups, optionally filtered by annotation type"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        if annotation_type:
-            cursor.execute('''
-                SELECT * FROM tag_groups
-                WHERE applies_to IN (?, 'both')
-                ORDER BY sort_order, display_name
-            ''', (annotation_type,))
-        else:
-            cursor.execute('SELECT * FROM tag_groups ORDER BY sort_order, display_name')
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        with get_cursor(commit=False) as cursor:
+            if annotation_type:
+                cursor.execute('''
+                    SELECT * FROM tag_groups
+                    WHERE applies_to IN (%s, 'both')
+                    ORDER BY sort_order, display_name
+                ''', (annotation_type,))
+            else:
+                cursor.execute('SELECT * FROM tag_groups ORDER BY sort_order, display_name')
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
     def get_tag_group_by_name(self, group_name: str) -> Dict:
         """Get a specific tag group by name"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM tag_groups WHERE group_name = ?', (group_name,))
-        row = cursor.fetchone()
-        conn.close()
-        return dict(row) if row else None
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT * FROM tag_groups WHERE group_name = %s', (group_name,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
 
     def add_tag_option(self, group_id: int, option_value: str, display_text: str,
                        is_negative: bool = False, description: str = None, sort_order: int = 0) -> int:
         """Add an option to a tag group"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO tag_options (group_id, option_value, display_text, is_negative, description, sort_order)
-            VALUES (?, ?, ?, ?, ?, ?)
-        ''', (group_id, option_value, display_text, 1 if is_negative else 0, description, sort_order))
-        option_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return option_id
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO tag_options (group_id, option_value, display_text, is_negative, description, sort_order)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (group_id, option_value, display_text, is_negative, description, sort_order))
+            result = cursor.fetchone()
+            return result['id']
 
     def get_tag_options(self, group_id: int) -> List[Dict]:
         """Get all options for a tag group"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM tag_options
-            WHERE group_id = ?
-            ORDER BY sort_order, display_text
-        ''', (group_id,))
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT * FROM tag_options
+                WHERE group_id = %s
+                ORDER BY sort_order, display_text
+            ''', (group_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
     def add_annotation_tag(self, annotation_id: int, annotation_type: str,
                            group_id: int, tag_value: str) -> int:
         """Add a tag to an annotation"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO annotation_tags (annotation_id, annotation_type, group_id, tag_value)
-            VALUES (?, ?, ?, ?)
-        ''', (annotation_id, annotation_type, group_id, tag_value))
-        tag_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
-        return tag_id
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO annotation_tags (annotation_id, annotation_type, group_id, tag_value)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+            ''', (annotation_id, annotation_type, group_id, tag_value))
+            result = cursor.fetchone()
+            return result['id']
 
     def get_annotation_tags(self, annotation_id: int, annotation_type: str) -> List[Dict]:
         """Get all tags for an annotation"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT at.*, tg.group_name, tg.display_name, tg.group_type
-            FROM annotation_tags at
-            JOIN tag_groups tg ON at.group_id = tg.id
-            WHERE at.annotation_id = ? AND at.annotation_type = ?
-            ORDER BY tg.sort_order
-        ''', (annotation_id, annotation_type))
-        rows = cursor.fetchall()
-        conn.close()
-        return [dict(row) for row in rows]
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT at.*, tg.group_name, tg.display_name, tg.group_type
+                FROM annotation_tags at
+                JOIN tag_groups tg ON at.group_id = tg.id
+                WHERE at.annotation_id = %s AND at.annotation_type = %s
+                ORDER BY tg.sort_order
+            ''', (annotation_id, annotation_type))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
 
     def delete_annotation_tags(self, annotation_id: int, annotation_type: str) -> bool:
         """Delete all tags for an annotation"""
-        conn = self.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            DELETE FROM annotation_tags
-            WHERE annotation_id = ? AND annotation_type = ?
-        ''', (annotation_id, annotation_type))
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
-        return success
+        with get_cursor() as cursor:
+            cursor.execute('''
+                DELETE FROM annotation_tags
+                WHERE annotation_id = %s AND annotation_type = %s
+            ''', (annotation_id, annotation_type))
+            return cursor.rowcount > 0
 
     def seed_comprehensive_tag_taxonomy(self):
         """Seed database with comprehensive multi-type tag taxonomy from ADVANCED_TAGGING_SPEC.md"""
@@ -1258,3 +884,613 @@ class VideoDatabase:
 
             for option_data in item['options']:
                 self.add_tag_option(group_id, *option_data)
+
+    # YOLO Export Configuration Management
+    def create_yolo_export_config(self, config_name: str, class_mapping: str,
+                                  description: str = None,
+                                  include_reviewed_only: bool = False,
+                                  include_ai_generated: bool = True,
+                                  include_negative_examples: bool = True,
+                                  min_confidence: float = 0.0,
+                                  export_format: str = 'yolov8') -> int:
+        """Create a new YOLO export configuration"""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO yolo_export_configs
+                (config_name, description, class_mapping, include_reviewed_only,
+                 include_ai_generated, include_negative_examples, min_confidence, export_format)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (config_name, description, class_mapping, include_reviewed_only,
+                  include_ai_generated, include_negative_examples, min_confidence, export_format))
+            result = cursor.fetchone()
+            return result['id']
+
+    def get_yolo_export_config(self, config_id: int) -> Optional[Dict]:
+        """Get a YOLO export config by ID"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT * FROM yolo_export_configs WHERE id = %s', (config_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_all_yolo_export_configs(self) -> List[Dict]:
+        """Get all YOLO export configurations"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT * FROM yolo_export_configs ORDER BY config_name')
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def update_yolo_export_config(self, config_id: int, **kwargs) -> bool:
+        """Update a YOLO export configuration"""
+        allowed_fields = ['config_name', 'description', 'class_mapping', 'include_reviewed_only',
+                         'include_ai_generated', 'include_negative_examples', 'min_confidence',
+                         'export_format', 'last_export_date', 'last_export_count']
+
+        updates = []
+        values = []
+        for field, value in kwargs.items():
+            if field in allowed_fields:
+                updates.append(f'{field} = %s')
+                values.append(value)
+
+        if not updates:
+            return False
+
+        values.append(config_id)
+        with get_cursor() as cursor:
+            cursor.execute(f'''
+                UPDATE yolo_export_configs SET {', '.join(updates)}
+                WHERE id = %s
+            ''', values)
+            return cursor.rowcount > 0
+
+    def delete_yolo_export_config(self, config_id: int) -> bool:
+        """Delete a YOLO export configuration"""
+        with get_cursor() as cursor:
+            cursor.execute('DELETE FROM yolo_export_configs WHERE id = %s', (config_id,))
+            return cursor.rowcount > 0
+
+    def add_video_to_export_config(self, config_id: int, video_id: int,
+                                   included: bool = True, notes: str = None) -> int:
+        """Add a video to an export configuration"""
+        with get_cursor() as cursor:
+            try:
+                cursor.execute('''
+                    INSERT INTO yolo_export_videos (export_config_id, video_id, included, notes)
+                    VALUES (%s, %s, %s, %s)
+                    RETURNING id
+                ''', (config_id, video_id, included, notes))
+                result = cursor.fetchone()
+                return result['id']
+            except psycopg2.IntegrityError:
+                # Already exists, update instead
+                cursor.connection.rollback()
+                cursor.execute('''
+                    UPDATE yolo_export_videos SET included = %s, notes = %s
+                    WHERE export_config_id = %s AND video_id = %s
+                ''', (included, notes, config_id, video_id))
+                return -1  # Indicate update instead of insert
+
+    def get_export_config_videos(self, config_id: int, included_only: bool = True) -> List[Dict]:
+        """Get all videos for an export configuration"""
+        with get_cursor(commit=False) as cursor:
+            if included_only:
+                cursor.execute('''
+                    SELECT v.*, ev.included, ev.notes as export_notes
+                    FROM videos v
+                    JOIN yolo_export_videos ev ON v.id = ev.video_id
+                    WHERE ev.export_config_id = %s AND ev.included = true
+                    ORDER BY v.filename
+                ''', (config_id,))
+            else:
+                cursor.execute('''
+                    SELECT v.*, ev.included, ev.notes as export_notes
+                    FROM videos v
+                    JOIN yolo_export_videos ev ON v.id = ev.video_id
+                    WHERE ev.export_config_id = %s
+                    ORDER BY v.filename
+                ''', (config_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def add_export_filter(self, config_id: int, filter_type: str,
+                         filter_value: str, is_exclusion: bool = False) -> int:
+        """Add a filter rule to an export configuration"""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO yolo_export_filters (export_config_id, filter_type, filter_value, is_exclusion)
+                VALUES (%s, %s, %s, %s)
+                RETURNING id
+            ''', (config_id, filter_type, filter_value, is_exclusion))
+            result = cursor.fetchone()
+            return result['id']
+
+    def get_export_filters(self, config_id: int) -> List[Dict]:
+        """Get all filters for an export configuration"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT * FROM yolo_export_filters
+                WHERE export_config_id = %s
+                ORDER BY filter_type
+            ''', (config_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def log_export(self, config_id: int, export_path: str, video_count: int,
+                   annotation_count: int, export_format: str, notes: str = None) -> int:
+        """Log an export operation"""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO yolo_export_logs
+                (export_config_id, export_path, video_count, annotation_count, export_format, notes)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (config_id, export_path, video_count, annotation_count, export_format, notes))
+            result = cursor.fetchone()
+
+            # Update the config's last export info
+            cursor.execute('''
+                UPDATE yolo_export_configs
+                SET last_export_date = CURRENT_TIMESTAMP, last_export_count = %s
+                WHERE id = %s
+            ''', (annotation_count, config_id))
+
+            return result['id']
+
+    def get_export_logs(self, config_id: int = None, limit: int = 50) -> List[Dict]:
+        """Get export logs, optionally filtered by config"""
+        with get_cursor(commit=False) as cursor:
+            if config_id:
+                cursor.execute('''
+                    SELECT el.*, ec.config_name
+                    FROM yolo_export_logs el
+                    JOIN yolo_export_configs ec ON el.export_config_id = ec.id
+                    WHERE el.export_config_id = %s
+                    ORDER BY el.export_date DESC
+                    LIMIT %s
+                ''', (config_id, limit))
+            else:
+                cursor.execute('''
+                    SELECT el.*, ec.config_name
+                    FROM yolo_export_logs el
+                    JOIN yolo_export_configs ec ON el.export_config_id = ec.id
+                    ORDER BY el.export_date DESC
+                    LIMIT %s
+                ''', (limit,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    # Fleet Vehicle Management
+    def add_or_update_fleet_vehicle(self, fleet_id: str, fleet_type: str = None,
+                                     vehicle_type: str = None, vehicle_make: str = None,
+                                     vehicle_model: str = None, primary_color: str = None,
+                                     secondary_color: str = None, agency_name: str = None,
+                                     plate_number: str = None, plate_state: str = None,
+                                     notes: str = None) -> int:
+        """Add or update a fleet vehicle"""
+        with get_cursor() as cursor:
+            # Try to update first
+            cursor.execute('''
+                UPDATE fleet_vehicles
+                SET fleet_type = COALESCE(%s, fleet_type),
+                    vehicle_type = COALESCE(%s, vehicle_type),
+                    vehicle_make = COALESCE(%s, vehicle_make),
+                    vehicle_model = COALESCE(%s, vehicle_model),
+                    primary_color = COALESCE(%s, primary_color),
+                    secondary_color = COALESCE(%s, secondary_color),
+                    agency_name = COALESCE(%s, agency_name),
+                    plate_number = COALESCE(%s, plate_number),
+                    plate_state = COALESCE(%s, plate_state),
+                    notes = COALESCE(%s, notes),
+                    last_seen_date = CURRENT_TIMESTAMP,
+                    total_detections = total_detections + 1
+                WHERE fleet_id = %s
+                RETURNING id
+            ''', (fleet_type, vehicle_type, vehicle_make, vehicle_model,
+                  primary_color, secondary_color, agency_name, plate_number,
+                  plate_state, notes, fleet_id))
+
+            result = cursor.fetchone()
+            if result:
+                return result['id']
+
+            # Insert new record
+            cursor.execute('''
+                INSERT INTO fleet_vehicles
+                (fleet_id, fleet_type, vehicle_type, vehicle_make, vehicle_model,
+                 primary_color, secondary_color, agency_name, plate_number, plate_state, notes)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (fleet_id, fleet_type, vehicle_type, vehicle_make, vehicle_model,
+                  primary_color, secondary_color, agency_name, plate_number, plate_state, notes))
+            result = cursor.fetchone()
+            return result['id']
+
+    def get_fleet_vehicle(self, fleet_id: str) -> Optional[Dict]:
+        """Get a fleet vehicle by fleet ID"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT * FROM fleet_vehicles WHERE fleet_id = %s', (fleet_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_all_fleet_vehicles(self, fleet_type: str = None, limit: int = 100) -> List[Dict]:
+        """Get all fleet vehicles, optionally filtered by type"""
+        with get_cursor(commit=False) as cursor:
+            if fleet_type:
+                cursor.execute('''
+                    SELECT * FROM fleet_vehicles
+                    WHERE fleet_type = %s
+                    ORDER BY last_seen_date DESC
+                    LIMIT %s
+                ''', (fleet_type, limit))
+            else:
+                cursor.execute('''
+                    SELECT * FROM fleet_vehicles
+                    ORDER BY last_seen_date DESC
+                    LIMIT %s
+                ''', (limit,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def search_fleet_vehicles(self, query: str) -> List[Dict]:
+        """Search fleet vehicles by various fields"""
+        with get_cursor(commit=False) as cursor:
+            search_term = f'%{query}%'
+            cursor.execute('''
+                SELECT * FROM fleet_vehicles
+                WHERE fleet_id LIKE %s OR plate_number LIKE %s
+                   OR vehicle_make LIKE %s OR vehicle_model LIKE %s
+                   OR agency_name LIKE %s OR notes LIKE %s
+                ORDER BY last_seen_date DESC
+            ''', (search_term, search_term, search_term, search_term, search_term, search_term))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def link_person_to_vehicle(self, fleet_id: str, person_name: str) -> int:
+        """Link a person to a fleet vehicle"""
+        with get_cursor() as cursor:
+            # Try to update existing link
+            cursor.execute('''
+                UPDATE vehicle_person_links
+                SET last_seen_together = CURRENT_TIMESTAMP,
+                    times_seen_together = times_seen_together + 1
+                WHERE vehicle_fleet_id = %s AND person_name = %s
+                RETURNING id
+            ''', (fleet_id, person_name))
+
+            result = cursor.fetchone()
+            if result:
+                return result['id']
+
+            # Create new link
+            cursor.execute('''
+                INSERT INTO vehicle_person_links (vehicle_fleet_id, person_name)
+                VALUES (%s, %s)
+                RETURNING id
+            ''', (fleet_id, person_name))
+            result = cursor.fetchone()
+            return result['id']
+
+    def get_vehicle_persons(self, fleet_id: str) -> List[Dict]:
+        """Get all persons linked to a vehicle"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT * FROM vehicle_person_links
+                WHERE vehicle_fleet_id = %s
+                ORDER BY times_seen_together DESC
+            ''', (fleet_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_person_vehicles(self, person_name: str) -> List[Dict]:
+        """Get all vehicles linked to a person"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT fv.*, vpl.first_seen_together, vpl.last_seen_together, vpl.times_seen_together
+                FROM fleet_vehicles fv
+                JOIN vehicle_person_links vpl ON fv.fleet_id = vpl.vehicle_fleet_id
+                WHERE vpl.person_name = %s
+                ORDER BY vpl.times_seen_together DESC
+            ''', (person_name,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    # Trailer Management
+    def add_or_update_trailer(self, trailer_id: str, trailer_type: str = None,
+                              trailer_color: str = None, plate_number: str = None,
+                              plate_state: str = None, notes: str = None) -> int:
+        """Add or update a trailer"""
+        with get_cursor() as cursor:
+            # Try to update first
+            cursor.execute('''
+                UPDATE trailers
+                SET trailer_type = COALESCE(%s, trailer_type),
+                    trailer_color = COALESCE(%s, trailer_color),
+                    plate_number = COALESCE(%s, plate_number),
+                    plate_state = COALESCE(%s, plate_state),
+                    notes = COALESCE(%s, notes),
+                    last_seen_date = CURRENT_TIMESTAMP,
+                    total_detections = total_detections + 1
+                WHERE trailer_id = %s
+                RETURNING id
+            ''', (trailer_type, trailer_color, plate_number, plate_state, notes, trailer_id))
+
+            result = cursor.fetchone()
+            if result:
+                return result['id']
+
+            # Insert new record
+            cursor.execute('''
+                INSERT INTO trailers
+                (trailer_id, trailer_type, trailer_color, plate_number, plate_state, notes)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (trailer_id, trailer_type, trailer_color, plate_number, plate_state, notes))
+            result = cursor.fetchone()
+            return result['id']
+
+    def get_trailer(self, trailer_id: str) -> Optional[Dict]:
+        """Get a trailer by trailer ID"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT * FROM trailers WHERE trailer_id = %s', (trailer_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_all_trailers(self, limit: int = 100) -> List[Dict]:
+        """Get all trailers"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT * FROM trailers
+                ORDER BY last_seen_date DESC
+                LIMIT %s
+            ''', (limit,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def link_trailer_to_vehicle(self, fleet_id: str, trailer_id: str) -> int:
+        """Link a trailer to a fleet vehicle"""
+        with get_cursor() as cursor:
+            # Try to update existing link
+            cursor.execute('''
+                UPDATE vehicle_trailer_links
+                SET last_seen_together = CURRENT_TIMESTAMP,
+                    times_seen_together = times_seen_together + 1
+                WHERE vehicle_fleet_id = %s AND trailer_id = %s
+                RETURNING id
+            ''', (fleet_id, trailer_id))
+
+            result = cursor.fetchone()
+            if result:
+                return result['id']
+
+            # Create new link
+            cursor.execute('''
+                INSERT INTO vehicle_trailer_links (vehicle_fleet_id, trailer_id)
+                VALUES (%s, %s)
+                RETURNING id
+            ''', (fleet_id, trailer_id))
+            result = cursor.fetchone()
+            return result['id']
+
+    def get_vehicle_trailers(self, fleet_id: str) -> List[Dict]:
+        """Get all trailers linked to a vehicle"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT t.*, vtl.first_seen_together, vtl.last_seen_together, vtl.times_seen_together
+                FROM trailers t
+                JOIN vehicle_trailer_links vtl ON t.trailer_id = vtl.trailer_id
+                WHERE vtl.vehicle_fleet_id = %s
+                ORDER BY vtl.times_seen_together DESC
+            ''', (fleet_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_trailer_vehicles(self, trailer_id: str) -> List[Dict]:
+        """Get all vehicles linked to a trailer"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT fv.*, vtl.first_seen_together, vtl.last_seen_together, vtl.times_seen_together
+                FROM fleet_vehicles fv
+                JOIN vehicle_trailer_links vtl ON fv.fleet_id = vtl.vehicle_fleet_id
+                WHERE vtl.trailer_id = %s
+                ORDER BY vtl.times_seen_together DESC
+            ''', (trailer_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def update_video(self, video_id: int, **kwargs) -> bool:
+        """Update video fields"""
+        allowed_fields = ['filename', 'original_url', 'title', 'duration', 'width', 'height',
+                         'file_size', 'thumbnail_path', 'notes']
+
+        updates = []
+        values = []
+        for field, value in kwargs.items():
+            if field in allowed_fields:
+                updates.append(f'{field} = %s')
+                values.append(value)
+
+        if not updates:
+            return False
+
+        values.append(video_id)
+        with get_cursor() as cursor:
+            cursor.execute(f'''
+                UPDATE videos SET {', '.join(updates)}
+                WHERE id = %s
+            ''', values)
+            return cursor.rowcount > 0
+
+    def get_video_by_filename(self, filename: str) -> Optional[Dict]:
+        """Get video by filename"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT * FROM videos WHERE filename = %s', (filename,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_video_tags(self, video_id: int) -> List[Dict]:
+        """Get all tags for a specific video"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT t.*
+                FROM tags t
+                JOIN video_tags vt ON t.id = vt.tag_id
+                WHERE vt.video_id = %s
+                ORDER BY t.name
+            ''', (video_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_videos_by_tag(self, tag_name: str) -> List[Dict]:
+        """Get all videos with a specific tag"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT v.*
+                FROM videos v
+                JOIN video_tags vt ON v.id = vt.video_id
+                JOIN tags t ON vt.tag_id = t.id
+                WHERE t.name = %s
+                ORDER BY v.upload_date DESC
+            ''', (tag_name,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_total_video_count(self) -> int:
+        """Get total number of videos"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT COUNT(*) as count FROM videos')
+            result = cursor.fetchone()
+            return result['count'] if result else 0
+
+    def get_total_annotation_count(self) -> int:
+        """Get total number of keyframe annotations"""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT COUNT(*) as count FROM keyframe_annotations')
+            result = cursor.fetchone()
+            return result['count'] if result else 0
+
+    def get_annotations_for_export(self, config_id: int) -> List[Dict]:
+        """Get all annotations for videos in an export configuration"""
+        with get_cursor(commit=False) as cursor:
+            config = self.get_yolo_export_config(config_id)
+            if not config:
+                return []
+
+            query = '''
+                SELECT ka.*, v.filename, v.width as video_width, v.height as video_height
+                FROM keyframe_annotations ka
+                JOIN videos v ON ka.video_id = v.id
+                JOIN yolo_export_videos ev ON v.id = ev.video_id
+                WHERE ev.export_config_id = %s AND ev.included = true
+            '''
+            params = [config_id]
+
+            if config.get('include_reviewed_only'):
+                query += ' AND ka.reviewed = true'
+
+            if config.get('min_confidence', 0) > 0:
+                # Note: confidence filtering would require an additional column
+                pass
+
+            query += ' ORDER BY v.filename, ka.timestamp'
+
+            cursor.execute(query, params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def bulk_add_keyframe_annotations(self, annotations: List[Dict]) -> List[int]:
+        """Bulk insert keyframe annotations for better performance"""
+        if not annotations:
+            return []
+
+        with get_cursor() as cursor:
+            ids = []
+            for ann in annotations:
+                cursor.execute('''
+                    INSERT INTO keyframe_annotations
+                    (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
+                     activity_tag, moment_tag, is_negative, comment, reviewed)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                ''', (
+                    ann['video_id'], ann['timestamp'],
+                    ann['bbox_x'], ann['bbox_y'], ann['bbox_width'], ann['bbox_height'],
+                    ann.get('activity_tag'), ann.get('moment_tag'),
+                    ann.get('is_negative', False), ann.get('comment'),
+                    ann.get('reviewed', False)
+                ))
+                result = cursor.fetchone()
+                ids.append(result['id'])
+            return ids
+
+    def delete_all_keyframe_annotations_for_video(self, video_id: int) -> int:
+        """Delete all keyframe annotations for a video, return count deleted"""
+        with get_cursor() as cursor:
+            cursor.execute('DELETE FROM keyframe_annotations WHERE video_id = %s', (video_id,))
+            return cursor.rowcount
+
+    def get_unreviewed_annotations(self, video_id: int = None, limit: int = 100) -> List[Dict]:
+        """Get unreviewed annotations, optionally filtered by video"""
+        with get_cursor(commit=False) as cursor:
+            if video_id:
+                cursor.execute('''
+                    SELECT ka.*, v.filename
+                    FROM keyframe_annotations ka
+                    JOIN videos v ON ka.video_id = v.id
+                    WHERE ka.reviewed = false AND ka.video_id = %s
+                    ORDER BY ka.timestamp
+                    LIMIT %s
+                ''', (video_id, limit))
+            else:
+                cursor.execute('''
+                    SELECT ka.*, v.filename
+                    FROM keyframe_annotations ka
+                    JOIN videos v ON ka.video_id = v.id
+                    WHERE ka.reviewed = false
+                    ORDER BY v.filename, ka.timestamp
+                    LIMIT %s
+                ''', (limit,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def mark_annotations_reviewed(self, annotation_ids: List[int]) -> int:
+        """Mark multiple annotations as reviewed"""
+        if not annotation_ids:
+            return 0
+
+        with get_cursor() as cursor:
+            placeholders = ','.join(['%s'] * len(annotation_ids))
+            cursor.execute(f'''
+                UPDATE keyframe_annotations
+                SET reviewed = true
+                WHERE id IN ({placeholders})
+            ''', annotation_ids)
+            return cursor.rowcount
+
+    def get_statistics(self) -> Dict:
+        """Get database statistics"""
+        with get_cursor(commit=False) as cursor:
+            stats = {}
+
+            cursor.execute('SELECT COUNT(*) as count FROM videos')
+            stats['total_videos'] = cursor.fetchone()['count']
+
+            cursor.execute('SELECT COUNT(*) as count FROM keyframe_annotations')
+            stats['total_annotations'] = cursor.fetchone()['count']
+
+            cursor.execute('SELECT COUNT(*) as count FROM keyframe_annotations WHERE reviewed = true')
+            stats['reviewed_annotations'] = cursor.fetchone()['count']
+
+            cursor.execute('SELECT COUNT(*) as count FROM tags')
+            stats['total_tags'] = cursor.fetchone()['count']
+
+            cursor.execute('SELECT COUNT(*) as count FROM fleet_vehicles')
+            stats['total_fleet_vehicles'] = cursor.fetchone()['count']
+
+            cursor.execute('SELECT COUNT(*) as count FROM trailers')
+            stats['total_trailers'] = cursor.fetchone()['count']
+
+            cursor.execute('SELECT COUNT(*) as count FROM yolo_export_configs')
+            stats['total_export_configs'] = cursor.fetchone()['count']
+
+            return stats
