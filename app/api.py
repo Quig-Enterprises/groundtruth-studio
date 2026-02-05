@@ -2,8 +2,11 @@ from flask import Flask, request, jsonify, send_from_directory, render_template
 from werkzeug.utils import secure_filename
 import os
 import json
+import atexit
 from pathlib import Path
 from database import VideoDatabase
+from app.db_connection import init_connection_pool, close_connection_pool
+from psycopg2 import extras
 from downloader import VideoDownloader
 from video_utils import VideoProcessor
 from download_queue import DownloadQueue
@@ -24,7 +27,10 @@ BASE_DIR = Path(__file__).parent.parent
 DOWNLOAD_DIR = BASE_DIR / 'downloads'
 THUMBNAIL_DIR = BASE_DIR / 'thumbnails'
 EXPORT_DIR = BASE_DIR / 'exports'
-DB_PATH = BASE_DIR / 'video_archive.db'
+
+# Initialize PostgreSQL connection pool
+init_connection_pool()
+atexit.register(close_connection_pool)
 
 # EcoEye API Configuration
 ECOEYE_API_BASE = 'https://alert.ecoeyetech.com'
@@ -38,16 +44,16 @@ def ecoeye_request(method, endpoint, **kwargs):
     url = f"{ECOEYE_API_BASE}/{endpoint}"
     return requests.request(method, url, headers=headers, **kwargs)
 
-db = VideoDatabase(str(DB_PATH))
+db = VideoDatabase()  # Uses DATABASE_URL from environment
 downloader = VideoDownloader(str(DOWNLOAD_DIR))
 processor = VideoProcessor(str(THUMBNAIL_DIR))
 download_queue = DownloadQueue(DOWNLOAD_DIR, THUMBNAIL_DIR, db)
 yolo_exporter = YOLOExporter(db, DOWNLOAD_DIR, EXPORT_DIR)
 vibration_exporter = VibrationExporter(db, EXPORT_DIR)
-topology_learner = CameraTopologyLearner(str(DB_PATH))
+topology_learner = CameraTopologyLearner()  # Uses DATABASE_URL from environment
 
 # Initialize sync components
-sync_config = SyncConfigManager(str(DB_PATH))
+sync_config = SyncConfigManager()  # Uses DATABASE_URL from environment
 ecoeye_client = None  # Initialized on-demand with credentials
 unifi_client = None  # Initialized on-demand with credentials
 
@@ -113,36 +119,34 @@ def get_ecoeye_events():
         if result.get('success') and result.get('events'):
             # Cross-reference with local database to find imported events
             # Look for videos with ecoeye:// URLs in original_url
-            conn = db.get_connection()
-            cursor = conn.cursor()
+            with db.get_connection() as conn:
+                cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-            # Get all ecoeye event IDs that have been imported locally
-            cursor.execute('''
-                SELECT
-                    REPLACE(original_url, 'ecoeye://', '') as event_id,
-                    id as local_id,
-                    filename,
-                    thumbnail_path,
-                    title
-                FROM videos
-                WHERE original_url LIKE 'ecoeye://%'
-            ''')
+                # Get all ecoeye event IDs that have been imported locally
+                cursor.execute('''
+                    SELECT
+                        REPLACE(original_url, 'ecoeye://', '') as event_id,
+                        id as local_id,
+                        filename,
+                        thumbnail_path,
+                        title
+                    FROM videos
+                    WHERE original_url LIKE 'ecoeye://%%'
+                ''')
 
-            local_imports = {}
-            for row in cursor.fetchall():
-                event_id = row['event_id']
-                filename = row['filename']
-                # Check if it's just metadata or has actual video
-                has_local_video = not filename.endswith('.placeholder')
-                local_imports[event_id] = {
-                    'local_id': row['local_id'],
-                    'filename': filename,
-                    'thumbnail_path': row['thumbnail_path'],
-                    'has_local_video': has_local_video,
-                    'title': row['title']
-                }
-
-            conn.close()
+                local_imports = {}
+                for row in cursor.fetchall():
+                    event_id = row['event_id']
+                    filename = row['filename']
+                    # Check if it's just metadata or has actual video
+                    has_local_video = not filename.endswith('.placeholder')
+                    local_imports[event_id] = {
+                        'local_id': row['local_id'],
+                        'filename': filename,
+                        'thumbnail_path': row['thumbnail_path'],
+                        'has_local_video': has_local_video,
+                        'title': row['title']
+                    }
 
             # Enrich events with local status
             for event in result['events']:
@@ -183,18 +187,18 @@ def sync_ecoeye_sample():
         return jsonify({'success': False, 'error': 'event_id required'}), 400
 
     # Check if already imported
-    conn = db.get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT id FROM videos WHERE original_url LIKE ?", (f"%{event_id}%",))
-    existing = cursor.fetchone()
-    if existing:
-        print(f"[EcoEye Sync] Event already imported: {event_id} -> record {existing[0]}")
-        return jsonify({
-            'success': True,
-            'record_id': existing[0],
-            'message': 'Event already imported',
-            'already_imported': True
-        })
+    with db.get_connection() as conn:
+        cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+        cursor.execute("SELECT id FROM videos WHERE original_url LIKE %s", (f"%{event_id}%",))
+        existing = cursor.fetchone()
+        if existing:
+            print(f"[EcoEye Sync] Event already imported: {event_id} -> record {existing['id']}")
+            return jsonify({
+                'success': True,
+                'record_id': existing['id'],
+                'message': 'Event already imported',
+                'already_imported': True
+            })
 
     print(f"[EcoEye Sync] Looking for event: {event_id}")
 
@@ -999,14 +1003,14 @@ def add_annotation_tags(annotation_id):
         scenario_group = db.get_tag_group_by_name('_scenario_data')
         if not scenario_group:
             # Create it if it doesn't exist
-            conn = db.get_connection()
-            cursor = conn.cursor()
-            cursor.execute('''
-                INSERT OR IGNORE INTO tag_groups (group_name, display_name, group_type, description, is_required, applies_to, sort_order)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            ''', ('_scenario_data', 'Scenario Data', 'text', 'Structured scenario data (JSON)', 0, 'both', 999))
-            conn.commit()
-            conn.close()
+            with db.get_connection() as conn:
+                cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+                cursor.execute('''
+                    INSERT INTO tag_groups (group_name, display_name, group_type, description, is_required, applies_to, sort_order)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (group_name) DO NOTHING
+                ''', ('_scenario_data', 'Scenario Data', 'text', 'Structured scenario data (JSON)', 0, 'both', 999))
+                conn.commit()
             scenario_group = db.get_tag_group_by_name('_scenario_data')
             print(f"[API] Created _scenario_data tag group with id={scenario_group['id']}")
 
@@ -1181,17 +1185,16 @@ def export_yolo_dataset(config_id):
 def get_yolo_activity_tags():
     """Get all unique activity tags from annotations for YOLO export"""
     try:
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT DISTINCT activity_tag, COUNT(*) as count
-            FROM keyframe_annotations
-            WHERE activity_tag IS NOT NULL AND activity_tag != ''
-            GROUP BY activity_tag
-            ORDER BY count DESC
-        ''')
-        tags = [{'name': row[0], 'count': row[1]} for row in cursor.fetchall()]
-        conn.close()
+        with db.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cursor.execute('''
+                SELECT DISTINCT activity_tag, COUNT(*) as count
+                FROM keyframe_annotations
+                WHERE activity_tag IS NOT NULL AND activity_tag != ''
+                GROUP BY activity_tag
+                ORDER BY count DESC
+            ''')
+            tags = [{'name': row['activity_tag'], 'count': row['count']} for row in cursor.fetchall()]
         return jsonify({'success': True, 'tags': tags})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1206,114 +1209,113 @@ def person_manager():
 def get_person_detections():
     """Get all person identification annotations with names"""
     try:
-        conn = db.get_connection()
-        cursor = conn.cursor()
+        with db.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-        # Get all keyframe annotations that are person identifications
-        # (have person_name tag or are from person_identification scenario)
-        cursor.execute('''
-            SELECT
-                ka.id,
-                ka.video_id,
-                ka.timestamp,
-                ka.bbox_x,
-                ka.bbox_y,
-                ka.bbox_width,
-                ka.bbox_height,
-                ka.created_date,
-                v.title as video_title,
-                v.thumbnail_path,
-                GROUP_CONCAT(
-                    CASE WHEN at.tag_value LIKE '%person_name%'
-                    THEN REPLACE(at.tag_value, '"person_name":', '')
-                    END
-                ) as person_name_json,
-                GROUP_CONCAT(
-                    CASE WHEN at.tag_value LIKE '%pose%'
-                    THEN REPLACE(REPLACE(at.tag_value, '"pose":', ''), '"', '')
-                    END
-                ) as pose,
-                GROUP_CONCAT(
-                    CASE WHEN at.tag_value LIKE '%distance_category%'
-                    THEN REPLACE(REPLACE(at.tag_value, '"distance_category":', ''), '"', '')
-                    END
-                ) as distance_category
-            FROM keyframe_annotations ka
-            JOIN videos v ON ka.video_id = v.id
-            LEFT JOIN annotation_tags at ON ka.id = at.annotation_id AND at.annotation_type = 'keyframe'
-            WHERE EXISTS (
-                SELECT 1 FROM annotation_tags at2
-                WHERE at2.annotation_id = ka.id
-                AND at2.annotation_type = 'keyframe'
-                AND (at2.tag_value LIKE '%person_identification%' OR at2.tag_value LIKE '%person_name%')
-            )
-            GROUP BY ka.id
-            ORDER BY ka.created_date DESC
-        ''')
+            # Get all keyframe annotations that are person identifications
+            # (have person_name tag or are from person_identification scenario)
+            cursor.execute('''
+                SELECT
+                    ka.id,
+                    ka.video_id,
+                    ka.timestamp,
+                    ka.bbox_x,
+                    ka.bbox_y,
+                    ka.bbox_width,
+                    ka.bbox_height,
+                    ka.created_date,
+                    v.title as video_title,
+                    v.thumbnail_path,
+                    STRING_AGG(
+                        CASE WHEN at.tag_value LIKE '%%person_name%%'
+                        THEN REPLACE(at.tag_value, '"person_name":', '')
+                        END, ','
+                    ) as person_name_json,
+                    STRING_AGG(
+                        CASE WHEN at.tag_value LIKE '%%pose%%'
+                        THEN REPLACE(REPLACE(at.tag_value, '"pose":', ''), '"', '')
+                        END, ','
+                    ) as pose,
+                    STRING_AGG(
+                        CASE WHEN at.tag_value LIKE '%%distance_category%%'
+                        THEN REPLACE(REPLACE(at.tag_value, '"distance_category":', ''), '"', '')
+                        END, ','
+                    ) as distance_category
+                FROM keyframe_annotations ka
+                JOIN videos v ON ka.video_id = v.id
+                LEFT JOIN annotation_tags at ON ka.id = at.annotation_id AND at.annotation_type = 'keyframe'
+                WHERE EXISTS (
+                    SELECT 1 FROM annotation_tags at2
+                    WHERE at2.annotation_id = ka.id
+                    AND at2.annotation_type = 'keyframe'
+                    AND (at2.tag_value LIKE '%%person_identification%%' OR at2.tag_value LIKE '%%person_name%%')
+                )
+                GROUP BY ka.id, ka.video_id, ka.timestamp, ka.bbox_x, ka.bbox_y, ka.bbox_width, ka.bbox_height, ka.created_date, v.title, v.thumbnail_path
+                ORDER BY ka.created_date DESC
+            ''')
 
-        detections = []
-        for row in cursor.fetchall():
-            # Parse person name from JSON tag value
-            person_name = None
-            if row['person_name_json']:
-                try:
-                    # Extract value from JSON string
-                    import re
-                    match = re.search(r'"([^"]*)"', row['person_name_json'])
-                    if match:
-                        person_name = match.group(1)
-                except:
-                    pass
+            detections = []
+            for row in cursor.fetchall():
+                # Parse person name from JSON tag value
+                person_name = None
+                if row['person_name_json']:
+                    try:
+                        # Extract value from JSON string
+                        import re
+                        match = re.search(r'"([^"]*)"', row['person_name_json'])
+                        if match:
+                            person_name = match.group(1)
+                    except:
+                        pass
 
-            detections.append({
-                'id': row['id'],
-                'video_id': row['video_id'],
-                'video_title': row['video_title'],
-                'timestamp': row['timestamp'],
-                'bbox_x': row['bbox_x'],
-                'bbox_y': row['bbox_y'],
-                'bbox_width': row['bbox_width'],
-                'bbox_height': row['bbox_height'],
-                'thumbnail_path': row['thumbnail_path'],
-                'person_name': person_name,
-                'pose': row['pose'],
-                'distance_category': row['distance_category'],
-                'created_date': row['created_date']
-            })
+                detections.append({
+                    'id': row['id'],
+                    'video_id': row['video_id'],
+                    'video_title': row['video_title'],
+                    'timestamp': row['timestamp'],
+                    'bbox_x': row['bbox_x'],
+                    'bbox_y': row['bbox_y'],
+                    'bbox_width': row['bbox_width'],
+                    'bbox_height': row['bbox_height'],
+                    'thumbnail_path': row['thumbnail_path'],
+                    'person_name': person_name,
+                    'pose': row['pose'],
+                    'distance_category': row['distance_category'],
+                    'created_date': row['created_date']
+                })
 
-        # Get statistics
-        cursor.execute('''
-            SELECT COUNT(DISTINCT video_id) FROM keyframe_annotations
-            WHERE id IN (
-                SELECT annotation_id FROM annotation_tags
-                WHERE annotation_type = 'keyframe'
-                AND (tag_value LIKE '%person_identification%' OR tag_value LIKE '%person_name%')
-            )
-        ''')
-        videos_with_people = cursor.fetchone()[0]
+            # Get statistics
+            cursor.execute('''
+                SELECT COUNT(DISTINCT video_id) FROM keyframe_annotations
+                WHERE id IN (
+                    SELECT annotation_id FROM annotation_tags
+                    WHERE annotation_type = 'keyframe'
+                    AND (tag_value LIKE '%%person_identification%%' OR tag_value LIKE '%%person_name%%')
+                )
+            ''')
+            videos_with_people = cursor.fetchone()['count']
 
-        # Count named vs unknown
-        named_count = len([d for d in detections if d['person_name'] and d['person_name'] != 'Unknown'])
-        unknown_count = len(detections) - named_count
+            # Count named vs unknown
+            named_count = len([d for d in detections if d['person_name'] and d['person_name'] != 'Unknown'])
+            unknown_count = len(detections) - named_count
 
-        # Get unique people
-        people = {}
-        for d in detections:
-            name = d['person_name'] or 'Unknown'
-            if name not in people:
-                people[name] = {'name': name, 'count': 0}
-            people[name]['count'] += 1
+            # Get unique people
+            people = {}
+            for d in detections:
+                name = d['person_name'] or 'Unknown'
+                if name not in people:
+                    people[name] = {'name': name, 'count': 0}
+                people[name]['count'] += 1
 
-        people_list = sorted(people.values(), key=lambda x: x['count'], reverse=True)
+            people_list = sorted(people.values(), key=lambda x: x['count'], reverse=True)
 
-        stats = {
-            'total_detections': len(detections),
-            'named_people': named_count,
-            'unknown': unknown_count,
-            'videos_with_people': videos_with_people
-        }
+            stats = {
+                'total_detections': len(detections),
+                'named_people': named_count,
+                'unknown': unknown_count,
+                'videos_with_people': videos_with_people
+            }
 
-        conn.close()
         return jsonify({
             'success': True,
             'detections': detections,
@@ -1329,26 +1331,25 @@ def get_recent_person_names():
     """Get recently used person names"""
     try:
         limit = int(request.args.get('limit', 10))
-        conn = db.get_connection()
-        cursor = conn.cursor()
+        with db.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-        # Get unique person names from annotation_tags
-        cursor.execute('''
-            SELECT DISTINCT
-                REPLACE(REPLACE(tag_value, '"person_name":', ''), '"', '') as person_name,
-                MAX(created_date) as last_used
-            FROM annotation_tags
-            WHERE annotation_type = 'keyframe'
-            AND tag_value LIKE '%person_name%'
-            AND tag_value NOT LIKE '%Unknown%'
-            AND tag_value != ''
-            GROUP BY person_name
-            ORDER BY last_used DESC
-            LIMIT ?
-        ''', (limit,))
+            # Get unique person names from annotation_tags
+            cursor.execute('''
+                SELECT DISTINCT
+                    REPLACE(REPLACE(tag_value, '"person_name":', ''), '"', '') as person_name,
+                    MAX(created_date) as last_used
+                FROM annotation_tags
+                WHERE annotation_type = 'keyframe'
+                AND tag_value LIKE '%%person_name%%'
+                AND tag_value NOT LIKE '%%Unknown%%'
+                AND tag_value != ''
+                GROUP BY REPLACE(REPLACE(tag_value, '"person_name":', ''), '"', '')
+                ORDER BY last_used DESC
+                LIMIT %s
+            ''', (limit,))
 
-        names = [row['person_name'] for row in cursor.fetchall() if row['person_name']]
-        conn.close()
+            names = [row['person_name'] for row in cursor.fetchall() if row['person_name']]
 
         return jsonify({'success': True, 'names': names})
     except Exception as e:
@@ -1364,25 +1365,24 @@ def get_recent_tag_values():
         if not tag_name:
             return jsonify({'success': False, 'error': 'tag_name required'}), 400
 
-        conn = db.get_connection()
-        cursor = conn.cursor()
+        with db.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-        # Get unique values for this tag
-        cursor.execute('''
-            SELECT DISTINCT
-                REPLACE(REPLACE(REPLACE(tag_value, ?, ''), '"', ''), ':', '') as tag_value,
-                MAX(created_date) as last_used
-            FROM annotation_tags
-            WHERE annotation_type = 'keyframe'
-            AND tag_value LIKE ?
-            AND tag_value != ''
-            GROUP BY tag_value
-            ORDER BY last_used DESC
-            LIMIT ?
-        ''', (f'"{tag_name}"', f'%{tag_name}%', limit))
+            # Get unique values for this tag
+            cursor.execute('''
+                SELECT DISTINCT
+                    REPLACE(REPLACE(REPLACE(tag_value, %s, ''), '"', ''), ':', '') as tag_value,
+                    MAX(created_date) as last_used
+                FROM annotation_tags
+                WHERE annotation_type = 'keyframe'
+                AND tag_value LIKE %s
+                AND tag_value != ''
+                GROUP BY REPLACE(REPLACE(REPLACE(tag_value, %s, ''), '"', ''), ':', '')
+                ORDER BY last_used DESC
+                LIMIT %s
+            ''', (f'"{tag_name}"', f'%{tag_name}%', f'"{tag_name}"', limit))
 
-        values = [row['tag_value'].strip() for row in cursor.fetchall() if row['tag_value'] and row['tag_value'].strip()]
-        conn.close()
+            values = [row['tag_value'].strip() for row in cursor.fetchall() if row['tag_value'] and row['tag_value'].strip()]
 
         return jsonify({'success': True, 'values': values})
     except Exception as e:
@@ -1400,56 +1400,56 @@ def assign_person_name():
         if not detection_ids or not person_name:
             return jsonify({'success': False, 'error': 'Missing required fields'}), 400
 
-        conn = db.get_connection()
-        cursor = conn.cursor()
+        with db.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-        updated_count = 0
-        for detection_id in detection_ids:
-            # Check if person_name tag already exists for this annotation
-            cursor.execute('''
-                SELECT id FROM annotation_tags
-                WHERE annotation_id = ? AND annotation_type = 'keyframe'
-                AND tag_value LIKE '%person_name%'
-            ''', (detection_id,))
-
-            existing = cursor.fetchone()
-
-            tag_value = json.dumps({'person_name': person_name})
-
-            if existing:
-                # Update existing tag
+            updated_count = 0
+            for detection_id in detection_ids:
+                # Check if person_name tag already exists for this annotation
                 cursor.execute('''
-                    UPDATE annotation_tags
-                    SET tag_value = ?, created_date = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                ''', (tag_value, existing['id']))
-            else:
-                # Create new tag (need to get or create tag group first)
-                cursor.execute('''
-                    SELECT id FROM tag_groups WHERE group_name = 'person_name'
-                ''')
-                group = cursor.fetchone()
+                    SELECT id FROM annotation_tags
+                    WHERE annotation_id = %s AND annotation_type = 'keyframe'
+                    AND tag_value LIKE '%%person_name%%'
+                ''', (detection_id,))
 
-                if not group:
-                    # Create tag group for person names
+                existing = cursor.fetchone()
+
+                tag_value = json.dumps({'person_name': person_name})
+
+                if existing:
+                    # Update existing tag
                     cursor.execute('''
-                        INSERT INTO tag_groups (group_name, display_name, group_type, description)
-                        VALUES ('person_name', 'Person Name', 'text', 'Name of identified person')
-                    ''')
-                    group_id = cursor.lastrowid
+                        UPDATE annotation_tags
+                        SET tag_value = %s, created_date = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    ''', (tag_value, existing['id']))
                 else:
-                    group_id = group['id']
+                    # Create new tag (need to get or create tag group first)
+                    cursor.execute('''
+                        SELECT id FROM tag_groups WHERE group_name = 'person_name'
+                    ''')
+                    group = cursor.fetchone()
 
-                # Insert tag
-                cursor.execute('''
-                    INSERT INTO annotation_tags (annotation_id, annotation_type, group_id, tag_value)
-                    VALUES (?, 'keyframe', ?, ?)
-                ''', (detection_id, group_id, tag_value))
+                    if not group:
+                        # Create tag group for person names
+                        cursor.execute('''
+                            INSERT INTO tag_groups (group_name, display_name, group_type, description)
+                            VALUES ('person_name', 'Person Name', 'text', 'Name of identified person')
+                            RETURNING id
+                        ''')
+                        group_id = cursor.fetchone()['id']
+                    else:
+                        group_id = group['id']
 
-            updated_count += 1
+                    # Insert tag
+                    cursor.execute('''
+                        INSERT INTO annotation_tags (annotation_id, annotation_type, group_id, tag_value)
+                        VALUES (%s, 'keyframe', %s, %s)
+                    ''', (detection_id, group_id, tag_value))
 
-        conn.commit()
-        conn.close()
+                updated_count += 1
+
+            conn.commit()
 
         return jsonify({'success': True, 'updated_count': updated_count})
     except Exception as e:
@@ -1466,21 +1466,20 @@ def unassign_person_name():
         if not detection_ids:
             return jsonify({'success': False, 'error': 'No detection IDs provided'}), 400
 
-        conn = db.get_connection()
-        cursor = conn.cursor()
+        with db.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-        # Delete person_name tags for these detections
-        placeholders = ','.join(['?'] * len(detection_ids))
-        cursor.execute(f'''
-            DELETE FROM annotation_tags
-            WHERE annotation_id IN ({placeholders})
-            AND annotation_type = 'keyframe'
-            AND tag_value LIKE '%person_name%'
-        ''', detection_ids)
+            # Delete person_name tags for these detections
+            placeholders = ','.join(['%s'] * len(detection_ids))
+            cursor.execute(f'''
+                DELETE FROM annotation_tags
+                WHERE annotation_id IN ({placeholders})
+                AND annotation_type = 'keyframe'
+                AND tag_value LIKE '%%person_name%%'
+            ''', detection_ids)
 
-        updated_count = cursor.rowcount
-        conn.commit()
-        conn.close()
+            updated_count = cursor.rowcount
+            conn.commit()
 
         return jsonify({'success': True, 'updated_count': updated_count})
     except Exception as e:
@@ -1588,7 +1587,6 @@ def test_ecoeye_connection():
 
         # Initialize client with credentials
         ecoeye_client = EcoEyeSyncClient(
-            db_path=str(DB_PATH),
             download_dir=DOWNLOAD_DIR,
             api_key=credentials['api_key'],
             api_secret=credentials['api_secret']
@@ -2111,4 +2109,4 @@ from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5000)
+    app.run(debug=True, host='0.0.0.0', port=5050)

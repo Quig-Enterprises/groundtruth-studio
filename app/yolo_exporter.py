@@ -33,28 +33,27 @@ class YOLOExporter:
         Returns:
             config_id
         """
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute('''
-            INSERT INTO yolo_export_configs
-            (config_name, description, class_mapping, include_reviewed_only,
-             include_ai_generated, include_negative_examples, min_confidence, export_format)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        ''', (
-            config_name,
-            description,
-            json.dumps(class_mapping),
-            options.get('include_reviewed_only', 0),
-            options.get('include_ai_generated', 1),
-            options.get('include_negative_examples', 1),
-            options.get('min_confidence', 0.0),
-            options.get('export_format', 'yolov8')
-        ))
+            cursor.execute('''
+                INSERT INTO yolo_export_configs
+                (config_name, description, class_mapping, include_reviewed_only,
+                 include_ai_generated, include_negative_examples, min_confidence, export_format)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            ''', (
+                config_name,
+                description,
+                json.dumps(class_mapping),
+                options.get('include_reviewed_only', 0),
+                options.get('include_ai_generated', 1),
+                options.get('include_negative_examples', 1),
+                options.get('min_confidence', 0.0),
+                options.get('export_format', 'yolov8')
+            ))
 
-        config_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+            config_id = cursor.lastrowid
+            conn.commit()
         return config_id
 
     def add_filter(self, config_id: int, filter_type: str, filter_value: str, is_exclusion: bool = False):
@@ -68,25 +67,23 @@ class YOLOExporter:
         - date_range: Filter by date (start:end)
         - video_id: Specific video ID
         """
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute('''
-            INSERT INTO yolo_export_filters (export_config_id, filter_type, filter_value, is_exclusion)
-            VALUES (?, ?, ?, ?)
-        ''', (config_id, filter_type, filter_value, int(is_exclusion)))
+            cursor.execute('''
+                INSERT INTO yolo_export_filters (export_config_id, filter_type, filter_value, is_exclusion)
+                VALUES (%s, %s, %s, %s)
+            ''', (config_id, filter_type, filter_value, int(is_exclusion)))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get_export_configs(self) -> List[Dict]:
         """Get all export configurations"""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute('SELECT * FROM yolo_export_configs ORDER BY created_date DESC')
-        rows = cursor.fetchall()
-        conn.close()
+            cursor.execute('SELECT * FROM yolo_export_configs ORDER BY created_date DESC')
+            rows = cursor.fetchall()
 
         configs = []
         for row in rows:
@@ -103,70 +100,69 @@ class YOLOExporter:
         Returns:
             List of video_ids
         """
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Get filters
-        cursor.execute('SELECT * FROM yolo_export_filters WHERE export_config_id = ?', (config_id,))
-        filters = [dict(row) for row in cursor.fetchall()]
+            # Get filters
+            cursor.execute('SELECT * FROM yolo_export_filters WHERE export_config_id = %s', (config_id,))
+            filters = [dict(row) for row in cursor.fetchall()]
 
-        if not filters:
-            # No filters - return all videos with annotations
-            cursor.execute('''
-                SELECT DISTINCT video_id FROM keyframe_annotations
-                WHERE bbox_x IS NOT NULL AND bbox_width > 0
-            ''')
-            video_ids = [row[0] for row in cursor.fetchall()]
-        else:
-            # Apply filters
-            video_ids = set()
+            if not filters:
+                # No filters - return all videos with annotations
+                cursor.execute('''
+                    SELECT DISTINCT video_id FROM keyframe_annotations
+                    WHERE bbox_x IS NOT NULL AND bbox_width > 0
+                ''')
+                video_ids = [row[0] for row in cursor.fetchall()]
+            else:
+                # Apply filters
+                video_ids = set()
 
-            for filter_rule in filters:
-                filter_type = filter_rule['filter_type']
-                filter_value = filter_rule['filter_value']
-                is_exclusion = filter_rule['is_exclusion']
+                for filter_rule in filters:
+                    filter_type = filter_rule['filter_type']
+                    filter_value = filter_rule['filter_value']
+                    is_exclusion = filter_rule['is_exclusion']
 
-                if filter_type == 'tag':
-                    # Filter by video tag
-                    cursor.execute('''
-                        SELECT DISTINCT v.id FROM videos v
-                        JOIN video_tags vt ON v.id = vt.video_id
-                        JOIN tags t ON vt.tag_id = t.id
-                        WHERE t.name = ?
-                    ''', (filter_value,))
+                    if filter_type == 'tag':
+                        # Filter by video tag
+                        cursor.execute('''
+                            SELECT DISTINCT v.id FROM videos v
+                            JOIN video_tags vt ON v.id = vt.video_id
+                            JOIN tags t ON vt.tag_id = t.id
+                            WHERE t.name = %s
+                        ''', (filter_value,))
 
-                elif filter_type == 'activity_tag':
-                    # Filter by keyframe activity_tag
-                    cursor.execute('''
-                        SELECT DISTINCT video_id FROM keyframe_annotations
-                        WHERE activity_tag = ?
-                    ''', (filter_value,))
+                    elif filter_type == 'activity_tag':
+                        # Filter by keyframe activity_tag
+                        cursor.execute('''
+                            SELECT DISTINCT video_id FROM keyframe_annotations
+                            WHERE activity_tag = %s
+                        ''', (filter_value,))
 
-                elif filter_type == 'annotation_tag':
-                    # Filter by annotation tag (group_name:tag_value)
-                    group_name, tag_value = filter_value.split(':', 1)
-                    cursor.execute('''
-                        SELECT DISTINCT ka.video_id FROM keyframe_annotations ka
-                        JOIN annotation_tags at ON ka.id = at.annotation_id
-                        JOIN tag_groups tg ON at.group_id = tg.id
-                        WHERE tg.group_name = ? AND at.tag_value = ?
-                        AND at.annotation_type = 'keyframe'
-                    ''', (group_name, tag_value))
+                    elif filter_type == 'annotation_tag':
+                        # Filter by annotation tag (group_name:tag_value)
+                        group_name, tag_value = filter_value.split(':', 1)
+                        cursor.execute('''
+                            SELECT DISTINCT ka.video_id FROM keyframe_annotations ka
+                            JOIN annotation_tags at ON ka.id = at.annotation_id
+                            JOIN tag_groups tg ON at.group_id = tg.id
+                            WHERE tg.group_name = %s AND at.tag_value = %s
+                            AND at.annotation_type = 'keyframe'
+                        ''', (group_name, tag_value))
 
-                elif filter_type == 'video_id':
-                    cursor.execute('SELECT id FROM videos WHERE id = ?', (int(filter_value),))
+                    elif filter_type == 'video_id':
+                        cursor.execute('SELECT id FROM videos WHERE id = %s', (int(filter_value),))
 
-                filter_results = set(row[0] for row in cursor.fetchall())
+                    filter_results = set(row[0] for row in cursor.fetchall())
 
-                if is_exclusion:
-                    video_ids -= filter_results
-                else:
-                    if not video_ids:
-                        video_ids = filter_results
+                    if is_exclusion:
+                        video_ids -= filter_results
                     else:
-                        video_ids &= filter_results
+                        if not video_ids:
+                            video_ids = filter_results
+                        else:
+                            video_ids &= filter_results
 
-        conn.close()
         return list(video_ids)
 
     def export_dataset(self, config_id: int, output_name: Optional[str] = None,
@@ -181,17 +177,17 @@ class YOLOExporter:
         Returns:
             Dict with export statistics and paths
         """
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Get configuration
-        cursor.execute('SELECT * FROM yolo_export_configs WHERE id = ?', (config_id,))
-        config_row = cursor.fetchone()
-        if not config_row:
-            raise ValueError(f"Export configuration {config_id} not found")
+            # Get configuration
+            cursor.execute('SELECT * FROM yolo_export_configs WHERE id = %s', (config_id,))
+            config_row = cursor.fetchone()
+            if not config_row:
+                raise ValueError(f"Export configuration {config_id} not found")
 
-        config = dict(config_row)
-        config['class_mapping'] = json.loads(config['class_mapping'])
+            config = dict(config_row)
+            config['class_mapping'] = json.loads(config['class_mapping'])
 
         # Create export directory
         if output_name:
@@ -216,40 +212,40 @@ class YOLOExporter:
         # Collect all frame entries first for splitting
         all_frame_entries = []
 
-        for video_id in video_ids:
-            # Get video info
-            cursor.execute('SELECT * FROM videos WHERE id = ?', (video_id,))
-            video = dict(cursor.fetchone())
+            for video_id in video_ids:
+                # Get video info
+                cursor.execute('SELECT * FROM videos WHERE id = %s', (video_id,))
+                video = dict(cursor.fetchone())
 
-            # Get keyframe annotations
-            cursor.execute('''
-                SELECT * FROM keyframe_annotations
-                WHERE video_id = ?
-                AND bbox_x IS NOT NULL
-                AND bbox_width > 0
-                ORDER BY timestamp
-            ''', (video_id,))
+                # Get keyframe annotations
+                cursor.execute('''
+                    SELECT * FROM keyframe_annotations
+                    WHERE video_id = %s
+                    AND bbox_x IS NOT NULL
+                    AND bbox_width > 0
+                    ORDER BY timestamp
+                ''', (video_id,))
 
-            annotations = [dict(row) for row in cursor.fetchall()]
+                annotations = [dict(row) for row in cursor.fetchall()]
 
-            # Filter based on configuration
-            filtered_annotations = []
-            for ann in annotations:
-                if config['include_reviewed_only'] and not ann.get('reviewed'):
+                # Filter based on configuration
+                filtered_annotations = []
+                for ann in annotations:
+                    if config['include_reviewed_only'] and not ann.get('reviewed'):
+                        continue
+                    if not config['include_ai_generated'] and ann.get('reviewed') == 0:
+                        continue
+                    if not config['include_negative_examples'] and ann.get('is_negative'):
+                        continue
+                    if ann['activity_tag'] not in config['class_mapping']:
+                        continue
+                    filtered_annotations.append(ann)
+
+                if not filtered_annotations:
                     continue
-                if not config['include_ai_generated'] and ann.get('reviewed') == 0:
-                    continue
-                if not config['include_negative_examples'] and ann.get('is_negative'):
-                    continue
-                if ann['activity_tag'] not in config['class_mapping']:
-                    continue
-                filtered_annotations.append(ann)
 
-            if not filtered_annotations:
-                continue
-
-            for ann in filtered_annotations:
-                all_frame_entries.append((video_id, video, ann))
+                for ann in filtered_annotations:
+                    all_frame_entries.append((video_id, video, ann))
 
         # Shuffle and split into train/val
         rng = random.Random(seed)
@@ -388,22 +384,21 @@ python train.py --data {yaml_path.absolute()} --weights yolov5s.pt --epochs 100
         with open(readme_path, 'w') as f:
             f.write(readme_content)
 
-        # Log export
-        cursor.execute('''
-            INSERT INTO yolo_export_logs
-            (export_config_id, export_path, video_count, annotation_count, export_format)
-            VALUES (?, ?, ?, ?, ?)
-        ''', (config_id, str(export_dir), len(video_ids), total_annotations, config['export_format']))
+            # Log export
+            cursor.execute('''
+                INSERT INTO yolo_export_logs
+                (export_config_id, export_path, video_count, annotation_count, export_format)
+                VALUES (%s, %s, %s, %s, %s)
+            ''', (config_id, str(export_dir), len(video_ids), total_annotations, config['export_format']))
 
-        # Update config
-        cursor.execute('''
-            UPDATE yolo_export_configs
-            SET last_export_date = datetime(), last_export_count = ?
-            WHERE id = ?
-        ''', (total_annotations, config_id))
+            # Update config
+            cursor.execute('''
+                UPDATE yolo_export_configs
+                SET last_export_date = datetime(), last_export_count = %s
+                WHERE id = %s
+            ''', (total_annotations, config_id))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
         return {
             'success': True,
@@ -424,33 +419,31 @@ python train.py --data {yaml_path.absolute()} --weights yolov5s.pt --epochs 100
         """
         video_ids = self.get_filtered_videos(config_id)
 
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Get config
-        cursor.execute('SELECT * FROM yolo_export_configs WHERE id = ?', (config_id,))
-        config = dict(cursor.fetchone())
-        config['class_mapping'] = json.loads(config['class_mapping'])
+            # Get config
+            cursor.execute('SELECT * FROM yolo_export_configs WHERE id = %s', (config_id,))
+            config = dict(cursor.fetchone())
+            config['class_mapping'] = json.loads(config['class_mapping'])
 
-        total_annotations = 0
-        class_counts = {name: 0 for name in config['class_mapping'].keys()}
+            total_annotations = 0
+            class_counts = {name: 0 for name in config['class_mapping'].keys()}
 
-        for video_id in video_ids:
-            cursor.execute('''
-                SELECT activity_tag, COUNT(*) as count
-                FROM keyframe_annotations
-                WHERE video_id = ? AND bbox_x IS NOT NULL
-                GROUP BY activity_tag
-            ''', (video_id,))
+            for video_id in video_ids:
+                cursor.execute('''
+                    SELECT activity_tag, COUNT(*) as count
+                    FROM keyframe_annotations
+                    WHERE video_id = %s AND bbox_x IS NOT NULL
+                    GROUP BY activity_tag
+                ''', (video_id,))
 
-            for row in cursor.fetchall():
-                activity_tag = row[0]
-                count = row[1]
-                if activity_tag in class_counts:
-                    class_counts[activity_tag] += count
-                    total_annotations += count
-
-        conn.close()
+                for row in cursor.fetchall():
+                    activity_tag = row[0]
+                    count = row[1]
+                    if activity_tag in class_counts:
+                        class_counts[activity_tag] += count
+                        total_annotations += count
 
         return {
             'video_count': len(video_ids),

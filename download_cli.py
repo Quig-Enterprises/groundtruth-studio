@@ -22,7 +22,7 @@ def main():
     args = parser.parse_args()
 
     base_dir = Path(__file__).parent
-    db = VideoDatabase(str(base_dir / 'video_archive.db'))
+    db = VideoDatabase()
     downloader = VideoDownloader(str(base_dir / 'downloads'))
     processor = VideoProcessor(str(base_dir / 'thumbnails'))
 

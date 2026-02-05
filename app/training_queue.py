@@ -28,31 +28,30 @@ S3_PREFIX = 'training-jobs'
 
 def init_training_jobs_table(db):
     """Create the training_jobs table if it doesn't exist."""
-    conn = db.get_connection()
-    cursor = conn.cursor()
+    with db.get_connection() as conn:
+        cursor = conn.cursor()
 
-    cursor.execute('''
-        CREATE TABLE IF NOT EXISTS training_jobs (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            job_id TEXT NOT NULL UNIQUE,
-            job_type TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            s3_uri TEXT,
-            config_json TEXT,
-            result_json TEXT,
-            error_message TEXT,
-            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            completed_at TIMESTAMP,
-            export_config_id INTEGER,
-            FOREIGN KEY (export_config_id) REFERENCES yolo_export_configs(id)
-        )
-    ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS training_jobs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_id TEXT NOT NULL UNIQUE,
+                job_type TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                s3_uri TEXT,
+                config_json TEXT,
+                result_json TEXT,
+                error_message TEXT,
+                submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed_at TIMESTAMP,
+                export_config_id INTEGER,
+                FOREIGN KEY (export_config_id) REFERENCES yolo_export_configs(id)
+            )
+        ''')
 
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_training_jobs_job_id ON training_jobs(job_id)')
-    cursor.execute('CREATE INDEX IF NOT EXISTS idx_training_jobs_status ON training_jobs(status)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_training_jobs_job_id ON training_jobs(job_id)')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_training_jobs_status ON training_jobs(status)')
 
-    conn.commit()
-    conn.close()
+        conn.commit()
 
 
 class TrainingQueueClient:
@@ -77,14 +76,13 @@ class TrainingQueueClient:
         job_id = str(uuid.uuid4())
         s3_uri = f's3://{self.bucket}/{S3_PREFIX}/{job_id}/'
 
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            INSERT INTO training_jobs (job_id, job_type, status, s3_uri, config_json, export_config_id)
-            VALUES (?, ?, 'uploading', ?, ?, ?)
-        ''', (job_id, job_type, s3_uri, json.dumps(config), export_config_id))
-        conn.commit()
-        conn.close()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO training_jobs (job_id, job_type, status, s3_uri, config_json, export_config_id)
+                VALUES (%s, %s, 'uploading', %s, %s, %s)
+            ''', (job_id, job_type, s3_uri, json.dumps(config), export_config_id))
+            conn.commit()
 
         thread = threading.Thread(
             target=self._upload_and_queue,
@@ -142,20 +140,19 @@ class TrainingQueueClient:
 
     def _update_job_status(self, job_id: str, status: str, error_message: str = None):
         """Update job status in the database."""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        if error_message:
-            cursor.execute('''
-                UPDATE training_jobs SET status = ?, error_message = ?
-                WHERE job_id = ?
-            ''', (status, error_message, job_id))
-        else:
-            cursor.execute('''
-                UPDATE training_jobs SET status = ?
-                WHERE job_id = ?
-            ''', (status, job_id))
-        conn.commit()
-        conn.close()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            if error_message:
+                cursor.execute('''
+                    UPDATE training_jobs SET status = %s, error_message = %s
+                    WHERE job_id = %s
+                ''', (status, error_message, job_id))
+            else:
+                cursor.execute('''
+                    UPDATE training_jobs SET status = %s
+                    WHERE job_id = %s
+                ''', (status, job_id))
+            conn.commit()
 
     def get_queue_status(self) -> Dict:
         """Get approximate message counts for the main queue and DLQ."""
@@ -190,15 +187,14 @@ class TrainingQueueClient:
 
     def get_jobs(self, limit: int = 50, offset: int = 0) -> List[Dict]:
         """Get all training jobs ordered by submission time."""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT * FROM training_jobs
-            ORDER BY submitted_at DESC
-            LIMIT ? OFFSET ?
-        ''', (limit, offset))
-        rows = cursor.fetchall()
-        conn.close()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT * FROM training_jobs
+                ORDER BY submitted_at DESC
+                LIMIT %s OFFSET %s
+            ''', (limit, offset))
+            rows = cursor.fetchall()
 
         jobs = []
         for row in rows:
@@ -219,11 +215,10 @@ class TrainingQueueClient:
 
     def get_job(self, job_id: str) -> Optional[Dict]:
         """Get a single training job by its UUID."""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('SELECT * FROM training_jobs WHERE job_id = ?', (job_id,))
-        row = cursor.fetchone()
-        conn.close()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT * FROM training_jobs WHERE job_id = %s', (job_id,))
+            row = cursor.fetchone()
 
         if not row:
             return None
@@ -244,55 +239,51 @@ class TrainingQueueClient:
 
     def set_processing(self, job_id: str) -> bool:
         """Mark a job as processing. Called by worker when it picks up the message."""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE training_jobs SET status = 'processing'
-            WHERE job_id = ? AND status IN ('queued', 'uploading')
-        ''', (job_id,))
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE training_jobs SET status = 'processing'
+                WHERE job_id = %s AND status IN ('queued', 'uploading')
+            ''', (job_id,))
+            success = cursor.rowcount > 0
+            conn.commit()
         return success
 
     def cancel_job(self, job_id: str) -> bool:
         """Cancel a job. Only jobs not yet completed can be cancelled."""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE training_jobs
-            SET status = 'cancelled', error_message = 'Cancelled by user', completed_at = CURRENT_TIMESTAMP
-            WHERE job_id = ? AND status NOT IN ('completed', 'cancelled')
-        ''', (job_id,))
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE training_jobs
+                SET status = 'cancelled', error_message = 'Cancelled by user', completed_at = CURRENT_TIMESTAMP
+                WHERE job_id = %s AND status NOT IN ('completed', 'cancelled')
+            ''', (job_id,))
+            success = cursor.rowcount > 0
+            conn.commit()
         return success
 
     def complete_job(self, job_id: str, result_data: dict = None) -> bool:
         """Mark a job as completed. Called by training worker callback."""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE training_jobs
-            SET status = 'completed', completed_at = CURRENT_TIMESTAMP, result_json = ?
-            WHERE job_id = ? AND status NOT IN ('completed', 'failed', 'cancelled')
-        ''', (json.dumps(result_data) if result_data else None, job_id))
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE training_jobs
+                SET status = 'completed', completed_at = CURRENT_TIMESTAMP, result_json = %s
+                WHERE job_id = %s AND status NOT IN ('completed', 'failed', 'cancelled')
+            ''', (json.dumps(result_data) if result_data else None, job_id))
+            success = cursor.rowcount > 0
+            conn.commit()
         return success
 
     def fail_job(self, job_id: str, error_message: str) -> bool:
         """Mark a job as failed."""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            UPDATE training_jobs
-            SET status = 'failed', error_message = ?, completed_at = CURRENT_TIMESTAMP
-            WHERE job_id = ?
-        ''', (error_message, job_id))
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                UPDATE training_jobs
+                SET status = 'failed', error_message = %s, completed_at = CURRENT_TIMESTAMP
+                WHERE job_id = %s
+            ''', (error_message, job_id))
+            success = cursor.rowcount > 0
+            conn.commit()
         return success

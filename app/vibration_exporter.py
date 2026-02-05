@@ -50,39 +50,37 @@ class VibrationExporter:
             formats = [f for f in formats if f != 'parquet']
             formats.append('csv')
 
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
 
-        # Query all time-range tags with video metadata
-        if tag_filter:
-            cursor.execute('''
-                SELECT trt.*, v.title as video_title, v.filename, v.duration as video_duration
-                FROM time_range_tags trt
-                JOIN videos v ON trt.video_id = v.id
-                WHERE trt.tag_name = ?
-                ORDER BY v.id, trt.start_time
-            ''', (tag_filter,))
-        else:
-            cursor.execute('''
-                SELECT trt.*, v.title as video_title, v.filename, v.duration as video_duration
-                FROM time_range_tags trt
-                JOIN videos v ON trt.video_id = v.id
-                ORDER BY v.id, trt.start_time
-            ''')
+            # Query all time-range tags with video metadata
+            if tag_filter:
+                cursor.execute('''
+                    SELECT trt.*, v.title as video_title, v.filename, v.duration as video_duration
+                    FROM time_range_tags trt
+                    JOIN videos v ON trt.video_id = v.id
+                    WHERE trt.tag_name = %s
+                    ORDER BY v.id, trt.start_time
+                ''', (tag_filter,))
+            else:
+                cursor.execute('''
+                    SELECT trt.*, v.title as video_title, v.filename, v.duration as video_duration
+                    FROM time_range_tags trt
+                    JOIN videos v ON trt.video_id = v.id
+                    ORDER BY v.id, trt.start_time
+                ''')
 
-        rows = [dict(r) for r in cursor.fetchall()]
+            rows = [dict(r) for r in cursor.fetchall()]
 
-        # Also grab annotation tags for each time-range tag
-        for row in rows:
-            cursor.execute('''
-                SELECT tg.group_name, at.tag_value
-                FROM annotation_tags at
-                JOIN tag_groups tg ON at.group_id = tg.id
-                WHERE at.annotation_id = ? AND at.annotation_type = 'time_range'
-            ''', (row['id'],))
-            row['tags'] = {r['group_name']: r['tag_value'] for r in cursor.fetchall()}
-
-        conn.close()
+            # Also grab annotation tags for each time-range tag
+            for row in rows:
+                cursor.execute('''
+                    SELECT tg.group_name, at.tag_value
+                    FROM annotation_tags at
+                    JOIN tag_groups tg ON at.group_id = tg.id
+                    WHERE at.annotation_id = %s AND at.annotation_type = 'time_range'
+                ''', (row['id'],))
+                row['tags'] = {r['group_name']: r['tag_value'] for r in cursor.fetchall()}
 
         if not rows:
             return {
@@ -215,15 +213,14 @@ class VibrationExporter:
 
     def get_available_tags(self) -> List[Dict]:
         """Get all unique time-range tag names with counts."""
-        conn = self.db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('''
-            SELECT tag_name, COUNT(*) as count,
-                   SUM(CASE WHEN is_negative = 1 THEN 1 ELSE 0 END) as negative_count
-            FROM time_range_tags
-            GROUP BY tag_name
-            ORDER BY count DESC
-        ''')
-        rows = [dict(r) for r in cursor.fetchall()]
-        conn.close()
+        with self.db.get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT tag_name, COUNT(*) as count,
+                       SUM(CASE WHEN is_negative = 1 THEN 1 ELSE 0 END) as negative_count
+                FROM time_range_tags
+                GROUP BY tag_name
+                ORDER BY count DESC
+            ''')
+            rows = [dict(r) for r in cursor.fetchall()]
         return rows

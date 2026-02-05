@@ -83,7 +83,7 @@ def process_video(url, tags=None, notes=None, db=None, downloader=None, processo
 def batch_download_from_csv(csv_file):
     """Download videos from CSV file"""
     base_dir = Path(__file__).parent
-    db = VideoDatabase(str(base_dir / 'video_archive.db'))
+    db = VideoDatabase()
     downloader = VideoDownloader(str(base_dir / 'downloads'))
     processor = VideoProcessor(str(base_dir / 'thumbnails'))
 
@@ -126,7 +126,7 @@ def batch_download_from_list():
     ]
 
     base_dir = Path(__file__).parent
-    db = VideoDatabase(str(base_dir / 'video_archive.db'))
+    db = VideoDatabase()
     downloader = VideoDownloader(str(base_dir / 'downloads'))
     processor = VideoProcessor(str(base_dir / 'thumbnails'))
 

@@ -74,8 +74,13 @@ for dir_name in required_dirs:
 print("\n6. Testing database initialization...")
 try:
     from database import VideoDatabase
-    db = VideoDatabase(':memory:')
-    print("   ✓ Database module working")
+    import os
+    if os.environ.get('DATABASE_URL'):
+        db = VideoDatabase()
+        print("   ✓ Database module working (PostgreSQL)")
+    else:
+        print("   ⚠ DATABASE_URL not set - skipping database test")
+        warnings.append("DATABASE_URL not set - configure PostgreSQL connection")
 except Exception as e:
     errors.append(f"Database error: {e}")
     print(f"   ❌ Error: {e}")
