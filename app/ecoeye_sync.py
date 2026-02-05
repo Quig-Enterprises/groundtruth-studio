@@ -30,11 +30,11 @@ Security features:
 import requests
 import time
 import json
-import sqlite3
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 import logging
+from app.db_connection import get_connection, get_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -47,15 +47,16 @@ class EcoEyeSyncClient:
         Initialize EcoEye sync client
 
         Args:
-            db_path: Path to video database
+            db_path: Path to video database (kept for backwards compatibility, ignored)
             download_dir: Directory for downloaded videos
             api_key: API key for authentication (optional, reserved for future use)
             api_secret: API secret for request signing (optional, reserved for future use)
 
         Note: Authentication is currently not required (no auth on Alert Relay API).
               IP whitelist will be added later.
+              Database connection now uses PostgreSQL via db_connection module.
         """
-        self.db_path = db_path
+        # db_path kept for backwards compatibility but not used
         self.download_dir = Path(download_dir)
         self.base_url = "https://alert.ecoeyetech.com"  # No /api/v1 prefix
         self.api_key = api_key
@@ -383,94 +384,73 @@ class EcoEyeSyncClient:
             start_time = datetime.now() - timedelta(days=1)
 
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            with get_connection() as conn:
+                cursor = conn.cursor()
 
-            # Create alerts table if not exists
-            # Added video_path column to store the server path for reference
-            cursor.execute('''
-                CREATE TABLE IF NOT EXISTS ecoeye_alerts (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    alert_id TEXT UNIQUE NOT NULL,
-                    camera_id TEXT,
-                    timestamp TIMESTAMP,
-                    alert_type TEXT,
-                    confidence REAL,
-                    video_id TEXT,
-                    video_available BOOLEAN,
-                    video_downloaded BOOLEAN DEFAULT 0,
-                    local_video_path TEXT,
-                    video_path TEXT,
-                    metadata TEXT,
-                    synced_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                )
-            ''')
+                # Fetch alerts from API
+                offset = 0
+                limit = 100
+                total_synced = 0
+                new_alerts = 0
+                updated_alerts = 0
 
-            # Fetch alerts from API
-            offset = 0
-            limit = 100
-            total_synced = 0
-            new_alerts = 0
-            updated_alerts = 0
+                while True:
+                    result = self.get_alerts(start_time, end_time, limit, offset)
 
-            while True:
-                result = self.get_alerts(start_time, end_time, limit, offset)
+                    if not result['success']:
+                        break
 
-                if not result['success']:
-                    break
+                    alerts = result['alerts']
+                    if not alerts:
+                        break
 
-                alerts = result['alerts']
-                if not alerts:
-                    break
+                    for alert in alerts:
+                        # Extract fields with new mapping
+                        alert_id = alert.get('id')  # event_id
+                        camera_id = alert.get('camera_id')
+                        timestamp = alert.get('timestamp')
+                        alert_type = alert.get('type')  # event_type
+                        confidence = alert.get('confidence', 1.0)  # Default 1.0 since not in API
+                        video_available = alert.get('video_available', False)  # status == completed
+                        video_id = alert.get('video_id')  # event_id
+                        video_path = alert.get('video_path')  # Store for download URL
+                        metadata = json.dumps(alert)
 
-                for alert in alerts:
-                    # Extract fields with new mapping
-                    alert_id = alert.get('id')  # event_id
-                    camera_id = alert.get('camera_id')
-                    timestamp = alert.get('timestamp')
-                    alert_type = alert.get('type')  # event_type
-                    confidence = alert.get('confidence', 1.0)  # Default 1.0 since not in API
-                    video_available = alert.get('video_available', False)  # status == completed
-                    video_id = alert.get('video_id')  # event_id
-                    video_path = alert.get('video_path')  # Store for download URL
-                    metadata = json.dumps(alert)
+                        # Check if alert exists
+                        cursor.execute('SELECT id FROM ecoeye_alerts WHERE alert_id = %s', (alert_id,))
+                        existing = cursor.fetchone()
 
-                    # Check if alert exists
-                    cursor.execute('SELECT id FROM ecoeye_alerts WHERE alert_id = ?', (alert_id,))
-                    existing = cursor.fetchone()
+                        if existing:
+                            # Update existing alert
+                            cursor.execute('''
+                                UPDATE ecoeye_alerts
+                                SET camera_id = %s, timestamp = %s, alert_type = %s,
+                                    confidence = %s, video_available = %s, video_id = %s,
+                                    video_path = %s, metadata = %s, synced_at = CURRENT_TIMESTAMP
+                                WHERE alert_id = %s
+                            ''', (camera_id, timestamp, alert_type, confidence,
+                                 video_available, video_id, video_path, metadata, alert_id))
+                            updated_alerts += 1
+                        else:
+                            # Insert new alert
+                            cursor.execute('''
+                                INSERT INTO ecoeye_alerts
+                                (alert_id, camera_id, timestamp, alert_type, confidence,
+                                 video_available, video_id, video_path, metadata)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ''', (alert_id, camera_id, timestamp, alert_type, confidence,
+                                 video_available, video_id, video_path, metadata))
+                            new_alerts += 1
 
-                    if existing:
-                        # Update existing alert
-                        cursor.execute('''
-                            UPDATE ecoeye_alerts
-                            SET camera_id = ?, timestamp = ?, alert_type = ?,
-                                confidence = ?, video_available = ?, video_id = ?,
-                                video_path = ?, metadata = ?, synced_at = CURRENT_TIMESTAMP
-                            WHERE alert_id = ?
-                        ''', (camera_id, timestamp, alert_type, confidence,
-                             video_available, video_id, video_path, metadata, alert_id))
-                        updated_alerts += 1
-                    else:
-                        # Insert new alert
-                        cursor.execute('''
-                            INSERT INTO ecoeye_alerts
-                            (alert_id, camera_id, timestamp, alert_type, confidence,
-                             video_available, video_id, video_path, metadata)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (alert_id, camera_id, timestamp, alert_type, confidence,
-                             video_available, video_id, video_path, metadata))
-                        new_alerts += 1
+                        total_synced += 1
 
-                    total_synced += 1
+                    # Check if more alerts to fetch
+                    if not result.get('has_more'):
+                        break
 
-                # Check if more alerts to fetch
-                if not result.get('has_more'):
-                    break
+                    offset += limit
 
-                offset += limit
-
-            conn.commit()
-            conn.close()
+                conn.commit()
 
             return {
                 'success': True,
@@ -499,54 +479,52 @@ class EcoEyeSyncClient:
             Dict with download results
         """
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            with get_connection() as conn:
+                cursor = conn.cursor()
 
-            # Find alerts with videos not yet downloaded
-            cursor.execute('''
-                SELECT alert_id, camera_id, timestamp
-                FROM ecoeye_alerts
-                WHERE video_available = 1
-                  AND video_downloaded = 0
-                ORDER BY timestamp DESC
-                LIMIT ?
-            ''', (limit,))
+                # Find alerts with videos not yet downloaded
+                cursor.execute('''
+                    SELECT alert_id, camera_id, timestamp
+                    FROM ecoeye_alerts
+                    WHERE video_available = true
+                      AND video_downloaded = false
+                    ORDER BY timestamp DESC
+                    LIMIT %s
+                ''', (limit,))
 
-            pending = cursor.fetchall()
+                pending = cursor.fetchall()
 
-            downloaded = 0
-            failed = 0
-            results = []
+                downloaded = 0
+                failed = 0
+                results = []
 
-            for alert_id, camera_id, timestamp in pending:
-                logger.info(f"Downloading video for alert {alert_id}")
+                for alert_id, camera_id, timestamp in pending:
+                    logger.info(f"Downloading video for alert {alert_id}")
 
-                success, result = self.download_alert_video(alert_id)
+                    success, result = self.download_alert_video(alert_id)
 
-                if success:
-                    # Update database
-                    cursor.execute('''
-                        UPDATE ecoeye_alerts
-                        SET video_downloaded = 1, local_video_path = ?
-                        WHERE alert_id = ?
-                    ''', (result, alert_id))
-                    conn.commit()
+                    if success:
+                        # Update database
+                        cursor.execute('''
+                            UPDATE ecoeye_alerts
+                            SET video_downloaded = true, local_video_path = %s
+                            WHERE alert_id = %s
+                        ''', (result, alert_id))
+                        conn.commit()
 
-                    downloaded += 1
-                    results.append({
-                        'alert_id': alert_id,
-                        'status': 'success',
-                        'path': result
-                    })
-                else:
-                    failed += 1
-                    results.append({
-                        'alert_id': alert_id,
-                        'status': 'failed',
-                        'error': result
-                    })
-
-            conn.close()
+                        downloaded += 1
+                        results.append({
+                            'alert_id': alert_id,
+                            'status': 'success',
+                            'path': result
+                        })
+                    else:
+                        failed += 1
+                        results.append({
+                            'alert_id': alert_id,
+                            'status': 'failed',
+                            'error': result
+                        })
 
             return {
                 'success': True,
@@ -571,29 +549,27 @@ class EcoEyeSyncClient:
             Dict with status information
         """
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
+            with get_connection() as conn:
+                cursor = conn.cursor()
 
-            # Total alerts
-            cursor.execute('SELECT COUNT(*) FROM ecoeye_alerts')
-            total_alerts = cursor.fetchone()[0]
+                # Total alerts
+                cursor.execute('SELECT COUNT(*) FROM ecoeye_alerts')
+                total_alerts = cursor.fetchone()[0]
 
-            # Alerts with videos
-            cursor.execute('SELECT COUNT(*) FROM ecoeye_alerts WHERE video_available = 1')
-            alerts_with_video = cursor.fetchone()[0]
+                # Alerts with videos
+                cursor.execute('SELECT COUNT(*) FROM ecoeye_alerts WHERE video_available = true')
+                alerts_with_video = cursor.fetchone()[0]
 
-            # Downloaded videos
-            cursor.execute('SELECT COUNT(*) FROM ecoeye_alerts WHERE video_downloaded = 1')
-            videos_downloaded = cursor.fetchone()[0]
+                # Downloaded videos
+                cursor.execute('SELECT COUNT(*) FROM ecoeye_alerts WHERE video_downloaded = true')
+                videos_downloaded = cursor.fetchone()[0]
 
-            # Pending downloads
-            pending_downloads = alerts_with_video - videos_downloaded
+                # Pending downloads
+                pending_downloads = alerts_with_video - videos_downloaded
 
-            # Last sync time
-            cursor.execute('SELECT MAX(synced_at) FROM ecoeye_alerts')
-            last_sync = cursor.fetchone()[0]
-
-            conn.close()
+                # Last sync time
+                cursor.execute('SELECT MAX(synced_at) FROM ecoeye_alerts')
+                last_sync = cursor.fetchone()[0]
 
             return {
                 'success': True,
