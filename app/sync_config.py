@@ -17,7 +17,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import logging
 import os
-from app.db_connection import get_connection, get_cursor
+from db_connection import get_connection, get_cursor
 
 logger = logging.getLogger(__name__)
 

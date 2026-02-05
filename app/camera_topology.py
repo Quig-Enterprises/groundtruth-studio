@@ -3,7 +3,7 @@ Camera Topology Learning
 Automatically learns spatial relationships between cameras based on person tracking data
 """
 
-from app.db_connection import get_connection as db_get_connection, get_cursor
+from db_connection import get_connection as db_get_connection, get_cursor
 from typing import Dict, List, Tuple, Optional
 from collections import defaultdict
 import json

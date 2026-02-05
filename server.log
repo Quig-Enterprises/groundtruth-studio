@@ -2850,3 +2850,7 @@ AttributeError: 'VideoDatabase' object has no attribute 'execute'
 10.153.0.245 - - [19/Jan/2026 20:42:36] "[36mGET /static/favicon.ico HTTP/1.1[0m" 304 -
 10.153.0.245 - - [19/Jan/2026 20:42:36] "GET /api/videos/2/time-range-tags HTTP/1.1" 200 -
 10.153.0.245 - - [19/Jan/2026 20:42:36] "GET /api/videos/2/keyframe-annotations HTTP/1.1" 200 -
+ * Serving Flask app 'api'
+ * Debug mode: on
+ * Serving Flask app 'api'
+ * Debug mode: on

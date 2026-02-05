@@ -5,7 +5,7 @@ This module defines all database tables and provides initialization functions.
 Replaces SQLite schema with PostgreSQL-native types and features.
 """
 
-from app.db_connection import get_cursor
+from db_connection import get_cursor
 import logging
 
 logger = logging.getLogger(__name__)

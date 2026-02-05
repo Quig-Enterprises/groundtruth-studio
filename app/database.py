@@ -5,7 +5,7 @@ from typing import List, Dict, Optional
 import psycopg2
 from psycopg2 import extras
 
-from app.db_connection import get_connection, get_cursor
+from db_connection import get_connection, get_cursor
 
 
 class VideoDatabase:

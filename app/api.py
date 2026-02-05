@@ -5,7 +5,7 @@ import json
 import atexit
 from pathlib import Path
 from database import VideoDatabase
-from app.db_connection import init_connection_pool, close_connection_pool
+from db_connection import init_connection_pool, close_connection_pool
 from psycopg2 import extras
 from downloader import VideoDownloader
 from video_utils import VideoProcessor

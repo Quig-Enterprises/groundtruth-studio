@@ -17,6 +17,8 @@ from typing import Dict, List, Optional
 import boto3
 from botocore.exceptions import ClientError
 
+from db_connection import get_connection
+
 logger = logging.getLogger(__name__)
 
 DEFAULT_REGION = 'us-east-2'
@@ -28,12 +30,12 @@ S3_PREFIX = 'training-jobs'
 
 def init_training_jobs_table(db):
     """Create the training_jobs table if it doesn't exist."""
-    with db.get_connection() as conn:
+    with get_connection() as conn:
         cursor = conn.cursor()
 
         cursor.execute('''
             CREATE TABLE IF NOT EXISTS training_jobs (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 job_id TEXT NOT NULL UNIQUE,
                 job_type TEXT NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
@@ -76,7 +78,7 @@ class TrainingQueueClient:
         job_id = str(uuid.uuid4())
         s3_uri = f's3://{self.bucket}/{S3_PREFIX}/{job_id}/'
 
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO training_jobs (job_id, job_type, status, s3_uri, config_json, export_config_id)
@@ -140,7 +142,7 @@ class TrainingQueueClient:
 
     def _update_job_status(self, job_id: str, status: str, error_message: str = None):
         """Update job status in the database."""
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
             if error_message:
                 cursor.execute('''
@@ -187,7 +189,7 @@ class TrainingQueueClient:
 
     def get_jobs(self, limit: int = 50, offset: int = 0) -> List[Dict]:
         """Get all training jobs ordered by submission time."""
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 SELECT * FROM training_jobs
@@ -215,7 +217,7 @@ class TrainingQueueClient:
 
     def get_job(self, job_id: str) -> Optional[Dict]:
         """Get a single training job by its UUID."""
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('SELECT * FROM training_jobs WHERE job_id = %s', (job_id,))
             row = cursor.fetchone()
@@ -239,7 +241,7 @@ class TrainingQueueClient:
 
     def set_processing(self, job_id: str) -> bool:
         """Mark a job as processing. Called by worker when it picks up the message."""
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE training_jobs SET status = 'processing'
@@ -251,7 +253,7 @@ class TrainingQueueClient:
 
     def cancel_job(self, job_id: str) -> bool:
         """Cancel a job. Only jobs not yet completed can be cancelled."""
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE training_jobs
@@ -264,7 +266,7 @@ class TrainingQueueClient:
 
     def complete_job(self, job_id: str, result_data: dict = None) -> bool:
         """Mark a job as completed. Called by training worker callback."""
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE training_jobs
@@ -277,7 +279,7 @@ class TrainingQueueClient:
 
     def fail_job(self, job_id: str, error_message: str) -> bool:
         """Mark a job as failed."""
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 UPDATE training_jobs

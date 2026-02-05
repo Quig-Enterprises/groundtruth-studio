@@ -8,7 +8,7 @@ User=ublirnevire
 Group=www-data
 WorkingDirectory=/var/www/html/groundtruth-studio
 Environment="PATH=/var/www/html/groundtruth-studio/venv/bin:/usr/bin:/usr/local/bin"
-Environment="DATABASE_URL=postgresql://groundtruth:PLACEHOLDER_PASSWORD@localhost:5432/groundtruth_studio"
+Environment="DATABASE_URL=postgresql://groundtruth:bZv6QbJ8KCAQubJFb+frmbGNKUiPm7lBUg0XgMvEzNQ=@localhost:5432/groundtruth_studio"
 ExecStart=/var/www/html/groundtruth-studio/venv/bin/python /var/www/html/groundtruth-studio/app/api.py
 Restart=always
 RestartSec=10

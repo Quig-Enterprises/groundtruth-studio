@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 import logging
-from app.db_connection import get_connection, get_cursor
+from db_connection import get_connection, get_cursor
 
 logger = logging.getLogger(__name__)
 
