@@ -1,6 +1,6 @@
 [Unit]
 Description=Groundtruth Studio - Video Annotation System
-After=network.target
+After=network.target postgresql.service
 
 [Service]
 Type=simple
@@ -8,6 +8,7 @@ User=ublirnevire
 Group=www-data
 WorkingDirectory=/var/www/html/groundtruth-studio
 Environment="PATH=/var/www/html/groundtruth-studio/venv/bin:/usr/bin:/usr/local/bin"
+Environment="DATABASE_URL=postgresql://groundtruth:PLACEHOLDER_PASSWORD@localhost:5432/groundtruth_studio"
 ExecStart=/var/www/html/groundtruth-studio/venv/bin/python /var/www/html/groundtruth-studio/app/api.py
 Restart=always
 RestartSec=10
