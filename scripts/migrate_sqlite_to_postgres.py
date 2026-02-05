@@ -19,7 +19,7 @@ import logging
 from typing import List, Dict, Any, Optional
 
 # Import PostgreSQL connection from app
-from app.db_connection import get_cursor, get_connection
+from db_connection import get_cursor, get_connection
 
 logging.basicConfig(
     level=logging.INFO,

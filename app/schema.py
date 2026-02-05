@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS keyframe_annotations (
     moment_tag TEXT,
     is_negative BOOLEAN DEFAULT FALSE,
     comment TEXT,
+    reviewed BOOLEAN DEFAULT FALSE,
     created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
 );
