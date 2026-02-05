@@ -2854,3 +2854,17 @@ AttributeError: 'VideoDatabase' object has no attribute 'execute'
  * Debug mode: on
  * Serving Flask app 'api'
  * Debug mode: on
+Error in get_camera_topology: '_GeneratorContextManager' object has no attribute 'cursor'
+[EcoEye Cameras] Found 17 cameras
+[EcoEye Sites] Found 2 sites
+[EcoEye Events] Error: 'VideoDatabase' object has no attribute 'get_connection'
+ * Serving Flask app 'api'
+ * Debug mode: on
+[EcoEye Events] Returned 5 events, 39 imported locally
+ * Serving Flask app 'api'
+ * Debug mode: on
+Error in get_camera_topology: '_GeneratorContextManager' object has no attribute 'cursor'
+ * Serving Flask app 'api'
+ * Debug mode: on
+ * Serving Flask app 'api'
+ * Debug mode: on

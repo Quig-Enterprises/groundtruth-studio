@@ -11,7 +11,9 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
+import psycopg2.extras
 from database import VideoDatabase
+from db_connection import get_connection
 
 try:
     import pyarrow as pa
@@ -50,8 +52,8 @@ class VibrationExporter:
             formats = [f for f in formats if f != 'parquet']
             formats.append('csv')
 
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
 
             # Query all time-range tags with video metadata
             if tag_filter:
@@ -213,11 +215,11 @@ class VibrationExporter:
 
     def get_available_tags(self) -> List[Dict]:
         """Get all unique time-range tag names with counts."""
-        with self.db.get_connection() as conn:
-            cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             cursor.execute('''
                 SELECT tag_name, COUNT(*) as count,
-                       SUM(CASE WHEN is_negative = 1 THEN 1 ELSE 0 END) as negative_count
+                       SUM(CASE WHEN is_negative = true THEN 1 ELSE 0 END) as negative_count
                 FROM time_range_tags
                 GROUP BY tag_name
                 ORDER BY count DESC

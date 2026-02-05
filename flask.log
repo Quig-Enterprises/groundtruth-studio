@@ -2540,3 +2540,446 @@ LINE 3:                 id INTEGER PRIMARY KEY AUTOINCREMENT,
  * Debugger PIN: 942-015-173
 127.0.0.1 - - [05/Feb/2026 22:13:47] "GET /api/videos HTTP/1.1" 200 -
 127.0.0.1 - - [05/Feb/2026 22:13:47] "GET /api/system/status HTTP/1.1" 200 -
+127.0.0.1 - - [05/Feb/2026 22:14:20] "GET /api/system/status HTTP/1.1" 200 -
+127.0.0.1 - - [05/Feb/2026 22:14:30] "GET /api/videos HTTP/1.1" 200 -
+127.0.0.1 - - [05/Feb/2026 22:14:31] "GET /api/system/status HTTP/1.1" 200 -
+127.0.0.1 - - [05/Feb/2026 22:14:31] "GET /api/tags HTTP/1.1" 200 -
+199.27.199.126 - - [05/Feb/2026 22:14:40] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:14:58] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:14:59] "GET / HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:14:59] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:14:59] "GET /api/videos HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:14:59] "GET /api/system/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:02] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:05] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:08] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:11] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:14] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:17] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:20] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:23] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:26] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:29] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:32] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:35] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:38] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:41] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:44] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:47] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:50] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:53] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:56] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:15:59] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:02] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:05] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:08] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:11] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:14] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:17] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:20] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:23] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:26] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:29] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:32] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:35] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:38] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:41] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:44] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:47] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:50] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:53] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:56] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:16:59] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:02] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:05] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:08] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:11] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:14] "GET /api/download/status HTTP/1.0" 200 -
+127.0.0.1 - - [05/Feb/2026 22:17:15] "GET /api/videos HTTP/1.1" 200 -
+127.0.0.1 - - [05/Feb/2026 22:17:16] "GET /api/videos HTTP/1.1" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:17] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:20] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:23] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:26] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:29] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:32] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:35] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:38] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:41] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:44] "GET /api/download/status HTTP/1.0" 200 -
+ * Detected change in '/opt/groundtruth-studio/app/schema.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+199.27.199.126 - - [05/Feb/2026 22:17:50] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:51] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:53] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:56] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:17:59] "GET /api/download/status HTTP/1.0" 200 -
+ * Detected change in '/opt/groundtruth-studio/app/schema.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+199.27.199.126 - - [05/Feb/2026 22:18:06] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:06] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:08] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:11] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:14] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:17] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "GET / HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "GET /api/videos HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769656141250_A89C6C00C478_motion_716d0b11.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769672135226_A89C6C00C478_motion_2c624620.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769744901956_A89C6C00C478_motion_bee4a5cc.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769654996201_847848263C76_motion_bf24ba86.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769657668222_A89C6C00C478_motion_ee7191af.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769655030597_A89C6C00C478_motion_397c2616.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769655214814_A89C6C00C478_motion_356abdfb.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769658449385_A89C6C00C478_motion_9009df2a.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769658817814_A89C6C00C478_motion_a65335ec.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769657680391_A89C6C00C478_motion_096d7bec.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769655222649_A89C6C00C478_motion_ce8092d2.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769657226202_A89C6C00C478_motion_81d8c63b.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769656619640_A89C6C00C478_motion_39d34207.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769658391415_A89C6C00C478_motion_d55d3716.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769659066436_A89C6C00C478_motion_bf21b0a4.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769661506369_A89C6C00C478_motion_6a5681cb.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769659858873_A89C6C00C478_motion_92909860.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769659867048_A89C6C00C478_motion_8b0ebcf2.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769668269074_A89C6C00C478_motion_baf6b209.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769657318809_A89C6C00C478_motion_cb3bac64.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769670914541_A89C6C00C478_motion_e55ae3bb.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769661661322_A89C6C00C478_motion_6ebfe531.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769668276102_A89C6C00C478_motion_2da93fda.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769661331562_A89C6C00C478_motion_b9820930.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769663741771_A89C6C00C478_motion_e0f52ee8.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769663749137_A89C6C00C478_motion_2712618d.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769673941241_A89C6C00C478_motion_27b1d151.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769643529768_A89C6C00C04D_person_3a4b9641.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769660336515_A89C6C00C478_motion_dd330add.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769668543518_A89C6C00C478_motion_7e60224b.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769669012566_A89C6C00C478_motion_070a88d5.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/At%20The%20Boat%20%20Ramp%20Power%20Loading%20Went%20Crazy%20Yeah_KtWQb7ftqLc.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769672142101_A89C6C00C478_motion_99d93414.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/Wild%20Time%20Boat%20Ramp%20Went%20Crazy%20Bass%20Boat%20Power%20Loading%20Water%20Flying_zoyuTIX0ARc.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/Loading%20Boat%20On%20Trailer_iy8JOJgOVRE.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/How%20to%20Load%20a%20Boat%20on%20a%20Trailer%20by%20Yourself%20｜%20Lowe%20Boats_L-pxb3bIfu0.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/How%20To%20LAUNCH%20And%20LOAD%20Your%20Bass%20BOAT%20By%20YOURSELF_RWXdi4pplRM.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/How%20to%20Load%20Your%20Boat%20on%20a%20Trailer_HVCvJA6fQek.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/Boaters%20Constant%20Power%20Loading!!%20Clear%20Lake%20Boat%20Ramp!!_bKtooBr8RKQ.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/Skeeter%20School%20-%20Launching%20&%20Trailering%20with%20Tyler%20Anderson_JSfq-TEMACA.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/SOLO%20Launch%20&%20Load...%20The%20EASY%20WAY_TQQLyBEC1ss.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/At%20The%20Ramp%20Big%20Boat%20Power%20Loading%20Wow%20Unbelivieable_CPNoHf3q7OU.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/The%20BEST%20Way%20to%20Launch%20Your%20Boat%20-%20A%20COMPLETE%20Guide%20From%20Launch%20to%20Load%20-%20Lund%20Pro%20V%20BASS_X4zrP4e9cig.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/How%20To%20POWER%20Your%20Boat%20Onto%20The%20Trailer%20-%20Bass%20Boat%20Tips_loQaAY3HwTA.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/Loading%20Your%20Boat%20Easily%20(Avoid%20The%20%231%20Mistake)_pgj5Y_gMvjQ.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "GET /api/system/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769656268049_A89C6C00C478_motion_3c1af1a0.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769658811541_A89C6C00C478_motion_faa83182.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769660655204_A89C6C00C478_motion_d78edec4.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/ecoeye_1769669500041_A89C6C00C478_motion_4edb2409.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:19] "[36mGET /thumbnails/How%20To%20Save%20Your%20Trailer%20Bunks%20｜%20Power%20Loading%20A%20Boat_5ChLggvzWP8.jpg HTTP/1.0[0m" 304 -
+199.27.199.126 - - [05/Feb/2026 22:18:22] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:25] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:28] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:31] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:34] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:37] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:40] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:43] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:46] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:49] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:52] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:55] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:18:58] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:01] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:04] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:07] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:10] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:13] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:16] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:19] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:22] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:25] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:28] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:31] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:34] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:37] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:40] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:43] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:46] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:49] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:52] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:55] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:19:58] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:01] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:04] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:07] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:10] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:13] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:16] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:19] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:22] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:25] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:28] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:31] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:34] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:37] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:40] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:43] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:46] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:49] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:52] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:55] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:20:58] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:01] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:04] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:07] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:10] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:13] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:16] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:19] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:22] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:25] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:28] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:31] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:34] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:37] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:40] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:43] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:46] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:49] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:52] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:55] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:21:58] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:01] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:04] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:07] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:10] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:13] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:16] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:19] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:22] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:25] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:28] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:31] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:34] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:37] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:40] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:43] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:46] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:49] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:52] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:55] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:22:58] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:01] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:04] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:07] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:10] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:13] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:16] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:19] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:22] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:25] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:28] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:31] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:34] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:37] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:40] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:43] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:46] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:50] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:53] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:56] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:23:59] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:02] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:05] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:08] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:11] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:14] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:17] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:20] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:23] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:26] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:29] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:31] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:34] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:37] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:40] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:43] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:46] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:49] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:52] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:55] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:24:58] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:01] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:04] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:07] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:10] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:13] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:16] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:19] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:22] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:25] "GET /camera-topology HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:25] "[35m[1mGET /api/camera-topology/graph HTTP/1.0[0m" 500 -
+199.27.199.126 - - [05/Feb/2026 22:25:33] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:34] "GET /sync-settings HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:34] "[31m[1mGET /api/sync/ecoeye/status HTTP/1.0[0m" 400 -
+199.27.199.126 - - [05/Feb/2026 22:25:34] "GET /api/sync/history?limit=20 HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:34] "GET /api/sync/unifi/config HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:34] "GET /api/sync/ecoeye/config HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:40] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:40] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:41] "GET /yolo-export HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:41] "[35m[1mGET /api/yolo/configs HTTP/1.0[0m" 500 -
+199.27.199.126 - - [05/Feb/2026 22:25:50] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:51] "GET /training-queue HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:51] "[35m[1mGET /api/yolo/configs HTTP/1.0[0m" 500 -
+199.27.199.126 - - [05/Feb/2026 22:25:51] "[35m[1mGET /api/vibration/tags HTTP/1.0[0m" 500 -
+199.27.199.126 - - [05/Feb/2026 22:25:51] "GET /api/training/jobs?limit=100 HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:51] "[35m[1mGET /api/training/queue-status HTTP/1.0[0m" 500 -
+127.0.0.1 - - [05/Feb/2026 22:25:53] "[35m[1mGET /api/yolo/configs HTTP/1.1[0m" 500 -
+199.27.199.126 - - [05/Feb/2026 22:25:55] "GET /api/download/status HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:56] "GET /ecoeye-preview HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:57] "GET /api/ecoeye/tags HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:57] "GET /api/ecoeye/cameras HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:57] "GET /api/ecoeye/sites HTTP/1.0" 200 -
+199.27.199.126 - - [05/Feb/2026 22:25:59] "[35m[1mGET /api/ecoeye/events?limit=50&offset=0&has_thumbnail=1&sort=desc HTTP/1.0[0m" 500 -
+ * Detected change in '/opt/groundtruth-studio/app/yolo_exporter.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+ * Detected change in '/opt/groundtruth-studio/app/vibration_exporter.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+ * Detected change in '/opt/groundtruth-studio/app/yolo_exporter.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5050
+ * Running on http://192.168.50.20:5050
+[33mPress CTRL+C to quit[0m
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+127.0.0.1 - - [05/Feb/2026 22:26:50] "GET /api/yolo/configs HTTP/1.1" 200 -
+127.0.0.1 - - [05/Feb/2026 22:26:51] "GET /api/ecoeye/events?limit=5 HTTP/1.1" 200 -
+127.0.0.1 - - [05/Feb/2026 22:27:18] "[35m[1mGET /api/vibration/tags HTTP/1.1[0m" 500 -
+ * Detected change in '/opt/groundtruth-studio/app/vibration_exporter.py', reloading
+ * Restarting with stat
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5050
+ * Running on http://192.168.50.20:5050
+[33mPress CTRL+C to quit[0m
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+127.0.0.1 - - [05/Feb/2026 22:30:57] "[35m[1mGET /api/vibration/tags HTTP/1.1[0m" 500 -
+127.0.0.1 - - [05/Feb/2026 22:30:58] "[35m[1mGET /api/training/queue-status HTTP/1.1[0m" 500 -
+127.0.0.1 - - [05/Feb/2026 22:30:58] "[35m[1mGET /api/camera-topology/graph HTTP/1.1[0m" 500 -
+ * Detected change in '/opt/groundtruth-studio/app/camera_topology.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+ * Detected change in '/opt/groundtruth-studio/app/camera_topology.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+ * Detected change in '/opt/groundtruth-studio/app/camera_topology.py', reloading
+ * Restarting with stat
+Traceback (most recent call last):
+  File "/opt/groundtruth-studio/app/api.py", line 14, in <module>
+    from camera_topology import CameraTopologyLearner
+  File "/opt/groundtruth-studio/app/camera_topology.py", line 47
+    detections = [dict(row) for row in cursor.fetchall()]
+IndentationError: unexpected indent
+Traceback (most recent call last):
+  File "/opt/groundtruth-studio/app/api.py", line 14, in <module>
+    from camera_topology import CameraTopologyLearner
+  File "/opt/groundtruth-studio/app/camera_topology.py", line 47
+    detections = [dict(row) for row in cursor.fetchall()]
+IndentationError: unexpected indent
+Traceback (most recent call last):
+  File "/opt/groundtruth-studio/app/api.py", line 14, in <module>
+    from camera_topology import CameraTopologyLearner
+  File "/opt/groundtruth-studio/app/camera_topology.py", line 47
+    detections = [dict(row) for row in cursor.fetchall()]
+IndentationError: unexpected indent
+Traceback (most recent call last):
+  File "/opt/groundtruth-studio/app/api.py", line 14, in <module>
+    from camera_topology import CameraTopologyLearner
+  File "/opt/groundtruth-studio/app/camera_topology.py", line 47
+    detections = [dict(row) for row in cursor.fetchall()]
+IndentationError: unexpected indent
+Traceback (most recent call last):
+  File "/opt/groundtruth-studio/app/api.py", line 14, in <module>
+    from camera_topology import CameraTopologyLearner
+  File "/opt/groundtruth-studio/app/camera_topology.py", line 47
+    detections = [dict(row) for row in cursor.fetchall()]
+IndentationError: unexpected indent
+Traceback (most recent call last):
+  File "/opt/groundtruth-studio/app/api.py", line 14, in <module>
+    from camera_topology import CameraTopologyLearner
+  File "/opt/groundtruth-studio/app/camera_topology.py", line 47
+    detections = [dict(row) for row in cursor.fetchall()]
+IndentationError: unexpected indent
+Traceback (most recent call last):
+  File "/opt/groundtruth-studio/app/api.py", line 14, in <module>
+    from camera_topology import CameraTopologyLearner
+  File "/opt/groundtruth-studio/app/camera_topology.py", line 47
+    detections = [dict(row) for row in cursor.fetchall()]
+IndentationError: unexpected indent
+Traceback (most recent call last):
+  File "/opt/groundtruth-studio/app/api.py", line 14, in <module>
+    from camera_topology import CameraTopologyLearner
+  File "/opt/groundtruth-studio/app/camera_topology.py", line 47
+    detections = [dict(row) for row in cursor.fetchall()]
+IndentationError: unexpected indent
+Traceback (most recent call last):
+  File "/opt/groundtruth-studio/app/api.py", line 14, in <module>
+    from camera_topology import CameraTopologyLearner
+  File "/opt/groundtruth-studio/app/camera_topology.py", line 132
+    people = [row['person_name'] for row in cursor.fetchall() if row['person_name']]
+IndentationError: unexpected indent
+Traceback (most recent call last):
+  File "/opt/groundtruth-studio/app/api.py", line 14, in <module>
+    from camera_topology import CameraTopologyLearner
+  File "/opt/groundtruth-studio/app/camera_topology.py", line 132
+    people = [row['person_name'] for row in cursor.fetchall() if row['person_name']]
+IndentationError: unexpected indent
+Traceback (most recent call last):
+  File "/opt/groundtruth-studio/app/api.py", line 14, in <module>
+    from camera_topology import CameraTopologyLearner
+  File "/opt/groundtruth-studio/app/camera_topology.py", line 246
+    unassigned = [dict(row) for row in cursor.fetchall()]
+IndentationError: unexpected indent
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5050
+ * Running on http://192.168.50.20:5050
+[33mPress CTRL+C to quit[0m
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+ * Detected change in '/opt/groundtruth-studio/app/vibration_exporter.py', reloading
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+ * Detected change in '/opt/groundtruth-studio/app/vibration_exporter.py', reloading
+ * Restarting with stat
+[31m[1mWARNING: This is a development server. Do not use it in a production deployment. Use a production WSGI server instead.[0m
+ * Running on all addresses (0.0.0.0)
+ * Running on http://127.0.0.1:5050
+ * Running on http://192.168.50.20:5050
+[33mPress CTRL+C to quit[0m
+ * Restarting with stat
+ * Debugger is active!
+ * Debugger PIN: 942-015-173
+127.0.0.1 - - [05/Feb/2026 22:34:44] "GET /api/vibration/tags HTTP/1.1" 200 -
+127.0.0.1 - - [05/Feb/2026 22:34:44] "GET /api/camera-topology/graph HTTP/1.1" 200 -
+127.0.0.1 - - [05/Feb/2026 22:34:44] "GET /api/yolo/configs HTTP/1.1" 200 -

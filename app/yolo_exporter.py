@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import cv2
 from database import VideoDatabase
+from db_connection import get_connection
 
 
 class YOLOExporter:
@@ -33,7 +34,7 @@ class YOLOExporter:
         Returns:
             config_id
         """
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -68,7 +69,7 @@ class YOLOExporter:
         - date_range: Filter by date (start:end)
         - video_id: Specific video ID
         """
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute('''
@@ -80,7 +81,7 @@ class YOLOExporter:
 
     def get_export_configs(self) -> List[Dict]:
         """Get all export configurations"""
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
 
             cursor.execute('SELECT * FROM yolo_export_configs ORDER BY created_date DESC')
@@ -101,7 +102,7 @@ class YOLOExporter:
         Returns:
             List of video_ids
         """
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
 
             # Get filters
@@ -178,7 +179,7 @@ class YOLOExporter:
         Returns:
             Dict with export statistics and paths
         """
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
 
             # Get configuration
@@ -420,7 +421,7 @@ python train.py --data {yaml_path.absolute()} --weights yolov5s.pt --epochs 100
         """
         video_ids = self.get_filtered_videos(config_id)
 
-        with self.db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor()
 
             # Get config

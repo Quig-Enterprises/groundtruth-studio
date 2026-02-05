@@ -5,7 +5,7 @@ import json
 import atexit
 from pathlib import Path
 from database import VideoDatabase
-from db_connection import init_connection_pool, close_connection_pool
+from db_connection import init_connection_pool, close_connection_pool, get_connection
 from psycopg2 import extras
 from downloader import VideoDownloader
 from video_utils import VideoProcessor
@@ -119,7 +119,7 @@ def get_ecoeye_events():
         if result.get('success') and result.get('events'):
             # Cross-reference with local database to find imported events
             # Look for videos with ecoeye:// URLs in original_url
-            with db.get_connection() as conn:
+            with get_connection() as conn:
                 cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
                 # Get all ecoeye event IDs that have been imported locally
@@ -187,7 +187,7 @@ def sync_ecoeye_sample():
         return jsonify({'success': False, 'error': 'event_id required'}), 400
 
     # Check if already imported
-    with db.get_connection() as conn:
+    with get_connection() as conn:
         cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
         cursor.execute("SELECT id FROM videos WHERE original_url LIKE %s", (f"%{event_id}%",))
         existing = cursor.fetchone()
@@ -1003,7 +1003,7 @@ def add_annotation_tags(annotation_id):
         scenario_group = db.get_tag_group_by_name('_scenario_data')
         if not scenario_group:
             # Create it if it doesn't exist
-            with db.get_connection() as conn:
+            with get_connection() as conn:
                 cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
                 cursor.execute('''
                     INSERT INTO tag_groups (group_name, display_name, group_type, description, is_required, applies_to, sort_order)
@@ -1185,7 +1185,7 @@ def export_yolo_dataset(config_id):
 def get_yolo_activity_tags():
     """Get all unique activity tags from annotations for YOLO export"""
     try:
-        with db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
             cursor.execute('''
                 SELECT DISTINCT activity_tag, COUNT(*) as count
@@ -1209,7 +1209,7 @@ def person_manager():
 def get_person_detections():
     """Get all person identification annotations with names"""
     try:
-        with db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             # Get all keyframe annotations that are person identifications
@@ -1331,7 +1331,7 @@ def get_recent_person_names():
     """Get recently used person names"""
     try:
         limit = int(request.args.get('limit', 10))
-        with db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             # Get unique person names from annotation_tags
@@ -1365,7 +1365,7 @@ def get_recent_tag_values():
         if not tag_name:
             return jsonify({'success': False, 'error': 'tag_name required'}), 400
 
-        with db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             # Get unique values for this tag
@@ -1400,7 +1400,7 @@ def assign_person_name():
         if not detection_ids or not person_name:
             return jsonify({'success': False, 'error': 'Missing required fields'}), 400
 
-        with db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             updated_count = 0
@@ -1466,7 +1466,7 @@ def unassign_person_name():
         if not detection_ids:
             return jsonify({'success': False, 'error': 'No detection IDs provided'}), 400
 
-        with db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             # Delete person_name tags for these detections
@@ -1724,7 +1724,7 @@ def list_ecoeye_alerts():
         limit = int(request.args.get('limit', 50))
         offset = int(request.args.get('offset', 0))
 
-        with db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             cursor.execute('''
@@ -1978,7 +1978,7 @@ def set_training_job_processing(job_id):
 def delete_training_job(job_id):
     """Delete a training job record"""
     try:
-        with db.get_connection() as conn:
+        with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
             cursor.execute('DELETE FROM training_jobs WHERE job_id = %s', (job_id,))
             success = cursor.rowcount > 0
