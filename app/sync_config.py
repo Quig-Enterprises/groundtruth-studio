@@ -8,7 +8,6 @@ Securely stores and manages credentials for:
 Credentials are stored encrypted in the database.
 """
 
-import sqlite3
 import json
 import base64
 from pathlib import Path
@@ -18,6 +17,7 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 import logging
 import os
+from app.db_connection import get_connection, get_cursor
 
 logger = logging.getLogger(__name__)
 
@@ -25,17 +25,17 @@ logger = logging.getLogger(__name__)
 class SyncConfigManager:
     """Manages sync configuration and encrypted credentials"""
 
-    def __init__(self, db_path: str, encryption_key: str = None):
+    def __init__(self, db_path: str = None, encryption_key: str = None):
         """
         Initialize config manager
 
         Args:
-            db_path: Path to database
+            db_path: Path to database (deprecated, kept for backwards compatibility)
             encryption_key: Master encryption key (will be generated if not provided)
         """
-        self.db_path = db_path
+        # db_path parameter kept for backwards compatibility but ignored
+        # Schema is now managed by schema.py
         self.encryption_key = encryption_key or self._generate_encryption_key()
-        self._init_config_tables()
 
     def _generate_encryption_key(self) -> str:
         """
@@ -84,41 +84,6 @@ class SyncConfigManager:
             logger.error(f"Failed to decrypt data: {e}")
             raise ValueError("Failed to decrypt credentials")
 
-    def _init_config_tables(self):
-        """Initialize configuration tables"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-
-        # Configuration table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS sync_config (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                config_key TEXT UNIQUE NOT NULL,
-                config_value TEXT,
-                is_encrypted BOOLEAN DEFAULT 0,
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
-
-        # Sync history table
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS sync_history (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                sync_type TEXT NOT NULL,
-                status TEXT NOT NULL,
-                started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                completed_at TIMESTAMP,
-                items_processed INTEGER DEFAULT 0,
-                items_succeeded INTEGER DEFAULT 0,
-                items_failed INTEGER DEFAULT 0,
-                error_message TEXT,
-                details TEXT
-            )
-        ''')
-
-        conn.commit()
-        conn.close()
 
     def set_config(self, key: str, value: str, encrypt: bool = False):
         """
@@ -132,20 +97,19 @@ class SyncConfigManager:
         if encrypt:
             value = self._encrypt(value)
 
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute('''
-            INSERT INTO sync_config (config_key, config_value, is_encrypted)
-            VALUES (?, ?, ?)
-            ON CONFLICT(config_key) DO UPDATE SET
-                config_value = excluded.config_value,
-                is_encrypted = excluded.is_encrypted,
-                updated_at = CURRENT_TIMESTAMP
-        ''', (key, value, encrypt))
+            cursor.execute('''
+                INSERT INTO sync_config (config_key, config_value, is_encrypted)
+                VALUES (%s, %s, %s)
+                ON CONFLICT(config_key) DO UPDATE SET
+                    config_value = excluded.config_value,
+                    is_encrypted = excluded.is_encrypted,
+                    updated_at = CURRENT_TIMESTAMP
+            ''', (key, value, encrypt))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get_config(self, key: str, default: str = None) -> Optional[str]:
         """
@@ -158,15 +122,14 @@ class SyncConfigManager:
         Returns:
             Configuration value or default
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute(
-            'SELECT config_value, is_encrypted FROM sync_config WHERE config_key = ?',
-            (key,)
-        )
-        result = cursor.fetchone()
-        conn.close()
+            cursor.execute(
+                'SELECT config_value, is_encrypted FROM sync_config WHERE config_key = %s',
+                (key,)
+            )
+            result = cursor.fetchone()
 
         if not result:
             return default
@@ -184,19 +147,17 @@ class SyncConfigManager:
 
     def delete_config(self, key: str):
         """Delete configuration value"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM sync_config WHERE config_key = ?', (key,))
-        conn.commit()
-        conn.close()
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('DELETE FROM sync_config WHERE config_key = %s', (key,))
+            conn.commit()
 
     def get_all_config_keys(self) -> list:
         """Get all configuration keys"""
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
-        cursor.execute('SELECT config_key FROM sync_config ORDER BY config_key')
-        keys = [row[0] for row in cursor.fetchall()]
-        conn.close()
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute('SELECT config_key FROM sync_config ORDER BY config_key')
+            keys = [row[0] for row in cursor.fetchall()]
         return keys
 
     # EcoEye specific methods
@@ -265,17 +226,16 @@ class SyncConfigManager:
         Returns:
             Sync history ID
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute('''
-            INSERT INTO sync_history (sync_type, status)
-            VALUES (?, 'running')
-        ''', (sync_type,))
+            cursor.execute('''
+                INSERT INTO sync_history (sync_type, status)
+                VALUES (%s, 'running')
+            ''', (sync_type,))
 
-        sync_id = cursor.lastrowid
-        conn.commit()
-        conn.close()
+            sync_id = cursor.lastrowid
+            conn.commit()
 
         return sync_id
 
@@ -291,24 +251,23 @@ class SyncConfigManager:
             items_failed: Items that failed
             details: Optional details dict
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        details_json = json.dumps(details) if details else None
+            details_json = json.dumps(details) if details else None
 
-        cursor.execute('''
-            UPDATE sync_history
-            SET status = 'completed',
-                completed_at = CURRENT_TIMESTAMP,
-                items_processed = ?,
-                items_succeeded = ?,
-                items_failed = ?,
-                details = ?
-            WHERE id = ?
-        ''', (items_processed, items_succeeded, items_failed, details_json, sync_id))
+            cursor.execute('''
+                UPDATE sync_history
+                SET status = 'completed',
+                    completed_at = CURRENT_TIMESTAMP,
+                    items_processed = %s,
+                    items_succeeded = %s,
+                    items_failed = %s,
+                    details = %s
+                WHERE id = %s
+            ''', (items_processed, items_succeeded, items_failed, details_json, sync_id))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def log_sync_error(self, sync_id: int, error_message: str):
         """
@@ -318,19 +277,18 @@ class SyncConfigManager:
             sync_id: Sync history ID
             error_message: Error message
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute('''
-            UPDATE sync_history
-            SET status = 'failed',
-                completed_at = CURRENT_TIMESTAMP,
-                error_message = ?
-            WHERE id = ?
-        ''', (error_message, sync_id))
+            cursor.execute('''
+                UPDATE sync_history
+                SET status = 'failed',
+                    completed_at = CURRENT_TIMESTAMP,
+                    error_message = %s
+                WHERE id = %s
+            ''', (error_message, sync_id))
 
-        conn.commit()
-        conn.close()
+            conn.commit()
 
     def get_sync_history(self, limit: int = 50) -> list:
         """
@@ -342,24 +300,23 @@ class SyncConfigManager:
         Returns:
             List of sync history records
         """
-        conn = sqlite3.connect(self.db_path)
-        cursor = conn.cursor()
+        with get_connection() as conn:
+            cursor = conn.cursor()
 
-        cursor.execute('''
-            SELECT id, sync_type, status, started_at, completed_at,
-                   items_processed, items_succeeded, items_failed,
-                   error_message
-            FROM sync_history
-            ORDER BY started_at DESC
-            LIMIT ?
-        ''', (limit,))
+            cursor.execute('''
+                SELECT id, sync_type, status, started_at, completed_at,
+                       items_processed, items_succeeded, items_failed,
+                       error_message
+                FROM sync_history
+                ORDER BY started_at DESC
+                LIMIT %s
+            ''', (limit,))
 
-        columns = ['id', 'sync_type', 'status', 'started_at', 'completed_at',
-                  'items_processed', 'items_succeeded', 'items_failed', 'error_message']
+            columns = ['id', 'sync_type', 'status', 'started_at', 'completed_at',
+                      'items_processed', 'items_succeeded', 'items_failed', 'error_message']
 
-        history = []
-        for row in cursor.fetchall():
-            history.append(dict(zip(columns, row)))
+            history = []
+            for row in cursor.fetchall():
+                history.append(dict(zip(columns, row)))
 
-        conn.close()
         return history
