@@ -44,7 +44,6 @@ class CameraTopologyLearner:
         ''', (f'%{person_name}%',))
 
         detections = [dict(row) for row in cursor.fetchall()]
-        conn.close()
 
         # Group by video (camera)
         transitions = []
@@ -130,7 +129,6 @@ class CameraTopologyLearner:
         ''')
 
         people = [row['person_name'] for row in cursor.fetchall() if row['person_name']]
-        conn.close()
 
         # Analyze transitions for each person
         all_transitions = []
@@ -245,7 +243,6 @@ class CameraTopologyLearner:
         ''')
 
         unassigned = [dict(row) for row in cursor.fetchall()]
-        conn.close()
 
         # Learn typical transition patterns
         graph = self.build_camera_graph()

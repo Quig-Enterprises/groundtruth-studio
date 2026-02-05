@@ -232,9 +232,10 @@ class SyncConfigManager:
             cursor.execute('''
                 INSERT INTO sync_history (sync_type, status)
                 VALUES (%s, 'running')
+                RETURNING id
             ''', (sync_type,))
 
-            sync_id = cursor.lastrowid
+            sync_id = cursor.fetchone()['id']
             conn.commit()
 
         return sync_id

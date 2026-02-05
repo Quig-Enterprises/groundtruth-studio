@@ -41,6 +41,7 @@ class YOLOExporter:
                 (config_name, description, class_mapping, include_reviewed_only,
                  include_ai_generated, include_negative_examples, min_confidence, export_format)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
             ''', (
                 config_name,
                 description,
@@ -52,7 +53,7 @@ class YOLOExporter:
                 options.get('export_format', 'yolov8')
             ))
 
-            config_id = cursor.lastrowid
+            config_id = cursor.fetchone()['id']
             conn.commit()
         return config_id
 
@@ -212,7 +213,7 @@ class YOLOExporter:
         # Collect all frame entries first for splitting
         all_frame_entries = []
 
-            for video_id in video_ids:
+        for video_id in video_ids:
                 # Get video info
                 cursor.execute('SELECT * FROM videos WHERE id = %s', (video_id,))
                 video = dict(cursor.fetchone())
