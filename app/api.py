@@ -1286,7 +1286,7 @@ def get_person_detections():
 
             # Get statistics
             cursor.execute('''
-                SELECT COUNT(DISTINCT video_id) FROM keyframe_annotations
+                SELECT COUNT(DISTINCT video_id) as count FROM keyframe_annotations
                 WHERE id IN (
                     SELECT annotation_id FROM annotation_tags
                     WHERE annotation_type = 'keyframe'
@@ -1611,7 +1611,6 @@ def sync_ecoeye_alerts():
         # Initialize client if not already done
         if not ecoeye_client:
             ecoeye_client = EcoEyeSyncClient(
-                db_path=str(DB_PATH),
                 download_dir=DOWNLOAD_DIR,
                 api_key=credentials['api_key'],
                 api_secret=credentials['api_secret']
@@ -1663,7 +1662,6 @@ def download_ecoeye_videos():
         # Initialize client if not already done
         if not ecoeye_client:
             ecoeye_client = EcoEyeSyncClient(
-                db_path=str(DB_PATH),
                 download_dir=DOWNLOAD_DIR,
                 api_key=credentials['api_key'],
                 api_secret=credentials['api_secret']
@@ -1708,7 +1706,6 @@ def get_ecoeye_status():
         # Initialize client if not already done
         if not ecoeye_client:
             ecoeye_client = EcoEyeSyncClient(
-                db_path=str(DB_PATH),
                 download_dir=DOWNLOAD_DIR,
                 api_key=credentials['api_key'],
                 api_secret=credentials['api_secret']
@@ -1727,29 +1724,22 @@ def list_ecoeye_alerts():
         limit = int(request.args.get('limit', 50))
         offset = int(request.args.get('offset', 0))
 
-        conn = db.get_connection()
-        cursor = conn.cursor()
+        with db.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-        cursor.execute('''
-            SELECT alert_id, camera_id, timestamp, alert_type, confidence,
-                   video_available, video_downloaded, local_video_path, synced_at
-            FROM ecoeye_alerts
-            ORDER BY timestamp DESC
-            LIMIT ? OFFSET ?
-        ''', (limit, offset))
+            cursor.execute('''
+                SELECT alert_id, camera_id, timestamp, alert_type, confidence,
+                       video_available, video_downloaded, local_video_path, synced_at
+                FROM ecoeye_alerts
+                ORDER BY timestamp DESC
+                LIMIT %s OFFSET %s
+            ''', (limit, offset))
 
-        columns = ['alert_id', 'camera_id', 'timestamp', 'alert_type', 'confidence',
-                  'video_available', 'video_downloaded', 'local_video_path', 'synced_at']
+            alerts = [dict(row) for row in cursor.fetchall()]
 
-        alerts = []
-        for row in cursor.fetchall():
-            alerts.append(dict(zip(columns, row)))
-
-        # Get total count
-        cursor.execute('SELECT COUNT(*) FROM ecoeye_alerts')
-        total = cursor.fetchone()[0]
-
-        conn.close()
+            # Get total count
+            cursor.execute('SELECT COUNT(*) as count FROM ecoeye_alerts')
+            total = cursor.fetchone()['count']
 
         return jsonify({
             'success': True,
@@ -1988,12 +1978,11 @@ def set_training_job_processing(job_id):
 def delete_training_job(job_id):
     """Delete a training job record"""
     try:
-        conn = db.get_connection()
-        cursor = conn.cursor()
-        cursor.execute('DELETE FROM training_jobs WHERE job_id = ?', (job_id,))
-        success = cursor.rowcount > 0
-        conn.commit()
-        conn.close()
+        with db.get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cursor.execute('DELETE FROM training_jobs WHERE job_id = %s', (job_id,))
+            success = cursor.rowcount > 0
+            conn.commit()
         if not success:
             return jsonify({'success': False, 'error': 'Job not found'}), 404
         return jsonify({'success': True, 'job_id': job_id})
