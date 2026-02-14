@@ -2430,12 +2430,90 @@ class ScenarioWorkflow {
     }
 
     /**
+     * Check if the current bbox overlaps with an already-identified person/face annotation.
+     * Returns the name if a match is found, null otherwise.
+     */
+    findOverlappingIdentifiedPerson(annotationId, bbox) {
+        if (!bbox || !window.currentAnnotationsWithTags) return null;
+
+        const bx = bbox.x, by = bbox.y, bw = bbox.width, bh = bbox.height;
+
+        for (const anno of window.currentAnnotationsWithTags) {
+            if (anno.id === annotationId) continue;
+            if (anno.bbox_x == null || anno.bbox_y == null) continue;
+
+            // Extract person name from this annotation's tags
+            const tags = anno.tags || {};
+            let personName = '';
+            if (tags.person_name) {
+                try {
+                    const parsed = typeof tags.person_name === 'string' ? JSON.parse(tags.person_name) : tags.person_name;
+                    personName = parsed.person_name || '';
+                } catch (e) {
+                    personName = String(tags.person_name);
+                }
+            }
+            if (!personName) continue;
+
+            const ax = anno.bbox_x, ay = anno.bbox_y, aw = anno.bbox_width, ah = anno.bbox_height;
+
+            // Check if one bbox contains the other (face inside person or person contains face)
+            const aContainsB = ax <= bx && ay <= by && (ax + aw) >= (bx + bw) && (ay + ah) >= (by + bh);
+            const bContainsA = bx <= ax && by <= ay && (bx + bw) >= (ax + aw) && (by + bh) >= (ay + ah);
+
+            // Also check significant overlap (IoU > 0.3)
+            const ix1 = Math.max(ax, bx), iy1 = Math.max(ay, by);
+            const ix2 = Math.min(ax + aw, bx + bw), iy2 = Math.min(ay + ah, by + bh);
+            const interArea = Math.max(0, ix2 - ix1) * Math.max(0, iy2 - iy1);
+            const aArea = aw * ah, bArea = bw * bh;
+            const iou = interArea / (aArea + bArea - interArea);
+
+            if (aContainsB || bContainsA || iou > 0.3) {
+                return personName;
+            }
+        }
+        return null;
+    }
+
+    /**
      * Show person identification modal after saving a person_identification annotation.
      * Fetches known persons and lets the user quickly assign a name.
      */
     async showPersonIdentifyModal(annotationId) {
         const modal = document.getElementById('person-identify-modal');
         if (!modal) return;
+
+        // Check for overlapping already-identified person/face
+        const bbox = this._savedBBox;
+        const suggestedName = this.findOverlappingIdentifiedPerson(annotationId, bbox);
+        if (suggestedName) {
+            const isSame = confirm(`Is this ${suggestedName}?`);
+            if (isSame) {
+                // Assign the same name and advance
+                try {
+                    await fetch('/api/person-detections/assign-name', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            detection_ids: [annotationId],
+                            person_name: suggestedName
+                        })
+                    });
+                    console.log('[Person Identify] Auto-assigned overlapping name:', suggestedName);
+                    loadKeyframeAnnotations();
+                } catch (err) {
+                    console.error('[Person Identify] Error auto-assigning name:', err);
+                }
+                // Advance to next in queue
+                this._savedBBox = null;
+                if (this._personQueue) {
+                    this._personQueueIndex++;
+                    this.showNextPersonIdentify();
+                }
+                return;
+            }
+            // If "No", fall through to regular identify modal
+        }
 
         const cropContainer = document.getElementById('person-identify-crop');
         const knownContainer = document.getElementById('person-identify-known');

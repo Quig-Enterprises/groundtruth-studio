@@ -395,8 +395,8 @@ async function displayKeyframeAnnotations(annotations) {
         return;
     }
 
-    // Fetch tags for all annotations to get scenario data
-    const annotationsWithTags = await Promise.all(annotations.map(async anno => {
+    // Fetch tags for all annotations to get scenario data (stored globally for overlap checks)
+    const annotationsWithTags = window.currentAnnotationsWithTags = await Promise.all(annotations.map(async anno => {
         try {
             const response = await fetch(`/api/annotations/${anno.id}/tags?annotation_type=keyframe`);
             const data = await response.json();
