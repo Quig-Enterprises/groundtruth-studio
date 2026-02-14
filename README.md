@@ -32,11 +32,77 @@ Download videos from 1000+ sites, organize with structured tags, and create ML-r
 ## Technology Stack
 
 - **Backend**: Python 3.8+ with Flask
-- **Database**: SQLite (easily upgradeable to PostgreSQL)
+- **Database**: PostgreSQL
 - **Video Download**: yt-dlp
 - **Video Processing**: FFmpeg
 - **Frontend**: Vanilla JavaScript, no framework dependencies
 - **Storage**: File-based with organized directory structure
+
+## Pipeline Worker (MQTT Intelligence Bridge)
+
+The pipeline worker is a standalone service that bridges real-time MQTT events from the detection pipeline into Groundtruth Studio's intelligence layer.
+
+### Architecture
+
+```
+tracker/tracks/{camera_id}  ──┐
+identity/face/{camera_id}   ──┼──► Pipeline Worker ──► Context Engine (associations)
+                               │                   ──► Violation Detector
+                               │                   ──► Visit Builder (periodic)
+                               └──────────────────────► Face Clustering (periodic)
+```
+
+### MQTT Subscriptions
+
+| Topic | Source | Purpose |
+|-------|--------|---------|
+| `tracker/tracks/+` | Tracker Service | Track positions per frame — fed to context engine and violation detector |
+| `identity/face/+` | InsightFace API | Face detection events for identity linkage |
+
+### Periodic Jobs
+
+| Job | Interval | Description |
+|-----|----------|-------------|
+| Visit aggregation | 60s | Groups tracks into visit records via `VisitBuilder.build_visits()` |
+| Face clustering | 300s | Clusters unassigned face embeddings via `FaceClusterer.run_clustering()` |
+
+### Configuration
+
+Edit `app/pipeline_config.yml`:
+
+```yaml
+mqtt:
+  host: "127.0.0.1"
+  port: 1883
+  username: "pipeline"
+  password: "pipeline_worker_2026"
+  client_id: "pipeline-worker"
+  subscriptions:
+    - "tracker/tracks/+"
+    - "identity/face/+"
+
+periodic:
+  visit_interval_seconds: 60
+  clustering_interval_seconds: 300
+
+violation:
+  ramp_cameras: []    # Empty = check all cameras
+```
+
+### Service Management
+
+```bash
+# Start / stop / restart
+sudo systemctl start pipeline-worker
+sudo systemctl stop pipeline-worker
+sudo systemctl restart pipeline-worker
+
+# Check status and logs
+systemctl is-active pipeline-worker
+tail -f /opt/groundtruth-studio/logs/pipeline-worker.log
+```
+
+The service is managed by systemd (`/etc/systemd/system/pipeline-worker.service`), starts on boot, and auto-restarts on failure.
 
 ## Installation
 
@@ -380,7 +446,6 @@ groundtruth-studio/
 ├── download_cli.py         # Command-line tool
 ├── batch_download_example.py  # Batch processing script
 ├── requirements.txt        # Python dependencies
-├── video_archive.db        # SQLite database
 ├── README.md
 └── ANNOTATION_GUIDE.md     # Complete annotation documentation
 ```
@@ -420,7 +485,7 @@ groundtruth-studio/
 
 For production use with larger datasets:
 
-1. **Use PostgreSQL**: Update `database.py` to use PostgreSQL instead of SQLite
+1. **Database**: Uses PostgreSQL via db_connection.py module
 2. **Add authentication**: Implement user auth in Flask
 3. **Use reverse proxy**: Deploy behind nginx or Apache
 4. **Enable HTTPS**: Use SSL certificates
@@ -493,11 +558,9 @@ Increase Flask max upload size in `app/api.py`:
 app.config['MAX_CONTENT_LENGTH'] = 5 * 1024 * 1024 * 1024  # 5GB
 ```
 
-### Database locked errors
+### Database connection errors
 
-SQLite has concurrency limitations. For multi-user access:
-1. Add write-ahead logging: `PRAGMA journal_mode=WAL`
-2. Or migrate to PostgreSQL for production
+PostgreSQL handles concurrency natively and supports multiple simultaneous connections. If you encounter connection errors, check that the DATABASE_URL environment variable is set correctly and the PostgreSQL service is running.
 
 ## Future Enhancements
 
