@@ -1,4 +1,7 @@
+import json
+import math
 import os
+import uuid
 from datetime import datetime
 from typing import List, Dict, Optional
 
@@ -6,6 +9,28 @@ import psycopg2
 from psycopg2 import extras
 
 from db_connection import get_connection, get_cursor
+
+try:
+    import numpy as np
+    _HAS_NUMPY = True
+except ImportError:
+    _HAS_NUMPY = False
+
+
+def _cosine_similarity(vec_a, vec_b):
+    """Compute cosine similarity between two vectors."""
+    if _HAS_NUMPY:
+        a = np.array(vec_a, dtype=np.float32)
+        b = np.array(vec_b, dtype=np.float32)
+        dot = np.dot(a, b)
+        norm = np.linalg.norm(a) * np.linalg.norm(b)
+        return float(dot / norm) if norm > 0 else 0.0
+    else:
+        dot = sum(a * b for a, b in zip(vec_a, vec_b))
+        norm_a = math.sqrt(sum(a * a for a in vec_a))
+        norm_b = math.sqrt(sum(b * b for b in vec_b))
+        norm = norm_a * norm_b
+        return dot / norm if norm > 0 else 0.0
 
 
 class VideoDatabase:
@@ -23,14 +48,15 @@ class VideoDatabase:
 
     def add_video(self, filename: str, original_url: str = None, title: str = None,
                   duration: float = None, width: int = None, height: int = None,
-                  file_size: int = None, thumbnail_path: str = None, notes: str = None) -> int:
+                  file_size: int = None, thumbnail_path: str = None, notes: str = None,
+                  camera_id: str = None) -> int:
         with get_cursor() as cursor:
             cursor.execute('''
                 INSERT INTO videos (filename, original_url, title, duration, width, height,
-                                  file_size, thumbnail_path, notes)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                  file_size, thumbnail_path, notes, camera_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
-            ''', (filename, original_url, title, duration, width, height, file_size, thumbnail_path, notes))
+            ''', (filename, original_url, title, duration, width, height, file_size, thumbnail_path, notes, camera_id))
             result = cursor.fetchone()
             return result['id']
 
@@ -40,20 +66,61 @@ class VideoDatabase:
             row = cursor.fetchone()
             return dict(row) if row else None
 
-    def get_all_videos(self, limit: int = 100, offset: int = 0) -> List[Dict]:
+    def _is_default_library(self, library_id: int) -> bool:
+        """Check if a library is the default (Uncategorized) library."""
         with get_cursor(commit=False) as cursor:
-            cursor.execute('''
-                SELECT v.*,
-                       STRING_AGG(DISTINCT t.name, ', ') as tags,
-                       COUNT(DISTINCT ka.id) as annotation_count
-                FROM videos v
-                LEFT JOIN video_tags vt ON v.id = vt.video_id
-                LEFT JOIN tags t ON vt.tag_id = t.id
-                LEFT JOIN keyframe_annotations ka ON v.id = ka.video_id
-                GROUP BY v.id
-                ORDER BY v.upload_date DESC
-                LIMIT %s OFFSET %s
-            ''', (limit, offset))
+            cursor.execute('SELECT is_default FROM content_libraries WHERE id = %s', (library_id,))
+            row = cursor.fetchone()
+            return bool(row and row['is_default'])
+
+    def get_all_videos(self, limit: int = 100, offset: int = 0, library_id: int = None) -> List[Dict]:
+        with get_cursor(commit=False) as cursor:
+            if library_id is not None and self._is_default_library(library_id):
+                # Default library: show videos NOT in any non-default library
+                cursor.execute('''
+                    SELECT v.*,
+                           STRING_AGG(DISTINCT t.name, ', ') as tags,
+                           COUNT(DISTINCT ka.id) as annotation_count
+                    FROM videos v
+                    LEFT JOIN video_tags vt ON v.id = vt.video_id
+                    LEFT JOIN tags t ON vt.tag_id = t.id
+                    LEFT JOIN keyframe_annotations ka ON v.id = ka.video_id
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM content_library_items cli2
+                        INNER JOIN content_libraries cl2 ON cli2.library_id = cl2.id
+                        WHERE cli2.video_id = v.id AND cl2.is_default = FALSE
+                    )
+                    GROUP BY v.id
+                    ORDER BY v.upload_date DESC
+                    LIMIT %s OFFSET %s
+                ''', (limit, offset))
+            elif library_id is not None:
+                cursor.execute('''
+                    SELECT v.*,
+                           STRING_AGG(DISTINCT t.name, ', ') as tags,
+                           COUNT(DISTINCT ka.id) as annotation_count
+                    FROM videos v
+                    INNER JOIN content_library_items cli ON v.id = cli.video_id AND cli.library_id = %s
+                    LEFT JOIN video_tags vt ON v.id = vt.video_id
+                    LEFT JOIN tags t ON vt.tag_id = t.id
+                    LEFT JOIN keyframe_annotations ka ON v.id = ka.video_id
+                    GROUP BY v.id
+                    ORDER BY v.upload_date DESC
+                    LIMIT %s OFFSET %s
+                ''', (library_id, limit, offset))
+            else:
+                cursor.execute('''
+                    SELECT v.*,
+                           STRING_AGG(DISTINCT t.name, ', ') as tags,
+                           COUNT(DISTINCT ka.id) as annotation_count
+                    FROM videos v
+                    LEFT JOIN video_tags vt ON v.id = vt.video_id
+                    LEFT JOIN tags t ON vt.tag_id = t.id
+                    LEFT JOIN keyframe_annotations ka ON v.id = ka.video_id
+                    GROUP BY v.id
+                    ORDER BY v.upload_date DESC
+                    LIMIT %s OFFSET %s
+                ''', (limit, offset))
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
@@ -258,6 +325,54 @@ class VideoDatabase:
             ''', (video_id,))
             result = cursor.fetchone()
             return result['count'] if result else 0
+
+    def get_bboxes_for_video_ids(self, video_ids: list) -> dict:
+        """Get bboxes from keyframe annotations and AI predictions for multiple videos"""
+        if not video_ids:
+            return {}
+        with get_cursor(commit=False) as cursor:
+            placeholders = ','.join(['%s'] * len(video_ids))
+            # Get keyframe annotations
+            cursor.execute(f'''
+                SELECT video_id, bbox_x, bbox_y, bbox_width, bbox_height, reviewed
+                FROM keyframe_annotations
+                WHERE video_id IN ({placeholders})
+                AND bbox_x IS NOT NULL AND bbox_width > 0
+            ''', video_ids)
+            rows = cursor.fetchall()
+            result = {}
+            for row in rows:
+                vid = row['video_id']
+                if vid not in result:
+                    result[vid] = []
+                result[vid].append({
+                    'x': row['bbox_x'],
+                    'y': row['bbox_y'],
+                    'w': row['bbox_width'],
+                    'h': row['bbox_height'],
+                    'reviewed': bool(row['reviewed'])
+                })
+            # Get AI predictions (always shown as unvalidated)
+            cursor.execute(f'''
+                SELECT video_id, bbox_x, bbox_y, bbox_width, bbox_height
+                FROM ai_predictions
+                WHERE video_id IN ({placeholders})
+                AND bbox_x IS NOT NULL AND bbox_width > 0
+                AND review_status IN ('pending', 'needs_correction')
+            ''', video_ids)
+            rows = cursor.fetchall()
+            for row in rows:
+                vid = row['video_id']
+                if vid not in result:
+                    result[vid] = []
+                result[vid].append({
+                    'x': row['bbox_x'],
+                    'y': row['bbox_y'],
+                    'w': row['bbox_width'],
+                    'h': row['bbox_height'],
+                    'reviewed': False
+                })
+            return result
 
     def get_keyframe_annotation_by_id(self, annotation_id: int) -> Dict:
         with get_cursor(commit=False) as cursor:
@@ -1301,7 +1416,7 @@ class VideoDatabase:
     def update_video(self, video_id: int, **kwargs) -> bool:
         """Update video fields"""
         allowed_fields = ['filename', 'original_url', 'title', 'duration', 'width', 'height',
-                         'file_size', 'thumbnail_path', 'notes']
+                         'file_size', 'thumbnail_path', 'notes', 'camera_id']
 
         updates = []
         values = []
@@ -1494,3 +1609,1182 @@ class VideoDatabase:
             stats['total_export_configs'] = cursor.fetchone()['count']
 
             return stats
+
+    # ==================== AI Predictions ====================
+
+    def insert_predictions_batch(self, video_id: int, model_name: str, model_version: str,
+                                  batch_id: str, predictions: List[Dict]) -> List[int]:
+        """Insert a batch of AI predictions. Returns list of prediction IDs."""
+        ids = []
+        with get_cursor() as cursor:
+            for pred in predictions:
+                cursor.execute('''
+                    INSERT INTO ai_predictions
+                    (video_id, model_name, model_version, prediction_type, confidence,
+                     timestamp, start_time, end_time, bbox_x, bbox_y, bbox_width, bbox_height,
+                     scenario, predicted_tags, batch_id, inference_time_ms)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    RETURNING id
+                ''', (
+                    video_id, model_name, model_version,
+                    pred['prediction_type'], pred['confidence'],
+                    pred.get('timestamp'), pred.get('start_time'), pred.get('end_time'),
+                    pred.get('bbox', {}).get('x'), pred.get('bbox', {}).get('y'),
+                    pred.get('bbox', {}).get('width'), pred.get('bbox', {}).get('height'),
+                    pred['scenario'],
+                    extras.Json(pred.get('tags', {})),
+                    batch_id,
+                    pred.get('inference_time_ms')
+                ))
+                result = cursor.fetchone()
+                ids.append(result['id'])
+        return ids
+
+    def get_pending_predictions(self, video_id: int = None, model_name: str = None,
+                                 limit: int = 100, offset: int = 0) -> List[Dict]:
+        """Get pending predictions for review, optionally filtered."""
+        with get_cursor(commit=False) as cursor:
+            conditions = ["review_status = 'pending'"]
+            params = []
+            if video_id:
+                conditions.append("video_id = %s")
+                params.append(video_id)
+            if model_name:
+                conditions.append("model_name = %s")
+                params.append(model_name)
+            where = " AND ".join(conditions)
+            params.extend([limit, offset])
+            cursor.execute(f'''
+                SELECT p.*, v.filename as video_filename, v.title as video_title
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                WHERE {where}
+                ORDER BY p.confidence DESC, p.created_at DESC
+                LIMIT %s OFFSET %s
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_prediction_by_id(self, prediction_id: int) -> Optional[Dict]:
+        """Get a single prediction by ID."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT p.*, v.filename as video_filename, v.title as video_title
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                WHERE p.id = %s
+            ''', (prediction_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_prediction_counts(self, video_id: int = None) -> Dict:
+        """Get count of predictions by status, optionally for a specific video."""
+        with get_cursor(commit=False) as cursor:
+            if video_id:
+                cursor.execute('''
+                    SELECT review_status, COUNT(*) as count
+                    FROM ai_predictions
+                    WHERE video_id = %s
+                    GROUP BY review_status
+                ''', (video_id,))
+            else:
+                cursor.execute('''
+                    SELECT review_status, COUNT(*) as count
+                    FROM ai_predictions
+                    GROUP BY review_status
+                ''')
+            rows = cursor.fetchall()
+            counts = {row['review_status']: row['count'] for row in rows}
+            counts['total'] = sum(counts.values())
+            return counts
+
+    def review_prediction(self, prediction_id: int, action: str, reviewer: str,
+                           notes: str = None, corrections: Dict = None) -> Optional[Dict]:
+        """Review a prediction: approve, reject, or correct."""
+        with get_cursor() as cursor:
+            if action == 'approve':
+                status = 'approved'
+            elif action == 'reject':
+                status = 'rejected'
+            elif action == 'correct':
+                status = 'approved'  # corrections are approved with modified data
+            else:
+                return None
+
+            update_fields = [
+                "review_status = %s",
+                "reviewed_by = %s",
+                "reviewed_at = NOW()",
+                "review_notes = %s"
+            ]
+            params = [status, reviewer, notes]
+
+            if corrections:
+                if corrections.get('tags'):
+                    update_fields.append("corrected_tags = %s")
+                    params.append(extras.Json(corrections['tags']))
+                if corrections.get('bbox'):
+                    update_fields.append("corrected_bbox = %s")
+                    params.append(extras.Json(corrections['bbox']))
+                if corrections.get('correction_type'):
+                    update_fields.append("correction_type = %s")
+                    params.append(corrections['correction_type'])
+
+            params.append(prediction_id)
+            cursor.execute(f'''
+                UPDATE ai_predictions
+                SET {", ".join(update_fields)}
+                WHERE id = %s
+                RETURNING *
+            ''', params)
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def approve_prediction_to_annotation(self, prediction_id: int) -> Optional[int]:
+        """Convert an approved prediction into a training annotation. Returns annotation ID."""
+        pred = self.get_prediction_by_id(prediction_id)
+        if not pred or pred['review_status'] not in ('approved', 'auto_approved'):
+            return None
+
+        # Use corrected data if available, otherwise use predicted data
+        tags = pred.get('corrected_tags') or pred['predicted_tags']
+        bbox = pred.get('corrected_bbox')
+
+        with get_cursor() as cursor:
+            if pred['prediction_type'] == 'keyframe':
+                bx = bbox['x'] if bbox else pred['bbox_x']
+                by = bbox['y'] if bbox else pred['bbox_y']
+                bw = bbox['width'] if bbox else pred['bbox_width']
+                bh = bbox['height'] if bbox else pred['bbox_height']
+
+                cursor.execute('''
+                    INSERT INTO keyframe_annotations
+                    (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
+                     activity_tag, comment, reviewed)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, true)
+                    RETURNING id
+                ''', (
+                    pred['video_id'], pred['timestamp'],
+                    bx, by, bw, bh,
+                    pred['scenario'],
+                    f"AI prediction (model={pred['model_name']} v{pred['model_version']}, confidence={pred['confidence']:.2f})"
+                ))
+                result = cursor.fetchone()
+                annotation_id = result['id']
+
+            elif pred['prediction_type'] == 'time_range':
+                cursor.execute('''
+                    INSERT INTO time_range_tags
+                    (video_id, tag_name, start_time, end_time, comment)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id
+                ''', (
+                    pred['video_id'], pred['scenario'],
+                    pred['start_time'], pred['end_time'],
+                    f"AI prediction (model={pred['model_name']} v{pred['model_version']}, confidence={pred['confidence']:.2f})"
+                ))
+                result = cursor.fetchone()
+                annotation_id = result['id']
+            else:
+                return None
+
+            # Link prediction to the created annotation
+            cursor.execute('''
+                UPDATE ai_predictions SET created_annotation_id = %s WHERE id = %s
+            ''', (annotation_id, prediction_id))
+
+            return annotation_id
+
+    def update_prediction_routing(self, prediction_id: int, review_status: str,
+                                    routed_by: str, threshold_used: Dict = None) -> bool:
+        """Update a prediction's routing status (for auto-approve/auto-reject)."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                UPDATE ai_predictions
+                SET review_status = %s, routed_by = %s, routing_threshold_used = %s
+                WHERE id = %s
+            ''', (review_status, routed_by, extras.Json(threshold_used) if threshold_used else None, prediction_id))
+            return cursor.rowcount > 0
+
+    # ==================== Model Registry ====================
+
+    def get_or_create_model_registry(self, model_name: str, model_version: str,
+                                      model_type: str = 'yolo') -> Dict:
+        """Get or create a model registry entry."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                SELECT * FROM model_registry WHERE model_name = %s AND model_version = %s
+            ''', (model_name, model_version))
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+
+            cursor.execute('''
+                INSERT INTO model_registry (model_name, model_version, model_type)
+                VALUES (%s, %s, %s)
+                RETURNING *
+            ''', (model_name, model_version, model_type))
+            row = cursor.fetchone()
+            return dict(row)
+
+    def get_model_registry(self, model_name: str = None, active_only: bool = True) -> List[Dict]:
+        """Get model registry entries, optionally filtered."""
+        with get_cursor(commit=False) as cursor:
+            conditions = []
+            params = []
+            if model_name:
+                conditions.append("model_name = %s")
+                params.append(model_name)
+            if active_only:
+                conditions.append("is_active = true")
+            where = "WHERE " + " AND ".join(conditions) if conditions else ""
+            cursor.execute(f'''
+                SELECT * FROM model_registry {where}
+                ORDER BY model_name, model_version DESC
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def update_model_thresholds(self, model_name: str, model_version: str,
+                                 thresholds: Dict) -> Optional[Dict]:
+        """Update confidence thresholds for a model."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                UPDATE model_registry
+                SET confidence_thresholds = %s, updated_at = NOW()
+                WHERE model_name = %s AND model_version = %s
+                RETURNING *
+            ''', (extras.Json(thresholds), model_name, model_version))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def update_model_approval_stats(self, model_name: str, model_version: str) -> Optional[Dict]:
+        """Recalculate and update approval stats for a model from actual prediction data."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                SELECT
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE review_status IN ('approved', 'auto_approved')) as approved,
+                    COUNT(*) FILTER (WHERE review_status IN ('rejected', 'auto_rejected')) as rejected
+                FROM ai_predictions
+                WHERE model_name = %s AND model_version = %s
+            ''', (model_name, model_version))
+            stats = cursor.fetchone()
+
+            total = stats['total']
+            approved = stats['approved']
+            rejected = stats['rejected']
+            approval_rate = approved / total if total > 0 else None
+
+            cursor.execute('''
+                UPDATE model_registry
+                SET total_predictions = %s, total_approved = %s, total_rejected = %s,
+                    approval_rate = %s, updated_at = NOW()
+                WHERE model_name = %s AND model_version = %s
+                RETURNING *
+            ''', (total, approved, rejected, approval_rate, model_name, model_version))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_model_stats(self, model_name: str, model_version: str = None) -> Dict:
+        """Get comprehensive model performance stats."""
+        with get_cursor(commit=False) as cursor:
+            conditions = ["model_name = %s"]
+            params = [model_name]
+            if model_version:
+                conditions.append("model_version = %s")
+                params.append(model_version)
+            where = " AND ".join(conditions)
+
+            # Overall stats
+            cursor.execute(f'''
+                SELECT
+                    COUNT(*) as total_predictions,
+                    COUNT(*) FILTER (WHERE review_status IN ('approved', 'auto_approved')) as approved,
+                    COUNT(*) FILTER (WHERE review_status IN ('rejected', 'auto_rejected')) as rejected,
+                    COUNT(*) FILTER (WHERE review_status = 'pending') as pending,
+                    COUNT(*) FILTER (WHERE review_status = 'needs_correction') as needs_correction,
+                    AVG(confidence) FILTER (WHERE review_status IN ('approved', 'auto_approved')) as avg_confidence_approved,
+                    AVG(confidence) FILTER (WHERE review_status IN ('rejected', 'auto_rejected')) as avg_confidence_rejected
+                FROM ai_predictions
+                WHERE {where}
+            ''', params)
+            overall = dict(cursor.fetchone())
+
+            total = overall['total_predictions']
+            overall['approval_rate'] = overall['approved'] / total if total > 0 else None
+
+            # Per-scenario stats
+            cursor.execute(f'''
+                SELECT scenario,
+                    COUNT(*) as total,
+                    COUNT(*) FILTER (WHERE review_status IN ('approved', 'auto_approved')) as approved,
+                    COUNT(*) FILTER (WHERE review_status IN ('rejected', 'auto_rejected')) as rejected
+                FROM ai_predictions
+                WHERE {where}
+                GROUP BY scenario
+                ORDER BY COUNT(*) DESC
+            ''', params)
+            scenarios = {}
+            for row in cursor.fetchall():
+                row = dict(row)
+                stotal = row['total']
+                scenarios[row['scenario']] = {
+                    'total': stotal,
+                    'approved': row['approved'],
+                    'rejected': row['rejected'],
+                    'approval_rate': row['approved'] / stotal if stotal > 0 else None
+                }
+
+            overall['scenarios'] = scenarios
+            return overall
+
+    # ==================== Training Metrics ====================
+
+    def insert_training_metrics(self, training_job_id: int, model_name: str,
+                                 model_version: str, metrics: Dict) -> int:
+        """Insert training metrics for a completed job."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO training_metrics
+                (training_job_id, model_name, model_version, accuracy, loss,
+                 val_accuracy, val_loss, class_metrics, confusion_matrix,
+                 epochs, training_duration_seconds, dataset_size, dataset_hash)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (
+                training_job_id, model_name, model_version,
+                metrics.get('accuracy'), metrics.get('loss'),
+                metrics.get('val_accuracy'), metrics.get('val_loss'),
+                extras.Json(metrics.get('class_metrics')) if metrics.get('class_metrics') else None,
+                extras.Json(metrics.get('confusion_matrix')) if metrics.get('confusion_matrix') else None,
+                metrics.get('epochs'), metrics.get('training_duration_seconds'),
+                metrics.get('dataset_size'), metrics.get('dataset_hash')
+            ))
+            result = cursor.fetchone()
+
+            # Also update the model registry with latest metrics
+            cursor.execute('''
+                UPDATE model_registry
+                SET latest_metrics = %s, updated_at = NOW()
+                WHERE model_name = %s AND model_version = %s
+            ''', (extras.Json(metrics), model_name, model_version))
+
+            return result['id']
+
+    def get_training_metrics_history(self, model_name: str, model_version: str = None,
+                                      limit: int = 20) -> List[Dict]:
+        """Get training metrics history for a model."""
+        with get_cursor(commit=False) as cursor:
+            if model_version:
+                cursor.execute('''
+                    SELECT tm.*, tj.job_type, tj.status as job_status
+                    FROM training_metrics tm
+                    LEFT JOIN training_jobs tj ON tm.training_job_id = tj.id
+                    WHERE tm.model_name = %s AND tm.model_version = %s
+                    ORDER BY tm.created_at DESC
+                    LIMIT %s
+                ''', (model_name, model_version, limit))
+            else:
+                cursor.execute('''
+                    SELECT tm.*, tj.job_type, tj.status as job_status
+                    FROM training_metrics tm
+                    LEFT JOIN training_jobs tj ON tm.training_job_id = tj.id
+                    WHERE tm.model_name = %s
+                    ORDER BY tm.created_at DESC
+                    LIMIT %s
+                ''', (model_name, limit))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    # ── Content Libraries ──────────────────────────────────────────────
+
+    def get_all_libraries(self) -> List[Dict]:
+        """Get all content libraries with item counts.
+        The default (Uncategorized) library count = videos not in any other library."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT cl.*,
+                       COUNT(cli.video_id) as item_count
+                FROM content_libraries cl
+                LEFT JOIN content_library_items cli ON cl.id = cli.library_id
+                WHERE cl.is_default = FALSE
+                GROUP BY cl.id
+                ORDER BY cl.name ASC
+            ''')
+            non_default = [dict(row) for row in cursor.fetchall()]
+
+            # Count videos not in any non-default library for Uncategorized
+            cursor.execute('''
+                SELECT cl.*, (
+                    SELECT COUNT(*) FROM videos v
+                    WHERE NOT EXISTS (
+                        SELECT 1 FROM content_library_items cli2
+                        INNER JOIN content_libraries cl2 ON cli2.library_id = cl2.id
+                        WHERE cli2.video_id = v.id AND cl2.is_default = FALSE
+                    )
+                ) as item_count
+                FROM content_libraries cl
+                WHERE cl.is_default = TRUE
+            ''')
+            default_row = cursor.fetchone()
+            result = []
+            if default_row:
+                result.append(dict(default_row))
+            result.extend(non_default)
+            return result
+
+    def create_library(self, name: str) -> int:
+        """Create a new content library. Returns its id."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO content_libraries (name)
+                VALUES (%s)
+                RETURNING id
+            ''', (name,))
+            return cursor.fetchone()['id']
+
+    def rename_library(self, library_id: int, name: str) -> bool:
+        """Rename a library. Cannot rename the default."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                UPDATE content_libraries
+                SET name = %s
+                WHERE id = %s AND is_default = FALSE
+            ''', (name, library_id))
+            return cursor.rowcount > 0
+
+    def delete_library(self, library_id: int) -> bool:
+        """Delete a library. Cannot delete the default. Items become unassigned."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                DELETE FROM content_libraries
+                WHERE id = %s AND is_default = FALSE
+            ''', (library_id,))
+            return cursor.rowcount > 0
+
+    def add_to_library(self, library_id: int, video_ids: List[int]) -> int:
+        """Add videos to a library. Returns count of newly added."""
+        added = 0
+        with get_cursor() as cursor:
+            for vid in video_ids:
+                try:
+                    cursor.execute('''
+                        INSERT INTO content_library_items (library_id, video_id)
+                        VALUES (%s, %s)
+                        ON CONFLICT DO NOTHING
+                    ''', (library_id, vid))
+                    added += cursor.rowcount
+                except Exception:
+                    pass
+        return added
+
+    def remove_from_library(self, library_id: int, video_id: int) -> bool:
+        """Remove a video from a library."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                DELETE FROM content_library_items
+                WHERE library_id = %s AND video_id = %s
+            ''', (library_id, video_id))
+            return cursor.rowcount > 0
+
+    def get_video_libraries(self, video_id: int) -> List[Dict]:
+        """Get all libraries a video belongs to."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT cl.id, cl.name, cl.is_default
+                FROM content_libraries cl
+                INNER JOIN content_library_items cli ON cl.id = cli.library_id
+                WHERE cli.video_id = %s
+                ORDER BY cl.name
+            ''', (video_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_next_unannotated_in_library(self, library_id: int, current_video_id: int = None) -> Optional[Dict]:
+        """Get the next video in a library that has zero keyframe annotations.
+        For the default library, finds videos not in any non-default library.
+        Skips the current video if provided. Returns None if all are annotated."""
+        with get_cursor(commit=False) as cursor:
+            if self._is_default_library(library_id):
+                # Default library: videos not in any non-default library
+                cursor.execute('''
+                    SELECT v.id, v.filename, v.title
+                    FROM videos v
+                    LEFT JOIN keyframe_annotations ka ON v.id = ka.video_id
+                    WHERE v.id != COALESCE(%s, -1)
+                      AND v.filename NOT LIKE '%%.placeholder'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM content_library_items cli2
+                          INNER JOIN content_libraries cl2 ON cli2.library_id = cl2.id
+                          WHERE cli2.video_id = v.id AND cl2.is_default = FALSE
+                      )
+                    GROUP BY v.id
+                    HAVING COUNT(ka.id) = 0
+                    ORDER BY v.upload_date ASC
+                    LIMIT 1
+                ''', (current_video_id,))
+            else:
+                cursor.execute('''
+                    SELECT v.id, v.filename, v.title
+                    FROM videos v
+                    INNER JOIN content_library_items cli ON v.id = cli.video_id AND cli.library_id = %s
+                    LEFT JOIN keyframe_annotations ka ON v.id = ka.video_id
+                    WHERE v.id != COALESCE(%s, -1)
+                    GROUP BY v.id
+                    HAVING COUNT(ka.id) = 0
+                    ORDER BY v.upload_date ASC
+                    LIMIT 1
+                ''', (library_id, current_video_id))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_next_unannotated(self, current_video_id: int = None) -> Optional[Dict]:
+        """Get the next video (globally) that has zero keyframe annotations.
+        Skips the current video if provided. Returns None if all are annotated."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT v.id, v.filename, v.title
+                FROM videos v
+                LEFT JOIN keyframe_annotations ka ON v.id = ka.video_id
+                WHERE v.id != COALESCE(%s, -1)
+                  AND v.filename NOT LIKE '%%.placeholder'
+                GROUP BY v.id
+                HAVING COUNT(ka.id) = 0
+                ORDER BY v.upload_date ASC
+                LIMIT 1
+            ''', (current_video_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    # ==================== Identities ====================
+
+    def create_identity(self, identity_type: str, name: str = None,
+                        metadata: dict = None, is_flagged: bool = False,
+                        notes: str = None) -> Dict:
+        """Create a new identity record."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO identities (identity_type, name, metadata, is_flagged, notes)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING *
+            ''', (identity_type, name,
+                  extras.Json(metadata) if metadata else extras.Json({}),
+                  is_flagged, notes))
+            row = cursor.fetchone()
+            return dict(row)
+
+    def get_identity(self, identity_id: str) -> Optional[Dict]:
+        """Get an identity by ID."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT * FROM identities WHERE identity_id = %s',
+                           (identity_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_identities(self, identity_type: str = None, is_flagged: bool = None,
+                       search: str = None, limit: int = 100, offset: int = 0) -> List[Dict]:
+        """Get identities with optional filters. Search matches name or notes."""
+        conditions = []
+        params = []
+        if identity_type is not None:
+            conditions.append('identity_type = %s')
+            params.append(identity_type)
+        if is_flagged is not None:
+            conditions.append('is_flagged = %s')
+            params.append(is_flagged)
+        if search is not None:
+            conditions.append('(name ILIKE %s OR notes ILIKE %s)')
+            params.extend([f'%{search}%', f'%{search}%'])
+
+        where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+        params.extend([limit, offset])
+
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(f'''
+                SELECT * FROM identities
+                {where}
+                ORDER BY last_seen DESC
+                LIMIT %s OFFSET %s
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def update_identity(self, identity_id: str, **kwargs) -> Optional[Dict]:
+        """Update an identity. Allowed fields: name, metadata, is_flagged, notes, last_seen."""
+        allowed = {'name', 'metadata', 'is_flagged', 'notes', 'last_seen'}
+        updates = []
+        values = []
+        for key, value in kwargs.items():
+            if key not in allowed:
+                continue
+            if key == 'metadata':
+                updates.append('metadata = %s')
+                values.append(extras.Json(value))
+            else:
+                updates.append(f'{key} = %s')
+                values.append(value)
+
+        if not updates:
+            return None
+
+        values.append(identity_id)
+        with get_cursor() as cursor:
+            cursor.execute(f'''
+                UPDATE identities SET {', '.join(updates)}
+                WHERE identity_id = %s
+                RETURNING *
+            ''', values)
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def delete_identity(self, identity_id: str) -> bool:
+        """Delete an identity by ID."""
+        with get_cursor() as cursor:
+            cursor.execute('DELETE FROM identities WHERE identity_id = %s',
+                           (identity_id,))
+            return cursor.rowcount > 0
+
+    # ==================== Embeddings ====================
+
+    def insert_embedding(self, identity_id: str, embedding_type: str,
+                         vector: list, confidence: float,
+                         source_image_path: str = None, camera_id: str = None,
+                         is_reference: bool = False, session_date=None) -> Dict:
+        """Insert a new embedding vector."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO embeddings
+                (identity_id, embedding_type, vector, confidence,
+                 source_image_path, camera_id, is_reference, session_date)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            ''', (identity_id, embedding_type, vector, confidence,
+                  source_image_path, camera_id, is_reference, session_date))
+            row = cursor.fetchone()
+            return dict(row)
+
+    def get_embeddings(self, identity_id: str = None, embedding_type: str = None,
+                       is_reference: bool = None, limit: int = 100) -> List[Dict]:
+        """Get embeddings with optional filters."""
+        conditions = []
+        params = []
+        if identity_id is not None:
+            conditions.append('identity_id = %s')
+            params.append(identity_id)
+        if embedding_type is not None:
+            conditions.append('embedding_type = %s')
+            params.append(embedding_type)
+        if is_reference is not None:
+            conditions.append('is_reference = %s')
+            params.append(is_reference)
+
+        where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+        params.append(limit)
+
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(f'''
+                SELECT * FROM embeddings
+                {where}
+                ORDER BY created_at DESC
+                LIMIT %s
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def find_similar_embeddings(self, vector: list, embedding_type: str,
+                                threshold: float = 0.6, limit: int = 10,
+                                session_date=None) -> List[Dict]:
+        """Find similar embeddings by cosine similarity. Fetches candidates then
+        computes similarity in Python."""
+        conditions = ['embedding_type = %s']
+        params = [embedding_type]
+        if session_date is not None:
+            conditions.append('session_date = %s')
+            params.append(session_date)
+
+        where = 'WHERE ' + ' AND '.join(conditions)
+
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(f'''
+                SELECT * FROM embeddings
+                {where}
+                ORDER BY created_at DESC
+            ''', params)
+            rows = cursor.fetchall()
+
+        results = []
+        for row in rows:
+            row_dict = dict(row)
+            candidate_vector = row_dict['vector']
+            similarity = _cosine_similarity(vector, candidate_vector)
+            if similarity >= threshold:
+                row_dict['similarity'] = round(similarity, 6)
+                results.append(row_dict)
+
+        results.sort(key=lambda x: x['similarity'], reverse=True)
+        return results[:limit]
+
+    def delete_embedding(self, embedding_id: str) -> bool:
+        """Delete an embedding by ID."""
+        with get_cursor() as cursor:
+            cursor.execute('DELETE FROM embeddings WHERE embedding_id = %s',
+                           (embedding_id,))
+            return cursor.rowcount > 0
+
+    # ==================== Associations ====================
+
+    def upsert_association(self, identity_a: str, identity_b: str,
+                           association_type: str,
+                           confidence_delta: float = 0.1) -> Dict:
+        """Create or update an association between two identities.
+        On conflict, increments observation_count and adds confidence_delta (capped at 1.0)."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO associations (identity_a, identity_b, association_type,
+                                          confidence, observation_count)
+                VALUES (%s, %s, %s, %s, 1)
+                ON CONFLICT (identity_a, identity_b, association_type) DO UPDATE SET
+                    observation_count = associations.observation_count + 1,
+                    confidence = LEAST(associations.confidence + %s, 1.0),
+                    last_observed = NOW()
+                RETURNING *
+            ''', (identity_a, identity_b, association_type,
+                  confidence_delta, confidence_delta))
+            row = cursor.fetchone()
+            return dict(row)
+
+    def get_associations(self, identity_id: str,
+                         association_type: str = None) -> List[Dict]:
+        """Get all associations involving an identity (as either side)."""
+        conditions = ['(identity_a = %s OR identity_b = %s)']
+        params = [identity_id, identity_id]
+        if association_type is not None:
+            conditions.append('association_type = %s')
+            params.append(association_type)
+
+        where = 'WHERE ' + ' AND '.join(conditions)
+
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(f'''
+                SELECT a.*,
+                       ia.name AS identity_a_name, ia.identity_type AS identity_a_type,
+                       ib.name AS identity_b_name, ib.identity_type AS identity_b_type
+                FROM associations a
+                LEFT JOIN identities ia ON a.identity_a = ia.identity_id
+                LEFT JOIN identities ib ON a.identity_b = ib.identity_id
+                {where}
+                ORDER BY a.confidence DESC
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_association_chain(self, identity_id: str) -> Dict:
+        """Get the full association chain for an identity.
+        Returns dict with keys: persons, vehicles, trailers, boats containing
+        associated identities found by walking the association graph."""
+        result = {
+            'persons': [],
+            'vehicles': [],
+            'trailers': [],
+            'boats': []
+        }
+        visited = set()
+        queue = [identity_id]
+
+        while queue:
+            current_id = queue.pop(0)
+            if current_id in visited:
+                continue
+            visited.add(current_id)
+
+            associations = self.get_associations(current_id)
+            for assoc in associations:
+                # Determine the other identity in the association
+                other_id = assoc['identity_b'] if str(assoc['identity_a']) == str(current_id) else assoc['identity_a']
+                other_id_str = str(other_id)
+                if other_id_str not in visited:
+                    queue.append(other_id_str)
+
+        # Now fetch all visited identities (except the original)
+        visited.discard(identity_id)
+        if not visited:
+            return result
+
+        with get_cursor(commit=False) as cursor:
+            placeholders = ','.join(['%s'] * len(visited))
+            cursor.execute(f'''
+                SELECT * FROM identities
+                WHERE identity_id IN ({placeholders})
+            ''', list(visited))
+            rows = cursor.fetchall()
+
+        type_map = {
+            'person': 'persons',
+            'vehicle': 'vehicles',
+            'trailer': 'trailers',
+            'boat': 'boats'
+        }
+        for row in rows:
+            row_dict = dict(row)
+            key = type_map.get(row_dict['identity_type'])
+            if key:
+                result[key].append(row_dict)
+
+        return result
+
+    # ==================== Tracks ====================
+
+    def create_track(self, camera_id: str, entity_type: str,
+                     identity_id: str = None, identity_method: str = None,
+                     identity_confidence: float = None) -> Dict:
+        """Create a new track for entity observation within a camera."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO tracks (camera_id, entity_type, identity_id,
+                                    identity_method, identity_confidence)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING *
+            ''', (camera_id, entity_type, identity_id,
+                  identity_method, identity_confidence))
+            row = cursor.fetchone()
+            return dict(row)
+
+    def end_track(self, track_id: str) -> bool:
+        """End a track by setting end_time to NOW()."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                UPDATE tracks SET end_time = NOW()
+                WHERE track_id = %s AND end_time IS NULL
+            ''', (track_id,))
+            return cursor.rowcount > 0
+
+    def get_track(self, track_id: str) -> Optional[Dict]:
+        """Get a track by ID."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('SELECT * FROM tracks WHERE track_id = %s',
+                           (track_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_tracks(self, camera_id: str = None, entity_type: str = None,
+                   identity_id: str = None, start_after=None, start_before=None,
+                   active_only: bool = False, limit: int = 100,
+                   offset: int = 0) -> List[Dict]:
+        """Get tracks with optional filters."""
+        conditions = []
+        params = []
+        if camera_id is not None:
+            conditions.append('camera_id = %s')
+            params.append(camera_id)
+        if entity_type is not None:
+            conditions.append('entity_type = %s')
+            params.append(entity_type)
+        if identity_id is not None:
+            conditions.append('identity_id = %s')
+            params.append(identity_id)
+        if start_after is not None:
+            conditions.append('start_time >= %s')
+            params.append(start_after)
+        if start_before is not None:
+            conditions.append('start_time <= %s')
+            params.append(start_before)
+        if active_only:
+            conditions.append('end_time IS NULL')
+
+        where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+        params.extend([limit, offset])
+
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(f'''
+                SELECT * FROM tracks
+                {where}
+                ORDER BY start_time DESC
+                LIMIT %s OFFSET %s
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def link_track_to_identity(self, track_id: str, identity_id: str,
+                               method: str, confidence: float) -> bool:
+        """Link a track to an identity with identification method and confidence."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                UPDATE tracks
+                SET identity_id = %s, identity_method = %s, identity_confidence = %s
+                WHERE track_id = %s
+            ''', (identity_id, method, confidence, track_id))
+            return cursor.rowcount > 0
+
+    def get_active_tracks(self, camera_id: str = None) -> List[Dict]:
+        """Get all active tracks (end_time IS NULL), optionally filtered by camera."""
+        conditions = ['end_time IS NULL']
+        params = []
+        if camera_id is not None:
+            conditions.append('camera_id = %s')
+            params.append(camera_id)
+
+        where = 'WHERE ' + ' AND '.join(conditions)
+
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(f'''
+                SELECT * FROM tracks
+                {where}
+                ORDER BY start_time DESC
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    # ==================== Sightings ====================
+
+    def batch_insert_sightings(self, sightings: List[Dict]) -> int:
+        """Batch insert sightings using execute_values for performance.
+        Each sighting dict should have: track_id, timestamp, bbox, confidence, face_visible."""
+        if not sightings:
+            return 0
+
+        values = [
+            (s['track_id'], s['timestamp'], s['bbox'],
+             s['confidence'], s.get('face_visible', False))
+            for s in sightings
+        ]
+
+        with get_cursor() as cursor:
+            extras.execute_values(
+                cursor,
+                '''INSERT INTO sightings (track_id, timestamp, bbox, confidence, face_visible)
+                   VALUES %s''',
+                values,
+                template='(%s, %s, %s, %s, %s)'
+            )
+            return cursor.rowcount
+
+    def get_track_sightings(self, track_id: str,
+                            limit: int = None) -> List[Dict]:
+        """Get all sightings for a track, ordered by timestamp ASC."""
+        params = [track_id]
+        limit_clause = ''
+        if limit is not None:
+            limit_clause = 'LIMIT %s'
+            params.append(limit)
+
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(f'''
+                SELECT * FROM sightings
+                WHERE track_id = %s
+                ORDER BY timestamp ASC
+                {limit_clause}
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    # ==================== Camera Topology Learned ====================
+
+    def upsert_camera_transit(self, camera_a: str, camera_b: str,
+                              transit_seconds: int) -> Dict:
+        """Insert or update camera transit time observation.
+        On insert: sets min=max=avg=transit_seconds, count=1.
+        On conflict: updates min/max, recalculates running avg, increments count."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO camera_topology_learned
+                (camera_a, camera_b, min_transit_seconds, max_transit_seconds,
+                 avg_transit_seconds, observation_count)
+                VALUES (%s, %s, %s, %s, %s, 1)
+                ON CONFLICT (camera_a, camera_b) DO UPDATE SET
+                    min_transit_seconds = LEAST(camera_topology_learned.min_transit_seconds, EXCLUDED.min_transit_seconds),
+                    max_transit_seconds = GREATEST(camera_topology_learned.max_transit_seconds, EXCLUDED.max_transit_seconds),
+                    avg_transit_seconds = (
+                        camera_topology_learned.avg_transit_seconds * camera_topology_learned.observation_count
+                        + EXCLUDED.avg_transit_seconds
+                    ) / (camera_topology_learned.observation_count + 1),
+                    observation_count = camera_topology_learned.observation_count + 1
+                RETURNING *
+            ''', (camera_a, camera_b, transit_seconds, transit_seconds,
+                  float(transit_seconds)))
+            row = cursor.fetchone()
+            return dict(row)
+
+    def get_adjacent_cameras(self, camera_id: str) -> List[Dict]:
+        """Get all cameras adjacent to the given camera (in either direction)."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT * FROM camera_topology_learned
+                WHERE camera_a = %s OR camera_b = %s
+                ORDER BY avg_transit_seconds ASC
+            ''', (camera_id, camera_id))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    # ==================== Violations ====================
+
+    def create_violation(self, violation_type: str, camera_id: str,
+                         confidence: float, person_identity_id: str = None,
+                         vehicle_identity_id: str = None,
+                         boat_identity_id: str = None,
+                         trailer_identity_id: str = None,
+                         evidence_paths: list = None) -> Dict:
+        """Create a new violation record."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO violations
+                (violation_type, camera_id, confidence, person_identity_id,
+                 vehicle_identity_id, boat_identity_id, trailer_identity_id,
+                 evidence_paths)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                RETURNING *
+            ''', (violation_type, camera_id, confidence,
+                  person_identity_id, vehicle_identity_id,
+                  boat_identity_id, trailer_identity_id,
+                  evidence_paths or []))
+            row = cursor.fetchone()
+            return dict(row)
+
+    def get_violations(self, status: str = None, camera_id: str = None,
+                       violation_type: str = None, limit: int = 100,
+                       offset: int = 0) -> List[Dict]:
+        """Get violations with optional filters. Includes identity names via LEFT JOINs."""
+        conditions = []
+        params = []
+        if status is not None:
+            conditions.append('v.status = %s')
+            params.append(status)
+        if camera_id is not None:
+            conditions.append('v.camera_id = %s')
+            params.append(camera_id)
+        if violation_type is not None:
+            conditions.append('v.violation_type = %s')
+            params.append(violation_type)
+
+        where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+        params.extend([limit, offset])
+
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(f'''
+                SELECT v.*,
+                       ip.name AS person_name,
+                       iv.name AS vehicle_name,
+                       ib.name AS boat_name,
+                       it.name AS trailer_name
+                FROM violations v
+                LEFT JOIN identities ip ON v.person_identity_id = ip.identity_id
+                LEFT JOIN identities iv ON v.vehicle_identity_id = iv.identity_id
+                LEFT JOIN identities ib ON v.boat_identity_id = ib.identity_id
+                LEFT JOIN identities it ON v.trailer_identity_id = it.identity_id
+                {where}
+                ORDER BY v.timestamp DESC
+                LIMIT %s OFFSET %s
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def review_violation(self, violation_id: str, status: str,
+                         reviewed_by: str, notes: str = None) -> Optional[Dict]:
+        """Review a violation - update its status, reviewer, and notes."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                UPDATE violations
+                SET status = %s, reviewed_by = %s, notes = %s
+                WHERE violation_id = %s
+                RETURNING *
+            ''', (status, reviewed_by, notes, violation_id))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    # ==================== Visits ====================
+
+    def create_visit(self, person_identity_id: str = None,
+                     vehicle_identity_id: str = None,
+                     boat_identity_id: str = None,
+                     track_ids: list = None,
+                     camera_timeline: list = None) -> Dict:
+        """Create a new visit record."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO visits
+                (person_identity_id, vehicle_identity_id, boat_identity_id,
+                 track_ids, camera_timeline)
+                VALUES (%s, %s, %s, %s, %s)
+                RETURNING *
+            ''', (person_identity_id, vehicle_identity_id, boat_identity_id,
+                  track_ids or [],
+                  extras.Json(camera_timeline) if camera_timeline else extras.Json([])))
+            row = cursor.fetchone()
+            return dict(row)
+
+    def get_visit(self, visit_id: str) -> Optional[Dict]:
+        """Get a visit by ID with identity names via LEFT JOINs."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT v.*,
+                       ip.name AS person_name,
+                       iv.name AS vehicle_name,
+                       ib.name AS boat_name
+                FROM visits v
+                LEFT JOIN identities ip ON v.person_identity_id = ip.identity_id
+                LEFT JOIN identities iv ON v.vehicle_identity_id = iv.identity_id
+                LEFT JOIN identities ib ON v.boat_identity_id = ib.identity_id
+                WHERE v.visit_id = %s
+            ''', (visit_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_visits(self, person_identity_id: str = None, date_start=None,
+                   date_end=None, limit: int = 100, offset: int = 0) -> List[Dict]:
+        """Get visits with optional filters, ordered by arrival_time DESC."""
+        conditions = []
+        params = []
+        if person_identity_id is not None:
+            conditions.append('v.person_identity_id = %s')
+            params.append(person_identity_id)
+        if date_start is not None:
+            conditions.append('v.arrival_time >= %s')
+            params.append(date_start)
+        if date_end is not None:
+            conditions.append('v.arrival_time <= %s')
+            params.append(date_end)
+
+        where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+        params.extend([limit, offset])
+
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(f'''
+                SELECT v.*,
+                       ip.name AS person_name,
+                       iv.name AS vehicle_name,
+                       ib.name AS boat_name
+                FROM visits v
+                LEFT JOIN identities ip ON v.person_identity_id = ip.identity_id
+                LEFT JOIN identities iv ON v.vehicle_identity_id = iv.identity_id
+                LEFT JOIN identities ib ON v.boat_identity_id = ib.identity_id
+                {where}
+                ORDER BY v.arrival_time DESC
+                LIMIT %s OFFSET %s
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def end_visit(self, visit_id: str, departure_time=None) -> bool:
+        """End a visit by setting departure_time (defaults to NOW())."""
+        with get_cursor() as cursor:
+            if departure_time is not None:
+                cursor.execute('''
+                    UPDATE visits SET departure_time = %s
+                    WHERE visit_id = %s AND departure_time IS NULL
+                ''', (departure_time, visit_id))
+            else:
+                cursor.execute('''
+                    UPDATE visits SET departure_time = NOW()
+                    WHERE visit_id = %s AND departure_time IS NULL
+                ''', (visit_id,))
+            return cursor.rowcount > 0
+
+    def add_violation_to_visit(self, visit_id: str, violation_id: str) -> bool:
+        """Append a violation_id to a visit's violation_ids array."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                UPDATE visits
+                SET violation_ids = array_append(violation_ids, %s::uuid)
+                WHERE visit_id = %s
+            ''', (violation_id, visit_id))
+            return cursor.rowcount > 0

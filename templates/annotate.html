@@ -5,18 +5,158 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Groundtruth Studio - Annotation</title>
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
-    <link rel="stylesheet" href="/static/css/style.css?v=1768876920">
-    <link rel="stylesheet" href="/static/css/annotate.css?v=1768876920">
-    <link rel="stylesheet" href="/static/css/tag-form.css?v=1768876920">
-    <link rel="stylesheet" href="/static/css/scenario-workflow.css?v=1768876920">
+    <link rel="stylesheet" href="{{ static_v('css/style.css') }}">
+    <link rel="stylesheet" href="{{ static_v('css/annotate.css') }}">
+    <link rel="stylesheet" href="{{ static_v('css/tag-form.css') }}">
+    <link rel="stylesheet" href="{{ static_v('css/scenario-workflow.css') }}">
+    <style>
+        .panel-tabs {
+            display: flex;
+            border-bottom: 2px solid #e0e0e0;
+            background: white;
+            padding: 0 10px;
+        }
+        .panel-tab {
+            padding: 10px 16px;
+            border: none;
+            background: none;
+            font-size: 14px;
+            font-weight: 600;
+            color: #7f8c8d;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: all 0.2s;
+        }
+        .panel-tab:hover { color: #2c3e50; }
+        .panel-tab.active { color: #3498db; border-bottom-color: #3498db; }
+        .tab-badge, .prediction-badge {
+            display: inline-block;
+            background: #e74c3c;
+            color: white;
+            font-size: 11px;
+            font-weight: 700;
+            padding: 1px 6px;
+            border-radius: 10px;
+            margin-left: 4px;
+        }
+        .prediction-section .section-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 16px;
+        }
+        .prediction-actions-bar { display: flex; gap: 6px; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; border: none; border-radius: 4px; cursor: pointer; }
+        .btn-success { background: #27ae60; color: white; }
+        .btn-success:hover { background: #219a52; }
+        .prediction-filters {
+            padding: 8px 16px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            border-bottom: 1px solid #eee;
+        }
+        .prediction-filters select {
+            padding: 4px 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        .prediction-count { font-size: 12px; color: #7f8c8d; }
+        .predictions-list-container { overflow-y: auto; max-height: calc(100vh - 280px); }
+        .prediction-card {
+            padding: 12px 16px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: background 0.15s;
+        }
+        .prediction-card:hover { background: #f8f9fa; }
+        .prediction-card.selected { background: #ebf5fb; border-left: 3px solid #3498db; }
+        .prediction-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 6px;
+        }
+        .prediction-scenario { font-weight: 600; font-size: 13px; color: #2c3e50; }
+        .confidence-pill {
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 700;
+        }
+        .conf-high { background: #d4edda; color: #155724; }
+        .conf-medium { background: #fff3cd; color: #856404; }
+        .conf-low { background: #f8d7da; color: #721c24; }
+        .prediction-meta {
+            font-size: 11px;
+            color: #95a5a6;
+            margin-bottom: 8px;
+        }
+        .prediction-review-actions {
+            display: flex;
+            gap: 6px;
+        }
+        .prediction-review-actions button {
+            padding: 4px 12px;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .btn-approve { background: #27ae60; color: white; }
+        .btn-approve:hover { background: #219a52; }
+        .btn-reject { background: #e74c3c; color: white; }
+        .btn-reject:hover { background: #c0392b; }
+        .btn-correct { background: #f39c12; color: white; }
+        .btn-correct:hover { background: #d68910; }
+        .prediction-bbox-svg .pred-bbox {
+            fill: none;
+            stroke: #e67e22;
+            stroke-width: 2px;
+            stroke-dasharray: 6 3;
+        }
+        .prediction-bbox-svg .pred-bbox-selected {
+            stroke: #f1c40f;
+            stroke-width: 3px;
+            stroke-dasharray: none;
+        }
+    </style>
 </head>
 <body>
+    <script src="/static/js/gt-utils.js"></script>
+    <script src="/static/js/responsive-utils.js"></script>
+    <nav class="site-nav" id="site-nav">
+        <div class="nav-brand">
+            <a href="/">Groundtruth Studio</a>
+            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
+                <span class="hamburger-icon"></span>
+            </button>
+        </div>
+        <div class="nav-links" id="nav-links">
+            <a href="/" class="nav-link">Video Library</a>
+            <a href="/add-content" class="nav-link">Add Content</a>
+            <a href="/person-manager" class="nav-link">Person Manager</a>
+            <a href="/camera-topology" class="nav-link">Camera Topology</a>
+            <a href="/model-training" class="nav-link">Model Training</a>
+            <a href="/prediction-review" class="nav-link">AI Review</a>
+            <a href="/sync-settings" class="nav-link">Sync Settings</a>
+            <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
+            <a href="/vibration-export" class="nav-link">Vibration Export</a>
+            <a href="/location-export" class="nav-link">Location Export</a>
+            <a href="/tag-manager" class="nav-link">Tag Manager</a>
+        </div>
+    </nav>
     <div class="annotation-container">
         <header class="annotation-header">
-            <h1 id="video-title">Video Annotation</h1>
-            <div>
-                <a href="/" class="btn-secondary">← Back to Library</a>
+            <div class="annotation-nav">
+                <button class="btn-secondary annotation-nav-btn" id="nav-back-btn" onclick="navBack()" title="Go to previous video">&#8592; Back</button>
+                <h1 id="video-title">Video Annotation</h1>
+                <button class="btn-primary annotation-nav-btn" id="nav-next-btn" onclick="navNext()" title="Go to next unannotated video" style="background: #27ae60;">Next &#8594;</button>
             </div>
+            <div class="annotation-library-bar" id="annotation-library-bar"></div>
         </header>
 
         <div class="annotation-workspace">
@@ -27,6 +167,7 @@
                         <source id="video-source" src="" type="video/mp4">
                         Your browser does not support the video tag.
                     </video>
+                    <img id="thumbnail-image" alt="Thumbnail for annotation">
                     <canvas id="bbox-canvas"></canvas>
                 </div>
 
@@ -40,7 +181,7 @@
                         <button onclick="togglePlay()" id="play-btn" class="btn-control">Play</button>
                         <button onclick="seekRelative(1)" class="btn-control">+1s</button>
                         <button onclick="seekRelative(5)" class="btn-control">+5s</button>
-                        <button onclick="startOtherAnnotation()" id="draw-mode-btn" class="btn-control">Draw BBox</button>
+                        {% if can_write %}<button onclick="startOtherAnnotation()" id="draw-mode-btn" class="btn-control">Draw BBox</button>{% endif %}
                         <select id="speed-select" class="speed-select" onchange="changePlaybackSpeed(this.value)" title="Playback Speed">
                             <option value="0.25">0.25x</option>
                             <option value="0.5">0.5x</option>
@@ -62,6 +203,7 @@
                 </div>
 
                 <!-- Audio Waveform Timeline -->
+                <button class="waveform-toggle" onclick="document.querySelector('.waveform-container').classList.toggle('waveform-visible'); this.textContent = this.textContent.includes('Show') ? 'Hide Waveform' : 'Show Waveform'">Show Waveform</button>
                 <div class="waveform-container">
                     <canvas id="waveform-canvas"></canvas>
                     <canvas id="waveform-markers-canvas"></canvas>
@@ -74,13 +216,24 @@
                 </div>
             </div>
 
+            <div class="mobile-panel-tabs" id="mobile-panel-tabs">
+                <button class="mobile-panel-tab active" data-panel="video" onclick="switchMobilePanel('video')">Video</button>
+                <button class="mobile-panel-tab" data-panel="annotations" onclick="switchMobilePanel('annotations')">Annotations</button>
+            </div>
+
             <!-- Right Panel: Annotations -->
             <div class="annotation-panel">
+                <div class="panel-tabs">
+                    <button class="panel-tab active" id="tab-annotations" onclick="switchTab('annotations')">Annotations</button>
+                    <button class="panel-tab" id="tab-predictions" onclick="switchTab('predictions')">
+                        AI Predictions <span class="tab-badge" id="tab-prediction-badge" style="display:none;">0</span>
+                    </button>
+                </div>
                 <!-- Unified Annotation Section -->
                 <div class="annotation-section">
                     <div class="section-header">
                         <h2>Annotations</h2>
-                        <button onclick="scenarioWorkflow.startWorkflow()" class="btn-primary">+ Annotate</button>
+                        {% if can_write %}<button onclick="scenarioWorkflow.startWorkflow()" class="btn-primary">+ Annotate</button>{% endif %}
                     </div>
 
                     <div id="annotations-list" class="annotations-list-container">
@@ -92,16 +245,102 @@
                         </div>
                     </div>
                 </div>
+                <!-- AI Predictions Review Section -->
+                <div class="prediction-section" id="prediction-section" style="display:none;">
+                    <div class="section-header">
+                        <h2>AI Predictions <span class="prediction-badge" id="prediction-badge" style="display:none;">0</span></h2>
+                        <div class="prediction-actions-bar">
+                            <button onclick="runAutoDetect()" class="btn-sm" id="btn-auto-detect" title="Run person/face detection on this thumbnail" style="background:#f39c12;color:#fff;">Detect Persons/Faces</button>
+                            <button onclick="predictionReview.approveAllHighConfidence()" class="btn-sm btn-success" title="Approve all predictions above auto-approve threshold">Approve High Conf.</button>
+                        </div>
+                    </div>
+                    <div class="prediction-filters">
+                        <select id="prediction-model-filter" onchange="predictionReview.filterByModel(this.value)">
+                            <option value="">All Models</option>
+                        </select>
+                        <span class="prediction-count" id="prediction-count-display"></span>
+                    </div>
+                    <div id="predictions-list" class="predictions-list-container">
+                        <div class="empty-state"><p>No pending predictions</p></div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
 
 
-    <script src="/static/js/annotation-scenarios.js?v=1768876920"></script>
-    <script src="/static/js/scenario-workflow.js?v=1768876920"></script>
-    <script src="/static/js/tag-form-generator.js?v=1768876920"></script>
-    <script src="/static/js/waveform.js?v=1768876920"></script>
-    <script src="/static/js/annotate.js?v=1768876920"></script>
-    <script src="/static/js/annotate-integration.js?v=1768876920"></script>
+    {% if can_write %}
+    <!-- Person Identification Modal -->
+    <div id="person-identify-modal" class="person-identify-overlay" style="display:none;">
+        <div class="person-identify-dialog">
+            <div class="person-identify-header">
+                <h3>Identify Person</h3>
+                <button class="person-identify-close" id="person-identify-skip">Skip</button>
+            </div>
+            <div class="person-identify-crop" id="person-identify-crop"></div>
+            <div class="person-identify-search">
+                <input type="text" id="person-identify-input" placeholder="Type a name or select below..." autocomplete="off">
+                <button class="btn-primary" id="person-identify-assign-btn">Assign</button>
+            </div>
+            <div class="person-identify-known" id="person-identify-known">
+                <div class="person-identify-loading">Loading known persons...</div>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <script>const canWrite = {{ can_write|tojson }};</script>
+    <script>
+        function switchTab(tab) {
+            document.getElementById('tab-annotations').classList.toggle('active', tab === 'annotations');
+            document.getElementById('tab-predictions').classList.toggle('active', tab === 'predictions');
+            document.querySelector('.annotation-section').style.display = tab === 'annotations' ? '' : 'none';
+            document.getElementById('prediction-section').style.display = tab === 'predictions' ? '' : 'none';
+            if (typeof predictionReview !== 'undefined') {
+                predictionReview.onTabSwitch(tab);
+            }
+        }
+
+        async function runAutoDetect() {
+            const params = new URLSearchParams(window.location.search);
+            const videoId = params.get('id');
+            if (!videoId) { alert('No video selected'); return; }
+
+            const btn = document.getElementById('btn-auto-detect');
+            const origText = btn.textContent;
+            btn.disabled = true;
+            btn.textContent = 'Detecting...';
+
+            try {
+                const resp = await fetch('/api/ai/auto-detect/' + videoId, {method: 'POST'});
+                const data = await resp.json();
+                if (data.success) {
+                    const msg = 'Detected ' + data.persons + ' persons, ' + data.faces + ' faces (' + data.submitted + ' submitted)';
+                    btn.textContent = msg;
+                    setTimeout(() => { btn.textContent = origText; btn.disabled = false; }, 3000);
+                    // Refresh predictions list
+                    if (typeof predictionReview !== 'undefined') {
+                        predictionReview.loadPredictions(videoId);
+                    }
+                } else {
+                    alert('Auto-detect failed: ' + (data.error || 'Unknown error'));
+                    btn.textContent = origText;
+                    btn.disabled = false;
+                }
+            } catch (e) {
+                alert('Auto-detect request failed: ' + e.message);
+                btn.textContent = origText;
+                btn.disabled = false;
+            }
+        }
+    </script>
+    <script src="{{ static_v('js/annotation-scenarios.js') }}"></script>
+    <script src="{{ static_v('js/scenario-workflow.js') }}"></script>
+    <script src="{{ static_v('js/tag-form-generator.js') }}"></script>
+    <script src="{{ static_v('js/waveform.js') }}"></script>
+    <script src="{{ static_v('js/image-player-shim.js') }}"></script>
+    <script src="{{ static_v('js/annotate.js') }}"></script>
+    <script src="{{ static_v('js/annotate-integration.js') }}"></script>
+    <script src="{{ static_v('js/prediction-review.js') }}"></script>
 </body>
 </html>

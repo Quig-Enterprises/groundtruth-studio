@@ -1,7 +1,9 @@
-from flask import Flask, request, jsonify, send_from_directory, render_template
+from datetime import datetime
+from flask import Flask, request, jsonify, send_from_directory, render_template, g
 from werkzeug.utils import secure_filename
 import os
 import json
+import logging
 import atexit
 from pathlib import Path
 from database import VideoDatabase
@@ -17,11 +19,16 @@ from unifi_protect_client import UniFiProtectClient, UniFiProtectIntegration
 from sync_config import SyncConfigManager
 from training_queue import TrainingQueueClient, init_training_jobs_table
 from vibration_exporter import VibrationExporter
+from location_exporter import LocationExporter
+from sample_router import SampleRouter
+from face_clustering import FaceClusterer
+from auto_detect_runner import trigger_auto_detect, run_detection_on_thumbnail
 
 app = Flask(__name__,
             template_folder='../templates',
             static_folder='../static')
 app.config['MAX_CONTENT_LENGTH'] = 2 * 1024 * 1024 * 1024  # 2GB max upload
+logger = logging.getLogger(__name__)
 
 BASE_DIR = Path(__file__).parent.parent
 DOWNLOAD_DIR = BASE_DIR / 'downloads'
@@ -34,13 +41,54 @@ atexit.register(close_connection_pool)
 
 # EcoEye API Configuration
 ECOEYE_API_BASE = 'https://alert.ecoeyetech.com'
-ECOEYE_API_KEY = '-3tsV7gFLF-nxAAUt-zRETAJLWEyxEWszwdT4fCKpeI'
+# Legacy PHP endpoints (api-thumbnails.php, api-filters.php, api-tags.php)
+ECOEYE_PHP_API_KEY = '-3tsV7gFLF-nxAAUt-zRETAJLWEyxEWszwdT4fCKpeI'
+# New /api/ endpoints with HMAC-SHA256 signing
+ECOEYE_API_KEY = '2cVrlQ2XW3wxDwZmVzQ3lOCi96jnqKnH8v1wyU97lM0'
+ECOEYE_API_SECRET = os.environ.get('ECOEYE_API_SECRET', '8SyPU2FW05yjtaNVOlCGPoyfqFSXJiGp36SEiiKqT-c0dSZDTBr89M8RsMTsD7_pyDHW2b6MxfPxuVUVlzpb8g')
 
 def ecoeye_request(method, endpoint, **kwargs):
-    """Make authenticated request to EcoEye API"""
+    """Make authenticated request to EcoEye API with HMAC-SHA256 signing"""
     import requests
+    import hmac
+    import hashlib
+    import time as _time
+    import json as _json
+
     headers = kwargs.pop('headers', {})
-    headers['X-API-KEY'] = ECOEYE_API_KEY
+    is_legacy = '.php' in endpoint
+
+    if is_legacy:
+        # Legacy PHP endpoints use simple API key auth
+        headers['X-API-Key'] = ECOEYE_PHP_API_KEY
+    else:
+        # New /api/ endpoints use HMAC-SHA256 signing
+        headers['X-API-Key'] = ECOEYE_API_KEY
+        headers['X-Timestamp'] = str(int(_time.time()))
+
+        if ECOEYE_API_SECRET:
+            canonical = f"{method.upper()}\n/{endpoint}\n"
+
+            params = kwargs.get('params')
+            if params:
+                param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+                canonical += param_str + "\n"
+            else:
+                canonical += "\n"
+
+            json_data = kwargs.get('json')
+            if json_data:
+                body_json = _json.dumps(json_data, sort_keys=True)
+                body_hash = hashlib.sha256(body_json.encode()).hexdigest()
+                canonical += body_hash
+
+            signature = hmac.new(
+                ECOEYE_API_SECRET.encode(),
+                canonical.encode(),
+                hashlib.sha256
+            ).hexdigest()
+            headers['X-Signature'] = signature
+
     url = f"{ECOEYE_API_BASE}/{endpoint}"
     return requests.request(method, url, headers=headers, **kwargs)
 
@@ -50,7 +98,10 @@ processor = VideoProcessor(str(THUMBNAIL_DIR))
 download_queue = DownloadQueue(DOWNLOAD_DIR, THUMBNAIL_DIR, db)
 yolo_exporter = YOLOExporter(db, DOWNLOAD_DIR, EXPORT_DIR)
 vibration_exporter = VibrationExporter(db, EXPORT_DIR)
+location_exporter = LocationExporter(db, EXPORT_DIR, THUMBNAIL_DIR, DOWNLOAD_DIR)
 topology_learner = CameraTopologyLearner()  # Uses DATABASE_URL from environment
+sample_router = SampleRouter(db)
+face_clusterer = FaceClusterer()
 
 # Initialize sync components
 sync_config = SyncConfigManager()  # Uses DATABASE_URL from environment
@@ -61,14 +112,72 @@ unifi_client = None  # Initialized on-demand with credentials
 init_training_jobs_table(db)
 training_queue = TrainingQueueClient(db)
 
+# Run schema migrations (add camera_id to videos, etc.)
+from schema import run_migrations
+try:
+    run_migrations()
+except Exception as e:
+    print(f"[Migrations] Warning: {e}")
+
 ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'webm'}
 
 def allowed_file(filename):
     return '.' in filename and filename.rsplit('.', 1)[1].lower() in ALLOWED_EXTENSIONS
 
+# ---- RBAC: Role-based access control via nginx auth_request ----
+
+@app.before_request
+def check_role_permissions():
+    """Enforce write protection for viewers. Nginx passes X-Auth-Role header."""
+    g.user_role = request.headers.get('X-Auth-Role', 'viewer')
+    g.can_write = g.user_role in ('super', 'admin', 'user')
+
+    # Block write operations for viewers
+    if request.method in ('POST', 'PUT', 'DELETE') and not g.can_write:
+        # Allow static files and client logging through
+        if request.path.startswith('/static/') or request.path == '/api/client-log':
+            return None
+        return jsonify({'success': False, 'error': 'Insufficient permissions. Write access requires user role or above.'}), 403
+
+@app.context_processor
+def inject_role():
+    """Make role info available in all templates."""
+    return {
+        'user_role': getattr(g, 'user_role', 'viewer'),
+        'can_write': getattr(g, 'can_write', False)
+    }
+
+@app.context_processor
+def inject_static_helpers():
+    """Provide static_v() for cache-busting static files with their mtime."""
+    def static_v(filename):
+        filepath = app.static_folder and os.path.join(app.static_folder, filename)
+        try:
+            mtime = int(os.path.getmtime(filepath))
+        except OSError:
+            mtime = 0
+        return f'/static/{filename}?v={mtime}'
+    return {'static_v': static_v}
+
+@app.route('/api/client-log', methods=['POST'])
+def client_log():
+    """Receive client-side log entries from gt-utils.js"""
+    try:
+        entry = request.get_json(silent=True) or {}
+        print(f"[CLIENT] [{entry.get('type','info')}] {entry.get('page','?')}: {entry.get('message','')}", flush=True)
+        if entry.get('caller'):
+            print(f"[CLIENT]   caller: {entry.get('caller')}", flush=True)
+    except Exception:
+        pass
+    return jsonify({'success': True})
+
 @app.route('/')
 def index():
     return render_template('index.html')
+
+@app.route('/add-content')
+def add_content():
+    return render_template('add_content.html')
 
 @app.route('/annotate')
 def annotate():
@@ -264,7 +373,7 @@ def sync_ecoeye_sample():
         if include_video and has_video:
             # Download video
             video_filename = video_path.split('/videos/')[-1] if '/videos/' in video_path else video_path
-            video_url = f'https://alert.ecoeyetech.com/videos/{video_filename}'
+            video_url = f'{ECOEYE_API_BASE}/videos/{video_filename}'
 
             dl_result = downloader.download(video_url, event.get('camera_name', 'ecoeye'))
 
@@ -273,9 +382,15 @@ def sync_ecoeye_sample():
                     filename=dl_result['filename'],
                     title=f"{event.get('camera_name', 'Unknown')} - {event.get('event_type', 'event')}",
                     original_url=video_url,
-                    notes=notes
+                    notes=notes,
+                    camera_id=event.get('camera_id')
                 )
                 processor.generate_thumbnail(str(DOWNLOAD_DIR / dl_result['filename']), video_id)
+
+                # Auto-detect persons/faces on thumbnail
+                video_record = db.get_video(video_id)
+                if video_record and video_record.get('thumbnail_path'):
+                    trigger_auto_detect(video_id, video_record['thumbnail_path'])
 
                 return jsonify({
                     'success': True,
@@ -310,9 +425,14 @@ def sync_ecoeye_sample():
                 title=f"[No Video] {event.get('camera_name', 'Unknown')} - {event.get('event_type', 'event')}",
                 original_url=f"ecoeye://{event_id}",
                 thumbnail_path=thumbnail_path,
-                notes=notes + "\n[Metadata only - no video file]"
+                notes=notes + "\n[Metadata only - no video file]",
+                camera_id=event.get('camera_id')
             )
             print(f"[EcoEye Sync] Created record_id: {record_id}")
+
+            # Auto-detect persons/faces on thumbnail
+            if thumbnail_path:
+                trigger_auto_detect(record_id, thumbnail_path)
 
             return jsonify({
                 'success': True,
@@ -326,8 +446,6 @@ def sync_ecoeye_sample():
 @app.route('/api/ecoeye/request-download', methods=['POST'])
 def request_ecoeye_download():
     """Request EcoEye relay to download video for an event"""
-    import requests
-
     data = request.json
     event_id = data.get('event_id')
 
@@ -335,7 +453,7 @@ def request_ecoeye_download():
         return jsonify({'success': False, 'error': 'event_id required'}), 400
 
     try:
-        # Send retry request to EcoEye relay
+        # Send retry/download request to EcoEye relay
         resp = ecoeye_request('POST', f'api/events/{event_id}/retry',
             timeout=30
         )
@@ -346,16 +464,22 @@ def request_ecoeye_download():
                 'message': 'Download request sent to EcoEye relay'
             })
         elif resp.status_code == 404:
-            # API endpoint not implemented yet
             return jsonify({
                 'success': False,
-                'error': 'Video download request feature not yet available on relay'
-            }), 501  # Not Implemented
+                'error': 'Event not found on relay'
+            }), 404
         else:
+            # Pass through relay's error message if available
+            try:
+                relay_json = resp.json()
+                relay_error = relay_json.get('detail', relay_json.get('error', resp.text[:200]))
+            except Exception:
+                relay_error = resp.text[:200] if resp.text else f'Status {resp.status_code}'
+            print(f"[EcoEye Download] Relay error {resp.status_code}: {relay_error}")
             return jsonify({
                 'success': False,
-                'error': f'Relay returned status {resp.status_code}'
-            }), 500
+                'error': f'Relay error: {relay_error}'
+            }), resp.status_code if resp.status_code in (400, 409, 429) else 500
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -364,44 +488,56 @@ def request_ecoeye_download():
 def get_ecoeye_cameras():
     """Get list of cameras from EcoEye for filter dropdown"""
     try:
-        # Use dedicated filters API for fast lookup
-        resp = ecoeye_request('GET', 'api-filters.php',
-            params={'type': 'cameras'},
-            timeout=15
-        )
-        result = resp.json()
+        # Try new API first
+        resp = ecoeye_request('GET', 'api/cameras', timeout=15)
+        if resp.status_code == 200:
+            result = resp.json()
+            cameras = result if isinstance(result, list) else result.get('cameras', [])
+            print(f"[EcoEye Cameras] Found {len(cameras)} cameras (new API)")
+            return jsonify({'success': True, 'cameras': cameras})
+        print(f"[EcoEye Cameras] New API returned {resp.status_code}, falling back to PHP")
+    except Exception as e:
+        print(f"[EcoEye Cameras] New API error: {e}, falling back to PHP")
 
+    # Fallback to PHP endpoint
+    try:
+        resp = ecoeye_request('GET', 'api-filters.php', params={'type': 'cameras'}, timeout=15)
+        result = resp.json()
         if result.get('success'):
             cameras = result.get('cameras', [])
-            print(f"[EcoEye Cameras] Found {len(cameras)} cameras")
+            print(f"[EcoEye Cameras] Found {len(cameras)} cameras (PHP fallback)")
             return jsonify({'success': True, 'cameras': cameras})
-
-        print(f"[EcoEye Cameras] Failed to fetch: {result}")
         return jsonify({'success': False, 'error': 'Failed to fetch cameras'}), 500
     except Exception as e:
-        print(f"[EcoEye Cameras] Error: {e}")
+        print(f"[EcoEye Cameras] PHP fallback error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 @app.route('/api/ecoeye/sites', methods=['GET'])
 def get_ecoeye_sites():
     """Get list of sites from EcoEye for filter dropdown"""
     try:
-        # Use dedicated filters API for fast lookup
-        resp = ecoeye_request('GET', 'api-filters.php',
-            params={'type': 'sites'},
-            timeout=15
-        )
-        result = resp.json()
+        # Try new API first
+        resp = ecoeye_request('GET', 'api/sites', timeout=15)
+        if resp.status_code == 200:
+            result = resp.json()
+            sites = result if isinstance(result, list) else result.get('sites', [])
+            print(f"[EcoEye Sites] Found {len(sites)} sites (new API)")
+            return jsonify({'success': True, 'sites': sites})
+        print(f"[EcoEye Sites] New API returned {resp.status_code}, falling back to PHP")
+    except Exception as e:
+        print(f"[EcoEye Sites] New API error: {e}, falling back to PHP")
 
+    # Fallback to PHP endpoint
+    try:
+        resp = ecoeye_request('GET', 'api-filters.php', params={'type': 'sites'}, timeout=15)
+        result = resp.json()
         if result.get('success'):
             sites = result.get('sites', [])
-            print(f"[EcoEye Sites] Found {len(sites)} sites")
+            print(f"[EcoEye Sites] Found {len(sites)} sites (PHP fallback)")
             return jsonify({'success': True, 'sites': sites})
-
-        print(f"[EcoEye Sites] Failed to fetch: {result}")
         return jsonify({'success': False, 'error': 'Failed to fetch sites'}), 500
     except Exception as e:
-        print(f"[EcoEye Sites] Error: {e}")
+        print(f"[EcoEye Sites] PHP fallback error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 # ===== EcoEye Event Tags API (proxy to relay) =====
@@ -496,7 +632,8 @@ def get_videos():
     if query:
         videos = db.search_videos(query)
     else:
-        videos = db.get_all_videos(limit, offset)
+        library_id = request.args.get('library')
+        videos = db.get_all_videos(limit, offset, library_id=int(library_id) if library_id else None)
 
     # Enrich videos with EcoEye import flags
     for video in videos:
@@ -520,7 +657,98 @@ def get_videos():
             if title.startswith('[No Video] '):
                 video['ecoeye_camera'] = title[11:].split(' - ')[0] if ' - ' in title else title[11:]
 
+    # Add library memberships
+    for video in videos:
+        video['libraries'] = db.get_video_libraries(video['id'])
+
+    # Attach bbox data for thumbnail overlays
+    video_ids = [v['id'] for v in videos]
+    bboxes_by_video = db.get_bboxes_for_video_ids(video_ids)
+    for video in videos:
+        video['bboxes'] = bboxes_by_video.get(video['id'], [])
+
     return jsonify({'success': True, 'videos': videos})
+
+
+# ── Content Libraries ──────────────────────────────────────────────
+
+@app.route('/api/libraries', methods=['GET'])
+def get_libraries():
+    """Get all content libraries with item counts"""
+    libraries = db.get_all_libraries()
+    return jsonify({'success': True, 'libraries': libraries})
+
+@app.route('/api/libraries', methods=['POST'])
+def create_library():
+    """Create a new content library"""
+    data = request.get_json()
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'success': False, 'error': 'Library name is required'}), 400
+    try:
+        library_id = db.create_library(name)
+        return jsonify({'success': True, 'id': library_id, 'name': name})
+    except Exception as e:
+        return jsonify({'success': False, 'error': f'Library name already exists'}), 409
+
+@app.route('/api/libraries/<int:library_id>', methods=['PUT'])
+def rename_library(library_id):
+    """Rename a content library"""
+    data = request.get_json()
+    name = (data.get('name') or '').strip()
+    if not name:
+        return jsonify({'success': False, 'error': 'Library name is required'}), 400
+    try:
+        success = db.rename_library(library_id, name)
+        if success:
+            return jsonify({'success': True})
+        return jsonify({'success': False, 'error': 'Cannot rename default library'}), 400
+    except Exception:
+        return jsonify({'success': False, 'error': 'Library name already exists'}), 409
+
+@app.route('/api/libraries/<int:library_id>', methods=['DELETE'])
+def delete_library(library_id):
+    """Delete a content library (not the default)"""
+    success = db.delete_library(library_id)
+    if success:
+        return jsonify({'success': True})
+    return jsonify({'success': False, 'error': 'Cannot delete default library'}), 400
+
+@app.route('/api/libraries/<int:library_id>/items', methods=['POST'])
+def add_library_items(library_id):
+    """Add videos to a library"""
+    data = request.get_json()
+    video_ids = data.get('video_ids', [])
+    if not video_ids:
+        return jsonify({'success': False, 'error': 'No video IDs provided'}), 400
+    added = db.add_to_library(library_id, video_ids)
+    return jsonify({'success': True, 'added': added})
+
+@app.route('/api/libraries/<int:library_id>/items/<int:video_id>', methods=['DELETE'])
+def remove_library_item(library_id, video_id):
+    """Remove a video from a library"""
+    success = db.remove_from_library(library_id, video_id)
+    return jsonify({'success': True, 'removed': success})
+
+@app.route('/api/libraries/<int:library_id>/next-unannotated', methods=['GET'])
+def get_next_unannotated(library_id):
+    """Get the next unannotated video in a library"""
+    current_video_id = request.args.get('current')
+    current_video_id = int(current_video_id) if current_video_id else None
+    video = db.get_next_unannotated_in_library(library_id, current_video_id)
+    if video:
+        return jsonify({'success': True, 'video': video})
+    return jsonify({'success': True, 'video': None, 'message': 'All videos in this library are annotated'})
+
+@app.route('/api/next-unannotated', methods=['GET'])
+def get_next_unannotated_global():
+    """Get the next unannotated video globally (no library filter)"""
+    current_video_id = request.args.get('current')
+    current_video_id = int(current_video_id) if current_video_id else None
+    video = db.get_next_unannotated(current_video_id)
+    if video:
+        return jsonify({'success': True, 'video': video})
+    return jsonify({'success': True, 'video': None, 'message': 'All videos are annotated'})
 
 @app.route('/api/videos/<int:video_id>', methods=['GET'])
 def get_video(video_id):
@@ -528,6 +756,41 @@ def get_video(video_id):
     video = db.get_video(video_id)
     if not video:
         return jsonify({'success': False, 'error': 'Video not found'}), 404
+
+    # Add has_video_file flag
+    filename = video.get('filename', '') or ''
+    has_video_file = bool(filename and not filename.endswith('.placeholder'))
+    if has_video_file:
+        # Also check if file actually exists on disk
+        video_path = DOWNLOAD_DIR / filename
+        has_video_file = video_path.exists()
+    video['has_video_file'] = has_video_file
+
+    # Add is_ecoeye_import flag
+    original_url = video.get('original_url', '') or ''
+    video['is_ecoeye_import'] = original_url.startswith('ecoeye://')
+
+    # Include location info if camera_id exists
+    camera_id = video.get('camera_id')
+    if not camera_id:
+        # Try to parse from original_url: ecoeye://{timestamp}_{MAC}_{type}
+        original_url = video.get('original_url', '') or ''
+        if original_url.startswith('ecoeye://'):
+            parts = original_url.replace('ecoeye://', '').split('_')
+            if len(parts) >= 2:
+                camera_id = parts[1]
+                video['camera_id'] = camera_id
+
+    if camera_id:
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cursor.execute('SELECT location_name FROM camera_locations WHERE camera_id = %s', (camera_id,))
+            loc_row = cursor.fetchone()
+            if loc_row:
+                video['location_name'] = loc_row['location_name']
+
+    # Add library memberships
+    video['libraries'] = db.get_video_libraries(video_id)
 
     behaviors = db.get_video_behaviors(video_id)
     return jsonify({
@@ -634,6 +897,10 @@ def upload_video():
         thumbnail_path=thumbnail_path,
         notes=notes
     )
+
+    # Auto-detect persons/faces on thumbnail
+    if thumbnail_path:
+        trigger_auto_detect(video_id, thumbnail_path)
 
     return jsonify({
         'success': True,
@@ -1103,6 +1370,18 @@ def system_status():
     })
 
 # YOLO Export Endpoints
+@app.route('/vibration-export')
+def vibration_export_page():
+    return render_template('vibration_export.html')
+
+@app.route('/location-export')
+def location_export_page():
+    return render_template('location_export.html')
+
+@app.route('/prediction-review')
+def prediction_review_page():
+    return render_template('prediction_review.html')
+
 @app.route('/yolo-export')
 def yolo_export_page():
     """YOLO export configuration page"""
@@ -1133,13 +1412,187 @@ def create_yolo_config():
             config_name=config_name,
             class_mapping=class_mapping,
             description=description,
-            include_reviewed_only=data.get('include_reviewed_only', 0),
-            include_ai_generated=data.get('include_ai_generated', 1),
-            include_negative_examples=data.get('include_negative_examples', 1),
+            include_reviewed_only=bool(data.get('include_reviewed_only', False)),
+            include_ai_generated=bool(data.get('include_ai_generated', True)),
+            include_negative_examples=bool(data.get('include_negative_examples', True)),
             min_confidence=data.get('min_confidence', 0.0)
         )
 
         return jsonify({'success': True, 'config_id': config_id})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/yolo/configs/<int:config_id>', methods=['GET'])
+def get_yolo_config(config_id):
+    """Get a single YOLO export configuration"""
+    try:
+        configs = yolo_exporter.get_export_configs()
+        config = next((c for c in configs if c['id'] == config_id), None)
+        if not config:
+            return jsonify({'success': False, 'error': 'Config not found'}), 404
+        return jsonify({'success': True, 'config': config})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/yolo/configs/<int:config_id>', methods=['PUT'])
+def update_yolo_config(config_id):
+    """Update an existing YOLO export configuration"""
+    try:
+        data = request.get_json()
+
+        with get_connection() as conn:
+            cursor = conn.cursor()
+
+            # Build update fields
+            updates = []
+            values = []
+
+            if 'config_name' in data:
+                updates.append('config_name = %s')
+                values.append(data['config_name'])
+            if 'description' in data:
+                updates.append('description = %s')
+                values.append(data['description'])
+            if 'class_mapping' in data:
+                updates.append('class_mapping = %s')
+                values.append(json.dumps(data['class_mapping']))
+            if 'include_reviewed_only' in data:
+                updates.append('include_reviewed_only = %s')
+                values.append(bool(data['include_reviewed_only']))
+            if 'include_ai_generated' in data:
+                updates.append('include_ai_generated = %s')
+                values.append(bool(data['include_ai_generated']))
+            if 'include_negative_examples' in data:
+                updates.append('include_negative_examples = %s')
+                values.append(bool(data['include_negative_examples']))
+
+            if not updates:
+                return jsonify({'success': False, 'error': 'No fields to update'}), 400
+
+            values.append(config_id)
+            cursor.execute(
+                f'UPDATE yolo_export_configs SET {", ".join(updates)} WHERE id = %s',
+                values
+            )
+
+            if cursor.rowcount == 0:
+                return jsonify({'success': False, 'error': 'Config not found'}), 404
+
+            conn.commit()
+
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/yolo/configs/<int:config_id>/health', methods=['GET'])
+def get_yolo_config_health(config_id):
+    """Dataset health analysis for a YOLO export config"""
+    try:
+        preview = yolo_exporter.get_export_preview(config_id)
+
+        class_counts = preview.get('class_distribution', {})
+        total_annotations = preview.get('total_annotations', 0)
+        total_videos = preview.get('video_count', 0)
+
+        # Count frames (distinct timestamps across videos)
+        total_frames = 0
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            config_data = None
+            cursor.execute('SELECT class_mapping FROM yolo_export_configs WHERE id = %s', (config_id,))
+            row = cursor.fetchone()
+            if row:
+                config_data = json.loads(row[0]) if row[0] else {}
+
+            # Count distinct frames that have matching annotations
+            activity_tags = list((config_data or {}).keys())
+            if activity_tags:
+                placeholders = ','.join(['%s'] * len(activity_tags))
+                cursor.execute(f'''
+                    SELECT COUNT(DISTINCT (video_id, timestamp))
+                    FROM keyframe_annotations
+                    WHERE activity_tag IN ({placeholders}) AND bbox_x IS NOT NULL
+                ''', activity_tags)
+                result = cursor.fetchone()
+                total_frames = result[0] if result else 0
+
+        # Generate warnings
+        warnings = []
+        recommendations = []
+
+        if total_annotations == 0:
+            warnings.append({
+                'level': 'critical',
+                'code': 'NO_ANNOTATIONS',
+                'message': 'No annotations match this configuration. Ensure the class mapping includes activity tags that have annotations.'
+            })
+            recommendations.append('Check that your class mapping includes activity tags with annotations')
+
+        if 0 < total_annotations < 10:
+            warnings.append({
+                'level': 'critical',
+                'code': 'INSUFFICIENT_DATA',
+                'message': f'Only {total_annotations} samples found — need at least 10 for train/val split. Add {10 - total_annotations} more annotated samples to proceed.'
+            })
+
+        if 10 <= total_annotations < 50:
+            warnings.append({
+                'level': 'critical',
+                'code': 'VERY_SMALL_DATASET',
+                'message': f'Only {total_annotations}/50 samples — need at least 50 to avoid overfitting. Add {50 - total_annotations} more annotated samples to proceed.'
+            })
+            recommendations.append('Add more annotated data for better training results')
+
+        # Per-class warnings
+        for class_name, count in class_counts.items():
+            if count == 0:
+                warnings.append({
+                    'level': 'critical',
+                    'code': 'EMPTY_CLASS',
+                    'message': f'Class "{class_name}" has 0 annotations. Add annotations for this class or remove it from the config.'
+                })
+            elif count < 100:
+                warnings.append({
+                    'level': 'warning',
+                    'code': 'LOW_SAMPLES_CLASS',
+                    'message': f'Class "{class_name}" has only {count} samples (recommend 100+)'
+                })
+                recommendations.append(f'Add more "{class_name}" annotations for better accuracy')
+
+        # Class imbalance
+        if class_counts and len(class_counts) > 1:
+            counts = [c for c in class_counts.values() if c > 0]
+            if counts:
+                max_count = max(counts)
+                min_count = min(counts)
+                if min_count > 0 and max_count / min_count > 5:
+                    warnings.append({
+                        'level': 'warning',
+                        'code': 'CLASS_IMBALANCE',
+                        'message': f'Significant class imbalance (ratio {max_count}:{min_count})'
+                    })
+                    recommendations.append('Consider balancing classes by adding more annotations to underrepresented classes')
+
+        # Low diversity
+        if total_videos == 1:
+            warnings.append({
+                'level': 'warning',
+                'code': 'LOW_DIVERSITY',
+                'message': 'All data from a single video source - low diversity'
+            })
+            recommendations.append('Add annotations from different video sources for better generalization')
+
+        return jsonify({
+            'success': True,
+            'health': {
+                'total_annotations': total_annotations,
+                'total_frames': total_frames,
+                'total_videos': total_videos,
+                'class_counts': class_counts,
+                'warnings': warnings,
+                'recommendations': list(set(recommendations))
+            }
+        })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -1552,7 +2005,7 @@ def get_ecoeye_config():
         return jsonify({
             'success': True,
             'configured': has_credentials,
-            'base_url': 'https://alerts.ecoeyetech.com'
+            'base_url': ECOEYE_API_BASE
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1569,6 +2022,7 @@ def set_ecoeye_config():
             return jsonify({'success': False, 'error': 'API key and secret required'}), 400
 
         sync_config.set_ecoeye_credentials(api_key, api_secret)
+        # Note: base_url comes from ECOEYE_API_BASE constant, not stored separately
 
         return jsonify({'success': True, 'message': 'EcoEye credentials saved'})
 
@@ -1581,15 +2035,15 @@ def test_ecoeye_connection():
     try:
         global ecoeye_client
 
-        credentials = sync_config.get_ecoeye_credentials()
-        if not credentials:
-            return jsonify({'success': False, 'error': 'EcoEye credentials not configured'}), 400
+        if not ECOEYE_API_KEY or not ECOEYE_API_SECRET:
+            return jsonify({'success': False, 'error': 'EcoEye credentials not configured in api.py'}), 400
 
         # Initialize client with credentials
         ecoeye_client = EcoEyeSyncClient(
             download_dir=DOWNLOAD_DIR,
-            api_key=credentials['api_key'],
-            api_secret=credentials['api_secret']
+            api_key=ECOEYE_API_KEY,
+            api_secret=ECOEYE_API_SECRET,
+            base_url=ECOEYE_API_BASE
         )
 
         result = ecoeye_client.test_connection()
@@ -1604,16 +2058,16 @@ def sync_ecoeye_alerts():
     try:
         global ecoeye_client
 
-        credentials = sync_config.get_ecoeye_credentials()
-        if not credentials:
-            return jsonify({'success': False, 'error': 'EcoEye credentials not configured'}), 400
+        if not ECOEYE_API_KEY or not ECOEYE_API_SECRET:
+            return jsonify({'success': False, 'error': 'EcoEye credentials not configured in api.py'}), 400
 
         # Initialize client if not already done
         if not ecoeye_client:
             ecoeye_client = EcoEyeSyncClient(
                 download_dir=DOWNLOAD_DIR,
-                api_key=credentials['api_key'],
-                api_secret=credentials['api_secret']
+                api_key=ECOEYE_API_KEY,
+                api_secret=ECOEYE_API_SECRET,
+                base_url=ECOEYE_API_BASE
             )
 
         # Get time range from request
@@ -1655,16 +2109,16 @@ def download_ecoeye_videos():
     try:
         global ecoeye_client
 
-        credentials = sync_config.get_ecoeye_credentials()
-        if not credentials:
-            return jsonify({'success': False, 'error': 'EcoEye credentials not configured'}), 400
+        if not ECOEYE_API_KEY or not ECOEYE_API_SECRET:
+            return jsonify({'success': False, 'error': 'EcoEye credentials not configured in api.py'}), 400
 
         # Initialize client if not already done
         if not ecoeye_client:
             ecoeye_client = EcoEyeSyncClient(
                 download_dir=DOWNLOAD_DIR,
-                api_key=credentials['api_key'],
-                api_secret=credentials['api_secret']
+                api_key=ECOEYE_API_KEY,
+                api_secret=ECOEYE_API_SECRET,
+                base_url=ECOEYE_API_BASE
             )
 
         # Get limit from request
@@ -1699,16 +2153,16 @@ def get_ecoeye_status():
     try:
         global ecoeye_client
 
-        credentials = sync_config.get_ecoeye_credentials()
-        if not credentials:
-            return jsonify({'success': False, 'error': 'EcoEye credentials not configured'}), 400
+        if not ECOEYE_API_KEY or not ECOEYE_API_SECRET:
+            return jsonify({'success': False, 'error': 'EcoEye credentials not configured in api.py'}), 400
 
         # Initialize client if not already done
         if not ecoeye_client:
             ecoeye_client = EcoEyeSyncClient(
                 download_dir=DOWNLOAD_DIR,
-                api_key=credentials['api_key'],
-                api_secret=credentials['api_secret']
+                api_key=ECOEYE_API_KEY,
+                api_secret=ECOEYE_API_SECRET,
+                base_url=ECOEYE_API_BASE
             )
 
         result = ecoeye_client.get_sync_status()
@@ -1844,6 +2298,11 @@ def training_queue_page():
     """Training queue management interface"""
     return render_template('training_queue.html')
 
+@app.route('/model-training')
+def model_training_page():
+    """Unified model training page"""
+    return render_template('model_training.html')
+
 # ===== Training Job Queue Endpoints =====
 
 @app.route('/api/training/submit', methods=['POST'])
@@ -1894,7 +2353,8 @@ def get_training_jobs():
     try:
         limit = int(request.args.get('limit', 50))
         offset = int(request.args.get('offset', 0))
-        jobs = training_queue.get_jobs(limit, offset)
+        export_config_id = request.args.get('export_config_id', type=int)
+        jobs = training_queue.get_jobs(limit, offset, export_config_id=export_config_id)
         return jsonify({'success': True, 'jobs': jobs})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1914,7 +2374,7 @@ def get_training_job(job_id):
 
 @app.route('/api/training/jobs/<job_id>/complete', methods=['POST'])
 def complete_training_job(job_id):
-    """Callback endpoint for training workers to report job completion"""
+    """Callback endpoint for training workers to report job completion with optional metrics"""
     try:
         data = request.get_json() or {}
         result_data = data.get('result')
@@ -1922,6 +2382,23 @@ def complete_training_job(job_id):
         success = training_queue.complete_job(job_id, result_data)
         if not success:
             return jsonify({'success': False, 'error': 'Job not found or already completed'}), 404
+
+        # Handle training metrics if provided
+        metrics = data.get('metrics')
+        if metrics:
+            model_name = data.get('model_name', metrics.get('model_name', ''))
+            model_version = data.get('model_version', metrics.get('model_version', ''))
+            if model_name:
+                try:
+                    # Get the training job's DB id
+                    job = training_queue.get_job(job_id)
+                    job_db_id = job['id'] if job else None
+                    db.insert_training_metrics(job_db_id, model_name, model_version, metrics)
+                    # Auto-register model if not already in registry
+                    job_type = job.get('config', {}).get('job_type', 'yolo') if job and job.get('config') else 'yolo'
+                    db.get_or_create_model_registry(model_name, model_version, job_type)
+                except Exception as e:
+                    logger.warning(f'Failed to save training metrics for job {job_id}: {e}')
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'completed'})
     except Exception as e:
@@ -1974,6 +2451,43 @@ def set_training_job_processing(job_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/training/jobs/<job_id>/retry', methods=['POST'])
+def retry_training_job(job_id):
+    """Retry a failed or cancelled training job by creating a new job with same config."""
+    job = training_queue.get_job(job_id)
+    if not job:
+        return jsonify({'success': False, 'error': 'Job not found'}), 404
+
+    if job['status'] not in ('failed', 'cancelled'):
+        return jsonify({'success': False, 'error': f'Can only retry failed or cancelled jobs, current status: {job["status"]}'}), 400
+
+    config = job.get('config') or {}
+    if job.get('config_json'):
+        try:
+            config = json.loads(job['config_json'])
+        except (json.JSONDecodeError, TypeError):
+            pass
+
+    export_path = config.get('export_path', '')
+    if not export_path:
+        # Try to reconstruct from S3 URI or re-export
+        return jsonify({'success': False, 'error': 'Cannot retry: original export path not available. Please submit a new job.'}), 400
+
+    result = training_queue.submit_job(
+        export_path=export_path,
+        job_type=job['job_type'],
+        config=config,
+        export_config_id=job.get('export_config_id')
+    )
+
+    return jsonify({
+        'success': True,
+        'new_job_id': result['job_id'],
+        'message': f'Retry submitted as new job {result["job_id"][:8]}...',
+        'original_job_id': job_id
+    })
+
+
 @app.route('/api/training/jobs/<job_id>', methods=['DELETE'])
 def delete_training_job(job_id):
     """Delete a training job record"""
@@ -1997,6 +2511,52 @@ def get_training_queue_status():
         status = training_queue.get_queue_status()
         return jsonify({'success': True, **status})
     except Exception as e:
+        logger.warning(f"Queue status unavailable: {e}")
+        return jsonify({'success': True, 'queue_messages': 0, 'queue_in_flight': 0, 'dlq_messages': 0, 'unavailable': True})
+
+
+@app.route('/api/worker/status', methods=['GET'])
+def get_worker_status():
+    """Get training worker status based on recent job activity."""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+            # Check for recently active jobs (processing in last 5 minutes)
+            cursor.execute('''
+                SELECT COUNT(*) as active_count
+                FROM training_jobs
+                WHERE status = 'processing'
+            ''')
+            active = cursor.fetchone()['active_count']
+
+            # Check last completed job timestamp
+            cursor.execute('''
+                SELECT completed_at FROM training_jobs
+                WHERE status IN ('completed', 'failed')
+                ORDER BY completed_at DESC LIMIT 1
+            ''')
+            last_row = cursor.fetchone()
+            last_activity = last_row['completed_at'].isoformat() if last_row and last_row['completed_at'] else None
+
+            # Check queue status (degrade gracefully if AWS unavailable)
+            try:
+                queue_status = training_queue.get_queue_status()
+            except Exception:
+                queue_status = {'queue_messages': 0, 'queue_in_flight': 0, 'unavailable': True}
+
+            return jsonify({
+                'success': True,
+                'worker': {
+                    'active_jobs': active,
+                    'last_activity': last_activity,
+                    'status': 'busy' if active > 0 else 'idle',
+                    'queue_messages': queue_status.get('queue_messages', 0),
+                    'queue_in_flight': queue_status.get('queue_in_flight', 0)
+                }
+            })
+    except Exception as e:
+        logger.error(f'Failed to get worker status: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -2093,9 +2653,1180 @@ def export_and_train():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+# ===== Camera Location Endpoints =====
+
+@app.route('/api/camera-locations', methods=['GET'])
+def get_camera_locations():
+    """List all camera-location mappings"""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cursor.execute('''
+                SELECT cl.*,
+                       (SELECT COUNT(*) FROM videos v WHERE v.camera_id = cl.camera_id) as frame_count
+                FROM camera_locations cl
+                ORDER BY cl.location_name
+            ''')
+            locations = [dict(row) for row in cursor.fetchall()]
+        return jsonify({'success': True, 'locations': locations})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/camera-locations', methods=['POST'])
+def create_or_update_camera_location():
+    """Create or update a camera-location mapping"""
+    try:
+        data = request.json
+        camera_id = data.get('camera_id', '').strip()
+        location_name = data.get('location_name', '').strip()
+
+        if not camera_id or not location_name:
+            return jsonify({'success': False, 'error': 'camera_id and location_name required'}), 400
+
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cursor.execute('''
+                INSERT INTO camera_locations (camera_id, camera_name, location_name, location_description, site_name, latitude, longitude)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (camera_id) DO UPDATE SET
+                    camera_name = COALESCE(EXCLUDED.camera_name, camera_locations.camera_name),
+                    location_name = EXCLUDED.location_name,
+                    location_description = COALESCE(EXCLUDED.location_description, camera_locations.location_description),
+                    site_name = COALESCE(EXCLUDED.site_name, camera_locations.site_name),
+                    latitude = COALESCE(EXCLUDED.latitude, camera_locations.latitude),
+                    longitude = COALESCE(EXCLUDED.longitude, camera_locations.longitude),
+                    updated_date = CURRENT_TIMESTAMP
+                RETURNING id
+            ''', (
+                camera_id,
+                data.get('camera_name'),
+                location_name,
+                data.get('location_description'),
+                data.get('site_name'),
+                data.get('latitude'),
+                data.get('longitude')
+            ))
+            result = cursor.fetchone()
+            conn.commit()
+
+        return jsonify({'success': True, 'id': result['id']})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/camera-locations/<int:location_id>', methods=['DELETE'])
+def delete_camera_location(location_id):
+    """Remove a camera-location mapping"""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cursor.execute('DELETE FROM camera_locations WHERE id = %s', (location_id,))
+            success = cursor.rowcount > 0
+            conn.commit()
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/camera-locations/lookup/<camera_id>', methods=['GET'])
+def lookup_camera_location(camera_id):
+    """Lookup location by camera MAC address"""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cursor.execute('SELECT * FROM camera_locations WHERE camera_id = %s', (camera_id,))
+            row = cursor.fetchone()
+        if row:
+            return jsonify({'success': True, 'location': dict(row)})
+        return jsonify({'success': True, 'location': None})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/camera-locations/cameras', methods=['GET'])
+def get_discovered_cameras():
+    """List unique camera_ids from ecoeye_alerts + videos with event counts"""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cursor.execute('''
+                WITH camera_sources AS (
+                    -- From ecoeye_alerts
+                    SELECT camera_id, MAX(timestamp) as last_seen, COUNT(*) as event_count,
+                           NULL as camera_name
+                    FROM ecoeye_alerts
+                    WHERE camera_id IS NOT NULL AND camera_id != ''
+                    GROUP BY camera_id
+
+                    UNION ALL
+
+                    -- From videos
+                    SELECT camera_id, MAX(upload_date) as last_seen, COUNT(*) as event_count,
+                           NULL as camera_name
+                    FROM videos
+                    WHERE camera_id IS NOT NULL AND camera_id != ''
+                    GROUP BY camera_id
+                ),
+                aggregated AS (
+                    SELECT camera_id,
+                           MAX(last_seen) as last_seen,
+                           SUM(event_count) as total_events
+                    FROM camera_sources
+                    GROUP BY camera_id
+                )
+                SELECT a.camera_id, a.last_seen, a.total_events,
+                       cl.id as location_id, cl.location_name, cl.camera_name, cl.site_name
+                FROM aggregated a
+                LEFT JOIN camera_locations cl ON a.camera_id = cl.camera_id
+                ORDER BY a.total_events DESC
+            ''')
+            cameras = [dict(row) for row in cursor.fetchall()]
+        return jsonify({'success': True, 'cameras': cameras})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/camera-locations/<int:location_id>/reference-image', methods=['POST'])
+def set_reference_image(location_id):
+    """Set reference image for a camera location from an existing thumbnail"""
+    try:
+        data = request.json
+        image_path = data.get('image_path', '').strip()
+
+        if not image_path:
+            return jsonify({'success': False, 'error': 'image_path required'}), 400
+
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cursor.execute('''
+                UPDATE camera_locations SET reference_image_path = %s, updated_date = CURRENT_TIMESTAMP
+                WHERE id = %s
+            ''', (image_path, location_id))
+            success = cursor.rowcount > 0
+            conn.commit()
+
+        return jsonify({'success': success})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ===== Location Export Endpoints =====
+
+@app.route('/api/location-export/stats', methods=['GET'])
+def get_location_export_stats():
+    """Get available training data statistics for location classification"""
+    try:
+        stats = location_exporter.get_export_stats()
+        return jsonify({'success': True, 'stats': stats})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/location-export/export', methods=['POST'])
+def export_location_dataset():
+    """Export location classification training dataset"""
+    try:
+        data = request.json or {}
+        result = location_exporter.export_dataset(
+            output_dir=data.get('output_dir'),
+            format=data.get('format', 'imagefolder'),
+            val_split=data.get('val_split', 0.2),
+            seed=data.get('seed', 42)
+        )
+        return jsonify(result)
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== AI Prediction Endpoints ====================
+
+@app.route('/api/ai/auto-detect/<int:video_id>', methods=['POST'])
+def run_auto_detect(video_id):
+    """Run person/face auto-detection on a video's thumbnail."""
+    try:
+        video = db.get_video(video_id)
+        if not video:
+            return jsonify({'success': False, 'error': 'Video not found'}), 404
+        if not video.get('thumbnail_path'):
+            return jsonify({'success': False, 'error': 'Video has no thumbnail'}), 400
+
+        result = run_detection_on_thumbnail(video_id, video['thumbnail_path'])
+        if result is None:
+            return jsonify({'success': False, 'error': 'Auto-detect failed (model not available or detection error)'}), 500
+
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        logger.error(f"Auto-detect endpoint error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/auto-detect/all', methods=['POST'])
+def run_auto_detect_all():
+    """Run person/face auto-detection on all videos with thumbnails (background)."""
+    try:
+        import threading
+
+        def _run_all():
+            videos = db.get_all_videos()
+            for v in videos:
+                if v.get('thumbnail_path') and os.path.exists(v['thumbnail_path']):
+                    run_detection_on_thumbnail(v['id'], v['thumbnail_path'])
+
+        thread = threading.Thread(target=_run_all, daemon=True, name="auto-detect-all")
+        thread.start()
+        return jsonify({'success': True, 'message': 'Auto-detect started for all videos in background'})
+    except Exception as e:
+        logger.error(f"Auto-detect-all endpoint error: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/predictions/batch', methods=['POST'])
+def submit_predictions_batch():
+    """Submit a batch of AI predictions for routing and review"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'Request body required'}), 400
+
+        video_id = data.get('video_id')
+        model_name = data.get('model_name')
+        model_version = data.get('model_version')
+        predictions = data.get('predictions', [])
+        batch_id = data.get('batch_id')
+
+        if not all([video_id, model_name, model_version, predictions]):
+            return jsonify({'success': False, 'error': 'video_id, model_name, model_version, and predictions required'}), 400
+
+        # Verify video exists
+        video = db.get_video(video_id)
+        if not video:
+            return jsonify({'success': False, 'error': f'Video {video_id} not found'}), 404
+
+        # Ensure model is registered
+        model_type = data.get('model_type', 'yolo')
+        db.get_or_create_model_registry(model_name, model_version, model_type)
+
+        # Insert predictions
+        prediction_ids = db.insert_predictions_batch(
+            video_id, model_name, model_version, batch_id, predictions
+        )
+
+        # Route predictions based on confidence thresholds
+        routing_summary = sample_router.route_and_apply(
+            prediction_ids, predictions, model_name, model_version
+        )
+
+        return jsonify({
+            'success': True,
+            'batch_id': batch_id,
+            'predictions_submitted': len(prediction_ids),
+            'prediction_ids': prediction_ids,
+            'routing': routing_summary
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/predictions/pending', methods=['GET'])
+def get_pending_predictions():
+    """Get pending predictions for review"""
+    try:
+        video_id = request.args.get('video_id', type=int)
+        model_name = request.args.get('model_name')
+        limit = request.args.get('limit', 100, type=int)
+        offset = request.args.get('offset', 0, type=int)
+
+        predictions = db.get_pending_predictions(video_id, model_name, limit, offset)
+        return jsonify({'success': True, 'predictions': predictions})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/predictions/<int:prediction_id>', methods=['GET'])
+def get_prediction(prediction_id):
+    """Get a single prediction by ID"""
+    try:
+        prediction = db.get_prediction_by_id(prediction_id)
+        if not prediction:
+            return jsonify({'success': False, 'error': 'Prediction not found'}), 404
+        return jsonify({'success': True, 'prediction': prediction})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/predictions/<int:prediction_id>/review', methods=['POST'])
+def review_prediction(prediction_id):
+    """Approve, reject, or correct a prediction"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'Request body required'}), 400
+
+        action = data.get('action')
+        reviewer = data.get('reviewer', 'anonymous')
+        notes = data.get('notes')
+
+        if action not in ('approve', 'reject', 'correct'):
+            return jsonify({'success': False, 'error': 'action must be approve, reject, or correct'}), 400
+
+        corrections = data.get('corrections') if action == 'correct' else None
+
+        updated = db.review_prediction(prediction_id, action, reviewer, notes, corrections)
+        if not updated:
+            return jsonify({'success': False, 'error': 'Prediction not found'}), 404
+
+        annotation_id = None
+        if action in ('approve', 'correct'):
+            annotation_id = db.approve_prediction_to_annotation(prediction_id)
+            # Update model stats
+            db.update_model_approval_stats(updated['model_name'], updated['model_version'])
+
+        return jsonify({
+            'success': True,
+            'prediction_id': prediction_id,
+            'review_status': updated['review_status'],
+            'annotation_id': annotation_id
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/predictions/stats', methods=['GET'])
+def get_prediction_stats():
+    """Get prediction queue stats (counts by status)"""
+    try:
+        video_id = request.args.get('video_id', type=int)
+        counts = db.get_prediction_counts(video_id)
+        return jsonify({'success': True, 'counts': counts})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/predictions/all-pending', methods=['GET'])
+def get_all_pending_predictions():
+    """Get all pending predictions across all videos for global review page."""
+    model_filter = request.args.get('model')
+    min_confidence = request.args.get('min_confidence', type=float)
+    max_confidence = request.args.get('max_confidence', type=float)
+    limit = min(request.args.get('limit', 100, type=int), 500)
+    offset = request.args.get('offset', 0, type=int)
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+            query = '''
+                SELECT p.*, v.title as video_title, v.thumbnail_path
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                WHERE p.review_status IN ('pending', 'auto_approved')
+            '''
+            params = []
+
+            if model_filter:
+                query += ' AND p.model_name = %s'
+                params.append(model_filter)
+            if min_confidence is not None:
+                query += ' AND p.confidence >= %s'
+                params.append(min_confidence)
+            if max_confidence is not None:
+                query += ' AND p.confidence <= %s'
+                params.append(max_confidence)
+
+            # Get total count
+            count_query = query.replace('SELECT p.*, v.title as video_title, v.thumbnail_path', 'SELECT COUNT(*) as total')
+            cursor.execute(count_query, params)
+            total = cursor.fetchone()['total']
+
+            query += ' ORDER BY p.confidence DESC, p.created_at DESC LIMIT %s OFFSET %s'
+            params.extend([limit, offset])
+
+            cursor.execute(query, params)
+            predictions = [dict(row) for row in cursor.fetchall()]
+
+            # Convert datetime objects to strings
+            for pred in predictions:
+                for key in ('created_at', 'reviewed_at', 'routed_at'):
+                    if pred.get(key):
+                        pred[key] = pred[key].isoformat()
+                # Parse JSONB fields that come back as strings
+                for key in ('predicted_tags', 'bbox', 'metadata'):
+                    if isinstance(pred.get(key), str):
+                        try:
+                            pred[key] = json.loads(pred[key])
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+            # Also get thumbnail paths as URL-friendly
+            for pred in predictions:
+                if pred.get('thumbnail_path'):
+                    thumb_name = os.path.basename(pred['thumbnail_path'])
+                    pred['thumbnail_url'] = f'/thumbnails/{thumb_name}'
+                else:
+                    pred['thumbnail_url'] = None
+
+            return jsonify({
+                'success': True,
+                'predictions': predictions,
+                'total': total,
+                'limit': limit,
+                'offset': offset
+            })
+    except Exception as e:
+        logger.error(f'Failed to get all pending predictions: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== Model Management Endpoints ====================
+
+@app.route('/api/ai/models', methods=['GET'])
+def get_registered_models():
+    """List all registered models with stats"""
+    try:
+        model_name = request.args.get('model_name')
+        active_only = request.args.get('active_only', 'true').lower() == 'true'
+        models = db.get_model_registry(model_name, active_only)
+        return jsonify({'success': True, 'models': models})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/models/<model_name>/stats', methods=['GET'])
+def get_model_performance_stats(model_name):
+    """Get model performance and prediction stats"""
+    try:
+        model_version = request.args.get('model_version')
+        stats = db.get_model_stats(model_name, model_version)
+        return jsonify({'success': True, 'model_name': model_name, 'stats': stats})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/models/<model_name>/thresholds', methods=['PUT'])
+def update_model_thresholds(model_name):
+    """Update routing confidence thresholds for a model"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'Request body required'}), 400
+
+        model_version = data.get('model_version')
+        thresholds = data.get('thresholds')
+
+        if not model_version or not thresholds:
+            return jsonify({'success': False, 'error': 'model_version and thresholds required'}), 400
+
+        # Validate threshold values
+        for key in ('auto_approve', 'review', 'auto_reject'):
+            if key in thresholds:
+                val = thresholds[key]
+                if not isinstance(val, (int, float)) or val < 0 or val > 1:
+                    return jsonify({'success': False, 'error': f'{key} must be between 0.0 and 1.0'}), 400
+
+        updated = db.update_model_thresholds(model_name, model_version, thresholds)
+        if not updated:
+            return jsonify({'success': False, 'error': 'Model not found'}), 404
+
+        return jsonify({'success': True, 'model': updated})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/models/<model_name>/metrics', methods=['GET'])
+def get_model_metrics_history(model_name):
+    """Get training metrics history for a model"""
+    try:
+        model_version = request.args.get('model_version')
+        limit = request.args.get('limit', 20, type=int)
+        metrics = db.get_training_metrics_history(model_name, model_version, limit)
+        return jsonify({'success': True, 'model_name': model_name, 'metrics': metrics})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/models/<model_name>/toggle', methods=['POST'])
+def toggle_model(model_name):
+    """Activate or deactivate a model."""
+    data = request.json or {}
+    model_version = data.get('model_version')
+    active = data.get('active')  # True/False
+
+    if active is None:
+        return jsonify({'success': False, 'error': 'active field required (true/false)'}), 400
+
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            if model_version:
+                cursor.execute('''
+                    UPDATE model_registry SET is_active = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE model_name = %s AND model_version = %s
+                ''', (active, model_name, model_version))
+            else:
+                cursor.execute('''
+                    UPDATE model_registry SET is_active = %s, updated_at = CURRENT_TIMESTAMP
+                    WHERE model_name = %s
+                ''', (active, model_name))
+
+            if cursor.rowcount == 0:
+                return jsonify({'success': False, 'error': 'Model not found'}), 404
+
+            conn.commit()
+
+        return jsonify({
+            'success': True,
+            'model_name': model_name,
+            'active': active,
+            'message': f'Model {"activated" if active else "deactivated"}'
+        })
+    except Exception as e:
+        logger.error(f'Failed to toggle model {model_name}: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== Location Export & Train Endpoint ====================
+
+@app.route('/api/location-export/export-and-train', methods=['POST'])
+def location_export_and_train():
+    """One-click: export location dataset then submit training job"""
+    try:
+        data = request.get_json() or {}
+
+        # Step 1: Export
+        export_result = location_exporter.export_dataset(
+            output_dir=data.get('output_dir'),
+            format=data.get('format', 'imagefolder'),
+            val_split=data.get('val_split', 0.2),
+            seed=data.get('seed', 42)
+        )
+
+        if not export_result.get('success') or not export_result.get('export_path'):
+            return jsonify({'success': False, 'error': 'Export produced no data',
+                            'export_result': export_result}), 400
+
+        export_path = export_result['export_path']
+
+        # Step 2: Submit training job
+        config = {
+            'model_type': data.get('model_type', 'resnet18'),
+            'epochs': data.get('epochs', 50),
+            'labels': ','.join(export_result.get('location_counts', {}).keys()),
+        }
+
+        job = training_queue.submit_job(
+            job_type='location',
+            export_path=export_path,
+            config=config
+        )
+
+        return jsonify({
+            'success': True,
+            'job': job,
+            'export_result': export_result,
+            'message': f'Exported {export_result.get("total_frames", 0)} frames across {export_result.get("locations", 0)} locations and submitted training job'
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Multi-Entity Detection: Identities ────────────────────────────
+
+@app.route('/api/identities', methods=['GET'])
+def list_identities():
+    """List/search identities with optional filters"""
+    try:
+        identity_type = request.args.get('type')
+        is_flagged = request.args.get('flagged')
+        if is_flagged is not None:
+            is_flagged = is_flagged.lower() in ('true', '1', 'yes')
+        search = request.args.get('search')
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+        identities = db.get_identities(
+            identity_type=identity_type,
+            is_flagged=is_flagged,
+            search=search,
+            limit=limit,
+            offset=offset
+        )
+        return jsonify({'success': True, 'identities': identities})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/identities', methods=['POST'])
+def create_identity():
+    """Create a new identity"""
+    try:
+        data = request.get_json()
+        identity_type = data.get('identity_type')
+        if not identity_type:
+            return jsonify({'success': False, 'error': 'identity_type is required'}), 400
+        identity = db.create_identity(
+            identity_type=identity_type,
+            name=data.get('name'),
+            metadata=data.get('metadata'),
+            is_flagged=data.get('is_flagged', False),
+            notes=data.get('notes')
+        )
+        return jsonify({'success': True, 'identity': identity})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/identities/<identity_id>', methods=['GET'])
+def get_identity(identity_id):
+    """Get a single identity by ID"""
+    try:
+        identity = db.get_identity(identity_id)
+        if not identity:
+            return jsonify({'success': False, 'error': 'Identity not found'}), 404
+        return jsonify({'success': True, 'identity': identity})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/identities/<identity_id>', methods=['PUT'])
+def update_identity(identity_id):
+    """Update an existing identity"""
+    try:
+        data = request.get_json()
+        allowed = {}
+        for key in ('name', 'metadata', 'is_flagged', 'notes', 'last_seen'):
+            if key in data:
+                allowed[key] = data[key]
+        identity = db.update_identity(identity_id, **allowed)
+        if not identity:
+            return jsonify({'success': False, 'error': 'Identity not found'}), 404
+        return jsonify({'success': True, 'identity': identity})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/identities/<identity_id>', methods=['DELETE'])
+def delete_identity(identity_id):
+    """Delete an identity"""
+    try:
+        deleted = db.delete_identity(identity_id)
+        if not deleted:
+            return jsonify({'success': False, 'error': 'Identity not found'}), 404
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/identities/<identity_id>/associations', methods=['GET'])
+def get_identity_associations(identity_id):
+    """Get associations and full chain for an identity"""
+    try:
+        association_type = request.args.get('type')
+        associations = db.get_associations(identity_id, association_type=association_type)
+        chain = db.get_association_chain(identity_id)
+        return jsonify({'success': True, 'associations': associations, 'chain': chain})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/identities/<identity_id>/embeddings', methods=['GET'])
+def get_identity_embeddings(identity_id):
+    """Get embeddings for an identity"""
+    try:
+        embedding_type = request.args.get('type')
+        is_reference = request.args.get('is_reference')
+        if is_reference is not None:
+            is_reference = is_reference.lower() in ('true', '1', 'yes')
+        limit = int(request.args.get('limit', 100))
+        embeddings = db.get_embeddings(
+            identity_id=identity_id,
+            embedding_type=embedding_type,
+            is_reference=is_reference,
+            limit=limit
+        )
+        return jsonify({'success': True, 'embeddings': embeddings})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/identities/<identity_id>/timeline', methods=['GET'])
+def get_identity_timeline(identity_id):
+    """Get all tracks for an identity ordered by time"""
+    try:
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+        tracks = db.get_tracks(
+            identity_id=identity_id,
+            limit=limit,
+            offset=offset
+        )
+        return jsonify({'success': True, 'tracks': tracks})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Multi-Entity Detection: Embeddings ───────────────────────────
+
+@app.route('/api/embeddings', methods=['POST'])
+def insert_embedding():
+    """Insert a new embedding vector"""
+    try:
+        data = request.get_json()
+        identity_id = data.get('identity_id')
+        embedding_type = data.get('embedding_type')
+        vector = data.get('vector')
+        confidence = data.get('confidence')
+        if not all([identity_id, embedding_type, vector, confidence is not None]):
+            return jsonify({'success': False, 'error': 'identity_id, embedding_type, vector, and confidence are required'}), 400
+        embedding = db.insert_embedding(
+            identity_id=identity_id,
+            embedding_type=embedding_type,
+            vector=vector,
+            confidence=confidence,
+            source_image_path=data.get('source_image_path'),
+            camera_id=data.get('camera_id'),
+            is_reference=data.get('is_reference', False),
+            session_date=data.get('session_date')
+        )
+        return jsonify({'success': True, 'embedding': embedding})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/embeddings/search', methods=['POST'])
+def search_embeddings():
+    """Find similar embeddings by vector similarity"""
+    try:
+        data = request.get_json()
+        vector = data.get('vector')
+        embedding_type = data.get('embedding_type')
+        if not vector or not embedding_type:
+            return jsonify({'success': False, 'error': 'vector and embedding_type are required'}), 400
+        results = db.find_similar_embeddings(
+            vector=vector,
+            embedding_type=embedding_type,
+            threshold=data.get('threshold', 0.6),
+            limit=data.get('limit', 10),
+            session_date=data.get('session_date')
+        )
+        return jsonify({'success': True, 'results': results})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/embeddings/<embedding_id>', methods=['DELETE'])
+def delete_embedding(embedding_id):
+    """Delete an embedding"""
+    try:
+        deleted = db.delete_embedding(embedding_id)
+        if not deleted:
+            return jsonify({'success': False, 'error': 'Embedding not found'}), 404
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Multi-Entity Detection: Tracks ───────────────────────────────
+
+@app.route('/api/tracks/active', methods=['GET'])
+def get_active_tracks():
+    """Get currently active tracks (defined BEFORE /api/tracks/<track_id> to avoid route conflict)"""
+    try:
+        camera_id = request.args.get('camera_id')
+        tracks = db.get_active_tracks(camera_id=camera_id)
+        return jsonify({'success': True, 'tracks': tracks})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/tracks', methods=['GET'])
+def list_tracks():
+    """List tracks with optional filters"""
+    try:
+        camera_id = request.args.get('camera_id')
+        entity_type = request.args.get('entity_type')
+        identity_id = request.args.get('identity_id')
+        start_after = request.args.get('start_after')
+        start_before = request.args.get('start_before')
+        active_only = request.args.get('active_only', 'false').lower() in ('true', '1', 'yes')
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+        if start_after:
+            start_after = datetime.fromisoformat(start_after)
+        if start_before:
+            start_before = datetime.fromisoformat(start_before)
+        tracks = db.get_tracks(
+            camera_id=camera_id,
+            entity_type=entity_type,
+            identity_id=identity_id,
+            start_after=start_after,
+            start_before=start_before,
+            active_only=active_only,
+            limit=limit,
+            offset=offset
+        )
+        return jsonify({'success': True, 'tracks': tracks})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/tracks', methods=['POST'])
+def create_track():
+    """Create a new track"""
+    try:
+        data = request.get_json()
+        camera_id = data.get('camera_id')
+        entity_type = data.get('entity_type')
+        if not camera_id or not entity_type:
+            return jsonify({'success': False, 'error': 'camera_id and entity_type are required'}), 400
+        track = db.create_track(
+            camera_id=camera_id,
+            entity_type=entity_type,
+            identity_id=data.get('identity_id'),
+            identity_method=data.get('identity_method'),
+            identity_confidence=data.get('identity_confidence')
+        )
+        return jsonify({'success': True, 'track': track})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/tracks/<track_id>', methods=['GET'])
+def get_track(track_id):
+    """Get a single track by ID"""
+    try:
+        track = db.get_track(track_id)
+        if not track:
+            return jsonify({'success': False, 'error': 'Track not found'}), 404
+        return jsonify({'success': True, 'track': track})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/tracks/<track_id>/end', methods=['POST'])
+def end_track(track_id):
+    """End a track (set ended_at timestamp)"""
+    try:
+        ended = db.end_track(track_id)
+        if not ended:
+            return jsonify({'success': False, 'error': 'Track not found'}), 404
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/tracks/<track_id>/link', methods=['POST'])
+def link_track_to_identity(track_id):
+    """Link a track to an identity"""
+    try:
+        data = request.get_json()
+        identity_id = data.get('identity_id')
+        method = data.get('method')
+        confidence = data.get('confidence')
+        if not all([identity_id, method, confidence is not None]):
+            return jsonify({'success': False, 'error': 'identity_id, method, and confidence are required'}), 400
+        linked = db.link_track_to_identity(track_id, identity_id, method, confidence)
+        if not linked:
+            return jsonify({'success': False, 'error': 'Track not found'}), 404
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/tracks/<track_id>/sightings', methods=['GET'])
+def get_track_sightings(track_id):
+    """Get sightings for a track"""
+    try:
+        limit = request.args.get('limit')
+        if limit is not None:
+            limit = int(limit)
+        sightings = db.get_track_sightings(track_id, limit=limit)
+        return jsonify({'success': True, 'sightings': sightings})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Multi-Entity Detection: Sightings ────────────────────────────
+
+@app.route('/api/sightings/batch', methods=['POST'])
+def batch_insert_sightings():
+    """Batch insert sightings"""
+    try:
+        data = request.get_json()
+        sightings = data.get('sightings')
+        if not sightings or not isinstance(sightings, list):
+            return jsonify({'success': False, 'error': 'sightings array is required'}), 400
+        count = db.batch_insert_sightings(sightings)
+        return jsonify({'success': True, 'inserted': count})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Multi-Entity Detection: Violations ───────────────────────────
+
+@app.route('/api/violations', methods=['GET'])
+def list_violations():
+    """List violations with optional filters"""
+    try:
+        status = request.args.get('status')
+        camera_id = request.args.get('camera_id')
+        violation_type = request.args.get('violation_type')
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+        violations = db.get_violations(
+            status=status,
+            camera_id=camera_id,
+            violation_type=violation_type,
+            limit=limit,
+            offset=offset
+        )
+        return jsonify({'success': True, 'violations': violations})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/violations', methods=['POST'])
+def create_violation():
+    """Create a new violation"""
+    try:
+        data = request.get_json()
+        violation_type = data.get('violation_type')
+        camera_id = data.get('camera_id')
+        confidence = data.get('confidence')
+        if not all([violation_type, camera_id, confidence is not None]):
+            return jsonify({'success': False, 'error': 'violation_type, camera_id, and confidence are required'}), 400
+        violation = db.create_violation(
+            violation_type=violation_type,
+            camera_id=camera_id,
+            confidence=confidence,
+            person_identity_id=data.get('person_identity_id'),
+            vehicle_identity_id=data.get('vehicle_identity_id'),
+            boat_identity_id=data.get('boat_identity_id'),
+            trailer_identity_id=data.get('trailer_identity_id'),
+            evidence_paths=data.get('evidence_paths')
+        )
+        return jsonify({'success': True, 'violation': violation})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/violations/<violation_id>/review', methods=['POST'])
+def review_violation(violation_id):
+    """Review a violation (approve/dismiss)"""
+    try:
+        data = request.get_json()
+        status = data.get('status')
+        reviewed_by = data.get('reviewed_by')
+        if not status or not reviewed_by:
+            return jsonify({'success': False, 'error': 'status and reviewed_by are required'}), 400
+        violation = db.review_violation(violation_id, status, reviewed_by, notes=data.get('notes'))
+        if not violation:
+            return jsonify({'success': False, 'error': 'Violation not found'}), 404
+        return jsonify({'success': True, 'violation': violation})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Multi-Entity Detection: Visits ───────────────────────────────
+
+@app.route('/api/visits', methods=['GET'])
+def list_visits():
+    """List visits with optional filters"""
+    try:
+        person_identity_id = request.args.get('person_identity_id')
+        date_start = request.args.get('date_start')
+        date_end = request.args.get('date_end')
+        limit = int(request.args.get('limit', 100))
+        offset = int(request.args.get('offset', 0))
+        if date_start:
+            date_start = datetime.fromisoformat(date_start)
+        if date_end:
+            date_end = datetime.fromisoformat(date_end)
+        visits = db.get_visits(
+            person_identity_id=person_identity_id,
+            date_start=date_start,
+            date_end=date_end,
+            limit=limit,
+            offset=offset
+        )
+        return jsonify({'success': True, 'visits': visits})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/visits', methods=['POST'])
+def create_visit():
+    """Create a new visit"""
+    try:
+        data = request.get_json()
+        visit = db.create_visit(
+            person_identity_id=data.get('person_identity_id'),
+            vehicle_identity_id=data.get('vehicle_identity_id'),
+            boat_identity_id=data.get('boat_identity_id'),
+            track_ids=data.get('track_ids'),
+            camera_timeline=data.get('camera_timeline')
+        )
+        return jsonify({'success': True, 'visit': visit})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/visits/<visit_id>', methods=['GET'])
+def get_visit(visit_id):
+    """Get a single visit by ID"""
+    try:
+        visit = db.get_visit(visit_id)
+        if not visit:
+            return jsonify({'success': False, 'error': 'Visit not found'}), 404
+        return jsonify({'success': True, 'visit': visit})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/visits/<visit_id>/end', methods=['POST'])
+def end_visit(visit_id):
+    """End a visit (set departure time)"""
+    try:
+        data = request.get_json(silent=True) or {}
+        departure_time = data.get('departure_time')
+        ended = db.end_visit(visit_id, departure_time=departure_time)
+        if not ended:
+            return jsonify({'success': False, 'error': 'Visit not found'}), 404
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+@app.route('/api/visits/<visit_id>/violation', methods=['POST'])
+def add_violation_to_visit(visit_id):
+    """Add a violation to a visit"""
+    try:
+        data = request.get_json()
+        violation_id = data.get('violation_id')
+        if not violation_id:
+            return jsonify({'success': False, 'error': 'violation_id is required'}), 400
+        added = db.add_violation_to_visit(visit_id, violation_id)
+        if not added:
+            return jsonify({'success': False, 'error': 'Visit or violation not found'}), 404
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Multi-Entity Detection: Pipeline ─────────────────────────────
+
+@app.route('/api/pipeline/status', methods=['GET'])
+def pipeline_status():
+    """Health check for the multi-entity detection pipeline"""
+    try:
+        return jsonify({
+            'success': True,
+            'services': {
+                'database': 'ok',
+                'detector': 'standby',
+                'embedder': 'standby',
+                'tracker': 'standby',
+                'identifier': 'standby'
+            }
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ── Face Clustering ──────────────────────────────────────────────
+
+@app.route('/api/face-clusters', methods=['GET'])
+def get_face_clusters():
+    """Get all face clusters with summaries"""
+    try:
+        clusters = face_clusterer.get_clusters_summary()
+        return jsonify({
+            'success': True,
+            'clusters': clusters,
+            'total': len(clusters)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching face clusters: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/face-clusters/run', methods=['POST'])
+def run_face_clustering():
+    """Trigger face clustering job"""
+    try:
+        # Get optional parameters from request
+        params = request.get_json() or {}
+        min_cluster_size = params.get('min_cluster_size', 5)
+        min_samples = params.get('min_samples', 3)
+
+        # Create clusterer with custom parameters if provided
+        if params:
+            clusterer = FaceClusterer(
+                min_cluster_size=min_cluster_size,
+                min_samples=min_samples
+            )
+        else:
+            clusterer = face_clusterer
+
+        summary = clusterer.run_clustering()
+
+        return jsonify({
+            'success': True,
+            'summary': summary
+        })
+    except Exception as e:
+        logger.error(f"Error running face clustering: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/face-clusters/<identity_id>/assign', methods=['POST'])
+def assign_face_cluster(identity_id):
+    """Assign name to a cluster. JSON body: {"name": "John Doe"}"""
+    try:
+        data = request.get_json()
+        if not data or 'name' not in data:
+            return jsonify({
+                'success': False,
+                'error': 'Missing required field: name'
+            }), 400
+
+        new_name = data['name'].strip()
+        if not new_name:
+            return jsonify({
+                'success': False,
+                'error': 'Name cannot be empty'
+            }), 400
+
+        success = face_clusterer.assign_cluster(identity_id, new_name)
+
+        if success:
+            return jsonify({
+                'success': True,
+                'identity_id': identity_id,
+                'name': new_name
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Identity not found or not a cluster identity'
+            }), 404
+
+    except Exception as e:
+        logger.error(f"Error assigning cluster name: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/face-clusters/<source_id>/merge/<target_id>', methods=['POST'])
+def merge_face_clusters(source_id, target_id):
+    """Merge source cluster into target"""
+    try:
+        if source_id == target_id:
+            return jsonify({
+                'success': False,
+                'error': 'Cannot merge an identity into itself'
+            }), 400
+
+        success = face_clusterer.merge_clusters(source_id, target_id)
+
+        if success:
+            return jsonify({
+                'success': True,
+                'source_id': source_id,
+                'target_id': target_id,
+                'message': f'Successfully merged {source_id} into {target_id}'
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'One or both identities not found or not cluster identities'
+            }), 404
+
+    except Exception as e:
+        logger.error(f"Error merging clusters: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # Support for reverse proxy
 from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
 
 if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5050)
+    app.run(debug=True, host='0.0.0.0', port=5050, threaded=True)
