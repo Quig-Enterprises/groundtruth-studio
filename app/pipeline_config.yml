@@ -1,0 +1,16 @@
+mqtt:
+  host: "127.0.0.1"
+  port: 1883
+  username: "pipeline"
+  password: "pipeline_worker_2026"
+  client_id: "pipeline-worker"
+  subscriptions:
+    - "tracker/tracks/+"
+    - "identity/face/+"
+
+periodic:
+  visit_interval_seconds: 60
+  clustering_interval_seconds: 300
+
+violation:
+  ramp_cameras: []               # Empty = check all cameras
