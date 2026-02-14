@@ -22,11 +22,11 @@ class ScenarioWorkflow {
      * Start a new annotation workflow
      */
     startWorkflow() {
-        const currentTime = videoPlayer.currentTime;
+        const currentTime = videoPlayer ? videoPlayer.currentTime : 0;
         console.log('[Scenario Workflow] Starting workflow at time:', currentTime);
 
         // Pause video to prevent it from moving
-        videoPlayer.pause();
+        if (videoPlayer) videoPlayer.pause();
 
         this.reset();
 
@@ -54,19 +54,29 @@ class ScenarioWorkflow {
     extractCurrentFrame() {
         console.log('[Scenario Workflow] Extracting current frame');
 
-        if (!videoPlayer) {
-            console.error('[Scenario Workflow] Video player not found');
+        // In image mode, use the thumbnail image element directly
+        const sourceElement = window.isImageMode
+            ? document.getElementById('thumbnail-image')
+            : videoPlayer;
+
+        if (!sourceElement) {
+            console.error('[Scenario Workflow] Source element not found');
             return;
         }
 
         // Create a temporary canvas to capture the frame
         const tempCanvas = document.createElement('canvas');
-        tempCanvas.width = videoPlayer.videoWidth || videoPlayer.offsetWidth;
-        tempCanvas.height = videoPlayer.videoHeight || videoPlayer.offsetHeight;
+        if (window.isImageMode) {
+            tempCanvas.width = sourceElement.naturalWidth || sourceElement.offsetWidth;
+            tempCanvas.height = sourceElement.naturalHeight || sourceElement.offsetHeight;
+        } else {
+            tempCanvas.width = videoPlayer.videoWidth || videoPlayer.offsetWidth;
+            tempCanvas.height = videoPlayer.videoHeight || videoPlayer.offsetHeight;
+        }
         const tempCtx = tempCanvas.getContext('2d');
 
-        // Draw current video frame
-        tempCtx.drawImage(videoPlayer, 0, 0, tempCanvas.width, tempCanvas.height);
+        // Draw current frame (works for both img and video elements)
+        tempCtx.drawImage(sourceElement, 0, 0, tempCanvas.width, tempCanvas.height);
 
         // Convert to data URL
         this.extractedFrameData = tempCanvas.toDataURL('image/jpeg', 0.95);
@@ -93,12 +103,22 @@ class ScenarioWorkflow {
         if (!frameImg) {
             frameImg = document.createElement('img');
             frameImg.id = 'scenario-frame-image';
-            frameImg.style.cssText = 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 100%; max-height: 100%; display: none;';
+            if (window.isImageMode) {
+                frameImg.style.cssText = 'width: 100%; height: 100%; object-fit: contain; display: none;';
+            } else {
+                frameImg.style.cssText = 'position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); max-width: 100%; max-height: 100%; display: none;';
+            }
             videoWrapper.appendChild(frameImg);
         }
 
         frameImg.src = this.extractedFrameData;
         frameImg.style.display = 'block';
+
+        // Hide the source element
+        if (window.isImageMode) {
+            const thumbImg = document.getElementById('thumbnail-image');
+            if (thumbImg) thumbImg.style.display = 'none';
+        }
         videoPlayer.style.display = 'none';
 
         console.log('[Scenario Workflow] Showing extracted frame, hiding video');
@@ -112,6 +132,11 @@ class ScenarioWorkflow {
         const frameImg = document.getElementById('scenario-frame-image');
         if (frameImg) {
             frameImg.style.display = 'none';
+        }
+
+        if (window.isImageMode) {
+            const thumbImg = document.getElementById('thumbnail-image');
+            if (thumbImg) thumbImg.style.display = 'block';
         }
 
         if (videoPlayer) {
@@ -203,7 +228,7 @@ class ScenarioWorkflow {
      */
     selectScenario(scenarioId) {
         console.log('[Scenario Workflow] Selected scenario:', scenarioId);
-        this.currentScenario = annotationScenarios[scenarioId];
+        this.currentScenario = JSON.parse(JSON.stringify(annotationScenarios[scenarioId]));
         this.currentScenario.id = scenarioId;
 
         // Track usage
@@ -237,9 +262,98 @@ class ScenarioWorkflow {
     }
 
     /**
+     * Capture current tag form values from DOM into collectedData.tags
+     * so they survive panel re-renders.
+     */
+    captureCurrentTagValues() {
+        if (!this.currentScenario?.tags) return;
+        const tags = this.currentScenario.tags;
+        for (const [tagId, tagConfig] of Object.entries(tags)) {
+            if (tagConfig.type === 'checkbox') {
+                const checkboxes = document.querySelectorAll(`input[name="tag-${tagId}"]:checked`);
+                if (checkboxes.length > 0) {
+                    this.collectedData.tags[tagId] = Array.from(checkboxes).map(cb => cb.value);
+                }
+            } else if (tagConfig.type === 'configurable_dropdown') {
+                const select = document.getElementById(`tag-${tagId}`);
+                const customInput = document.getElementById(`tag-${tagId}-custom`);
+                if (select && select.value === '__custom__' && customInput && customInput.value) {
+                    this.collectedData.tags[tagId] = customInput.value;
+                } else if (select && select.value) {
+                    this.collectedData.tags[tagId] = select.value;
+                }
+            } else if (tagConfig.type === 'dropdown' && tagConfig.allowCustom) {
+                const select = document.getElementById(`tag-${tagId}`);
+                const customInput = document.getElementById(`tag-${tagId}-custom`);
+                if (select && select.value === '__custom__' && customInput && customInput.value) {
+                    this.collectedData.tags[tagId] = customInput.value;
+                } else if (select && select.value) {
+                    this.collectedData.tags[tagId] = select.value;
+                }
+            } else {
+                const element = document.getElementById(`tag-${tagId}`);
+                if (element && element.value) {
+                    this.collectedData.tags[tagId] = element.value;
+                }
+            }
+        }
+        // Capture notes too
+        const notesEl = document.getElementById('scenario-notes');
+        if (notesEl && notesEl.value) {
+            this.collectedData.notes = notesEl.value;
+        }
+    }
+
+    /**
+     * Restore tag form values from collectedData.tags after panel re-render.
+     */
+    restoreTagValues() {
+        if (!this.currentScenario?.tags) return;
+        const tags = this.currentScenario.tags;
+        for (const [tagId, tagConfig] of Object.entries(tags)) {
+            const value = this.collectedData.tags[tagId];
+            if (value === undefined || value === null || value === '') continue;
+
+            if (tagConfig.type === 'checkbox') {
+                if (Array.isArray(value)) {
+                    value.forEach(v => {
+                        const cb = document.querySelector(`input[name="tag-${tagId}"][value="${v}"]`);
+                        if (cb) cb.checked = true;
+                    });
+                }
+            } else if (tagConfig.type === 'configurable_dropdown' || (tagConfig.type === 'dropdown' && tagConfig.allowCustom)) {
+                const select = document.getElementById(`tag-${tagId}`);
+                if (select) {
+                    // Check if value is one of the options
+                    const optionExists = Array.from(select.options).some(o => o.value === value);
+                    if (optionExists) {
+                        select.value = value;
+                    } else {
+                        // Set to custom
+                        select.value = '__custom__';
+                        const customInput = document.getElementById(`tag-${tagId}-custom`);
+                        if (customInput) {
+                            customInput.value = value;
+                            customInput.style.display = 'block';
+                        }
+                    }
+                }
+            } else {
+                const element = document.getElementById(`tag-${tagId}`);
+                if (element) {
+                    element.value = value;
+                }
+            }
+        }
+    }
+
+    /**
      * Show bbox collection with checklist interface
      */
     showBBoxStep() {
+        // Capture current form values before re-rendering
+        this.captureCurrentTagValues();
+
         const panel = document.querySelector('.annotation-panel');
         const currentStep = this.currentScenario.steps[this.currentStep];
 
@@ -301,7 +415,7 @@ class ScenarioWorkflow {
                     <h3>Bounding Boxes</h3>
                     ${checklistHTML}
                     ${this.currentScenario.allowDynamicSteps ? `
-                        <button onclick="scenarioWorkflow.addDynamicStep()" class="btn-small" style="margin-top: 8px; width: 100%;">+ Add Vehicle Marking</button>
+                        <button onclick="scenarioWorkflow.addDynamicStep()" class="btn-small" style="margin-top: 8px; width: 100%;">+ Add ${this.currentScenario.dynamicStepTemplate?.label || 'Item'}</button>
                     ` : ''}
                 </div>
 
@@ -340,17 +454,23 @@ class ScenarioWorkflow {
                     </div>
                 </div>
 
+                ${this.buildTagsHTML()}
+
                 <div class="form-group">
                     <label>Notes (optional)</label>
                     <textarea id="scenario-notes" rows="3" placeholder="Add any observations or notes about this annotation...">${this.collectedData.notes || ''}</textarea>
                 </div>
 
                 <div class="form-actions">
-                    <button onclick="scenarioWorkflow.saveFromEditor()" class="btn-primary" id="save-annotation-btn">Save Annotation</button>
+                    <button onclick="saveAndClose()" class="btn-primary" id="save-annotation-btn">Save & Close</button>
+                    <button onclick="saveAndNext()" class="btn-primary" id="save-next-btn" style="background: #27ae60;">Save & Next</button>
                     <button onclick="scenarioWorkflow.cancel()" class="btn-secondary">Cancel</button>
                 </div>
             </div>
         `;
+
+        // Restore tag values that were captured before re-render
+        this.restoreTagValues();
 
         panel.scrollTop = 0;
 
@@ -360,6 +480,7 @@ class ScenarioWorkflow {
         // Enable drawing mode if current step doesn't have data
         const hasData = this.collectedData.bboxes[currentStep.id] ||
                        this.collectedData.notVisible.includes(currentStep.id) ||
+                       this.collectedData.notPresent?.includes(currentStep.id) ||
                        this.collectedData.skipped?.includes(currentStep.id);
 
         if (!hasData) {
@@ -403,10 +524,14 @@ class ScenarioWorkflow {
         }
 
         saveBtn.disabled = !allRequiredComplete;
+        const saveNextBtn = document.getElementById('save-next-btn');
+        if (saveNextBtn) saveNextBtn.disabled = !allRequiredComplete;
         if (!allRequiredComplete) {
             saveBtn.title = 'Complete all required bounding boxes first';
+            if (saveNextBtn) saveNextBtn.title = 'Complete all required bounding boxes first';
         } else {
             saveBtn.title = '';
+            if (saveNextBtn) saveNextBtn.title = '';
         }
     }
 
@@ -415,35 +540,47 @@ class ScenarioWorkflow {
      */
     waitForBBox(stepId) {
         console.log('[Scenario Workflow] Waiting for bbox to be drawn for step:', stepId);
-        const checkInterval = setInterval(() => {
-            if (window.currentBBox && window.currentBBox.width > 5 && window.currentBBox.height > 5) {
-                console.log('[Scenario Workflow] BBox drawn:', window.currentBBox);
-                clearInterval(checkInterval);
 
-                // Save bbox
-                this.collectedData.bboxes[stepId] = { ...window.currentBBox };
-                console.log('[Scenario Workflow] BBox saved for step:', stepId, this.collectedData.bboxes[stepId]);
-                console.log('[Scenario Workflow] Total bboxes collected:', Object.keys(this.collectedData.bboxes).length, Object.keys(this.collectedData.bboxes));
+        // Clean up any previous polling interval (backward compat)
+        if (this.bboxWaitInterval) {
+            clearInterval(this.bboxWaitInterval);
+            this.bboxWaitInterval = null;
+        }
 
-                // Disable drawing mode
-                window.isDrawingMode = false;
-                const drawBtn = document.getElementById('draw-mode-btn');
-                if (drawBtn) {
-                    drawBtn.classList.remove('active');
-                }
-                if (window.bboxCanvas) {
-                    window.bboxCanvas.classList.remove('drawing');
-                }
-                window.currentBBox = null;
+        // Use direct callback instead of polling to avoid race condition
+        // where drawing mode gets disabled between mouseUp and poll tick
+        window.onBBoxDrawn = (bbox) => {
+            if (!bbox || bbox.width <= 5 || bbox.height <= 5) return;
 
-                // Auto-advance to next pending step
-                console.log('[Scenario Workflow] Auto-advancing to next pending step after bbox drawn');
-                this.autoAdvanceToNextPending();
+            window.onBBoxDrawn = null; // One-shot callback
+
+            console.log('[Scenario Workflow] BBox drawn (callback):', bbox);
+
+            // Save bbox
+            this.collectedData.bboxes[stepId] = {
+                x: bbox.x,
+                y: bbox.y,
+                width: bbox.width,
+                height: bbox.height
+            };
+            console.log('[Scenario Workflow] BBox saved for step:', stepId, this.collectedData.bboxes[stepId]);
+            console.log('[Scenario Workflow] Total bboxes collected:', Object.keys(this.collectedData.bboxes).length, Object.keys(this.collectedData.bboxes));
+
+            // Disable drawing mode
+            window.isDrawingMode = false;
+            const drawBtn = document.getElementById('draw-mode-btn');
+            if (drawBtn) {
+                drawBtn.classList.remove('active');
             }
-        }, 100);
+            if (window.bboxCanvas) {
+                window.bboxCanvas.classList.remove('drawing');
+            }
+            window.currentBBox = null;
 
-        // Store interval ID so we can cancel it
-        this.bboxWaitInterval = checkInterval;
+            // Auto-advance to next pending step
+            console.log('[Scenario Workflow] Auto-advancing to next pending step after bbox drawn');
+            this.autoAdvanceToNextPending();
+        };
     }
 
     /**
@@ -465,7 +602,9 @@ class ScenarioWorkflow {
         // Cancel bbox waiting
         if (this.bboxWaitInterval) {
             clearInterval(this.bboxWaitInterval);
+            this.bboxWaitInterval = null;
         }
+        window.onBBoxDrawn = null;
 
         // Clear current bbox being drawn
         window.currentBBox = null;
@@ -502,7 +641,9 @@ class ScenarioWorkflow {
         // Cancel bbox waiting
         if (this.bboxWaitInterval) {
             clearInterval(this.bboxWaitInterval);
+            this.bboxWaitInterval = null;
         }
+        window.onBBoxDrawn = null;
 
         // Clear current bbox being drawn
         window.currentBBox = null;
@@ -538,7 +679,9 @@ class ScenarioWorkflow {
         // Cancel bbox waiting
         if (this.bboxWaitInterval) {
             clearInterval(this.bboxWaitInterval);
+            this.bboxWaitInterval = null;
         }
+        window.onBBoxDrawn = null;
 
         // Clear current bbox being drawn
         window.currentBBox = null;
@@ -620,7 +763,9 @@ class ScenarioWorkflow {
         // Cancel any bbox waiting from previous step
         if (this.bboxWaitInterval) {
             clearInterval(this.bboxWaitInterval);
+            this.bboxWaitInterval = null;
         }
+        window.onBBoxDrawn = null;
 
         // Clear any partially drawn bbox
         window.currentBBox = null;
@@ -924,10 +1069,12 @@ class ScenarioWorkflow {
         // Instead of showing the old review page, show the checklist
         // Set current step to first step or first incomplete step
         this.currentStep = 0;
-        for (let i = 0; i < this.currentScenario.steps.length; i++) {
-            const step = this.currentScenario.steps[i];
+        const steps = this.currentScenario.steps || [];
+        for (let i = 0; i < steps.length; i++) {
+            const step = steps[i];
             const hasData = this.collectedData.bboxes[step.id] ||
                            this.collectedData.notVisible.includes(step.id) ||
+                           this.collectedData.notPresent?.includes(step.id) ||
                            this.collectedData.skipped?.includes(step.id);
             if (!hasData) {
                 this.currentStep = i;
@@ -935,7 +1082,81 @@ class ScenarioWorkflow {
             }
         }
 
-        this.showBBoxStep();
+        // Only show bbox step if this scenario has bbox steps
+        if (steps.length > 0) {
+            this.showBBoxStep();
+        } else {
+            // Non-bbox scenario (e.g., location_context) - show simplified editor
+            this.showNoBBoxEditor();
+        }
+    }
+
+    /**
+     * Show simplified editor for scenarios without bbox steps (e.g., location_context)
+     */
+    showNoBBoxEditor() {
+        const panel = document.querySelector('.annotation-panel');
+
+        // Build UI using DOM methods for safety
+        panel.textContent = '';
+        const form = document.createElement('div');
+        form.className = 'inline-annotation-form';
+
+        const header = document.createElement('div');
+        header.className = 'form-header';
+        const h2 = document.createElement('h2');
+        h2.textContent = this.currentScenario.label;
+        const cancelBtn1 = document.createElement('button');
+        cancelBtn1.textContent = 'Cancel';
+        cancelBtn1.className = 'btn-secondary';
+        cancelBtn1.addEventListener('click', () => scenarioWorkflow.cancel());
+        header.appendChild(h2);
+        header.appendChild(cancelBtn1);
+
+        // Add tag fields
+        const tagsWrapper = document.createElement('div');
+        tagsWrapper.innerHTML = this.buildTagsHTML();
+
+        const notesGroup = document.createElement('div');
+        notesGroup.className = 'form-group';
+        const notesLabel = document.createElement('label');
+        notesLabel.textContent = 'Notes (optional)';
+        const notesArea = document.createElement('textarea');
+        notesArea.id = 'scenario-notes';
+        notesArea.rows = 3;
+        notesArea.placeholder = 'Add any observations or notes about this annotation...';
+        notesArea.value = this.collectedData.notes || '';
+        notesGroup.appendChild(notesLabel);
+        notesGroup.appendChild(notesArea);
+
+        const actions = document.createElement('div');
+        actions.className = 'form-actions';
+        const saveBtn = document.createElement('button');
+        saveBtn.textContent = 'Save & Close';
+        saveBtn.className = 'btn-primary';
+        saveBtn.id = 'save-annotation-btn';
+        saveBtn.addEventListener('click', () => saveAndClose());
+        const saveNextBtn = document.createElement('button');
+        saveNextBtn.textContent = 'Save & Next';
+        saveNextBtn.className = 'btn-primary';
+        saveNextBtn.id = 'save-next-btn';
+        saveNextBtn.style.background = '#27ae60';
+        saveNextBtn.addEventListener('click', () => saveAndNext());
+        const cancelBtn2 = document.createElement('button');
+        cancelBtn2.textContent = 'Cancel';
+        cancelBtn2.className = 'btn-secondary';
+        cancelBtn2.addEventListener('click', () => scenarioWorkflow.cancel());
+        actions.appendChild(saveBtn);
+        actions.appendChild(saveNextBtn);
+        actions.appendChild(cancelBtn2);
+
+        form.appendChild(header);
+        form.appendChild(tagsWrapper);
+        form.appendChild(notesGroup);
+        form.appendChild(actions);
+        panel.appendChild(form);
+
+        panel.scrollTop = 0;
     }
 
     /**
@@ -961,6 +1182,11 @@ class ScenarioWorkflow {
             window.bboxCanvas.removeEventListener('mousemove', this.canvasMouseMove);
             window.bboxCanvas.removeEventListener('mouseup', this.canvasMouseUp);
         }
+        if (this.canvasTouchStart) {
+            window.bboxCanvas.removeEventListener('touchstart', this.canvasTouchStart);
+            window.bboxCanvas.removeEventListener('touchmove', this.canvasTouchMove);
+            window.bboxCanvas.removeEventListener('touchend', this.canvasTouchEnd);
+        }
 
         // Create bound event handlers
         this.canvasMouseDown = this.handleEditMouseDown.bind(this);
@@ -970,6 +1196,35 @@ class ScenarioWorkflow {
         window.bboxCanvas.addEventListener('mousedown', this.canvasMouseDown);
         window.bboxCanvas.addEventListener('mousemove', this.canvasMouseMove);
         window.bboxCanvas.addEventListener('mouseup', this.canvasMouseUp);
+
+        // Touch event handlers for bbox editing on mobile
+        if (this.canvasTouchStart) {
+            window.bboxCanvas.removeEventListener('touchstart', this.canvasTouchStart);
+            window.bboxCanvas.removeEventListener('touchmove', this.canvasTouchMove);
+            window.bboxCanvas.removeEventListener('touchend', this.canvasTouchEnd);
+        }
+
+        this.canvasTouchStart = ((e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            this.handleEditMouseDown({ clientX: touch.clientX, clientY: touch.clientY });
+        }).bind(this);
+
+        this.canvasTouchMove = ((e) => {
+            e.preventDefault();
+            const touch = e.touches[0];
+            this.handleEditMouseMove({ clientX: touch.clientX, clientY: touch.clientY });
+        }).bind(this);
+
+        this.canvasTouchEnd = ((e) => {
+            e.preventDefault();
+            const touch = e.changedTouches[0];
+            this.handleEditMouseUp({ clientX: touch.clientX, clientY: touch.clientY });
+        }).bind(this);
+
+        window.bboxCanvas.addEventListener('touchstart', this.canvasTouchStart, { passive: false });
+        window.bboxCanvas.addEventListener('touchmove', this.canvasTouchMove, { passive: false });
+        window.bboxCanvas.addEventListener('touchend', this.canvasTouchEnd, { passive: false });
 
         // Ensure canvas is visible and interactive
         window.bboxCanvas.style.pointerEvents = 'all';
@@ -1206,30 +1461,55 @@ class ScenarioWorkflow {
     }
 
     /**
-     * Show time range tag form
+     * Build HTML for tag form fields
+     * Returns HTML string for all tag form fields defined in this.currentScenario.tags
      */
-    showTimeRangeForm() {
-        const panel = document.querySelector('.annotation-panel');
+    buildTagsHTML() {
         const tags = this.currentScenario.tags;
+        if (!tags || Object.keys(tags).length === 0) return '';
 
-        let tagsHTML = '';
+        let tagsHTML = '<div class="scenario-tags"><h3>Details</h3>';
         for (const [tagId, tagConfig] of Object.entries(tags)) {
             const required = tagConfig.required ? ' <span class="required">*</span>' : '';
 
             if (tagConfig.type === 'dropdown') {
                 let optionsHTML = '<option value="">-- Select --</option>';
-                tagConfig.options.forEach(opt => {
-                    optionsHTML += `<option value="${opt}">${opt.replace(/_/g, ' ')}</option>`;
-                });
 
-                tagsHTML += `
-                    <div class="form-group">
-                        <label>${tagConfig.label}${required}</label>
-                        <select id="tag-${tagId}" ${tagConfig.required ? 'required' : ''}>
-                            ${optionsHTML}
-                        </select>
-                    </div>
-                `;
+                // Handle dynamic options
+                if (tagConfig.dynamicOptions) {
+                    // Options will be loaded asynchronously
+                    tagsHTML += `
+                        <div class="form-group">
+                            <label>${tagConfig.label}${required}</label>
+                            <select id="tag-${tagId}" ${tagConfig.required ? 'required' : ''} data-dynamic-options="${tagConfig.dynamicOptions}" data-tag-id="${tagId}">
+                                ${optionsHTML}
+                            </select>
+                        </div>
+                    `;
+
+                    // Load dynamic options after rendering
+                    setTimeout(() => this.loadDynamicOptionsForTag(tagId, tagConfig), 0);
+                } else {
+                    // Static options
+                    tagConfig.options.forEach(opt => {
+                        optionsHTML += `<option value="${opt}">${opt.replace(/_/g, ' ')}</option>`;
+                    });
+
+                    // Handle allowCustom for static dropdowns
+                    if (tagConfig.allowCustom) {
+                        optionsHTML += `<option value="__custom__">Other...</option>`;
+                    }
+
+                    tagsHTML += `
+                        <div class="form-group">
+                            <label>${tagConfig.label}${required}</label>
+                            <select id="tag-${tagId}" ${tagConfig.required ? 'required' : ''} ${tagConfig.allowCustom ? `onchange="scenarioWorkflow.handleCustomDropdown(this, '${tagId}')"` : ''}>
+                                ${optionsHTML}
+                            </select>
+                            ${tagConfig.allowCustom ? `<input type="text" id="tag-${tagId}-custom" style="display:none; margin-top:5px;" placeholder="Enter custom value">` : ''}
+                        </div>
+                    `;
+                }
             } else if (tagConfig.type === 'checkbox') {
                 let checkboxesHTML = '';
                 tagConfig.options.forEach(opt => {
@@ -1306,8 +1586,26 @@ class ScenarioWorkflow {
                         <textarea id="tag-${tagId}" rows="4" placeholder="${tagConfig.placeholder || ''}" ${tagConfig.required ? 'required' : ''}></textarea>
                     </div>
                 `;
+            } else {
+                // Default: text input
+                tagsHTML += `
+                    <div class="form-group">
+                        <label>${tagConfig.label}${required}</label>
+                        <input type="text" id="tag-${tagId}" placeholder="${tagConfig.placeholder || ''}" ${tagConfig.required ? 'required' : ''}>
+                    </div>
+                `;
             }
         }
+        tagsHTML += '</div>';
+        return tagsHTML;
+    }
+
+    /**
+     * Show time range tag form
+     */
+    showTimeRangeForm() {
+        const panel = document.querySelector('.annotation-panel');
+        const tagsHTML = this.buildTagsHTML();
 
         panel.innerHTML = `
             <div class="inline-annotation-form">
@@ -1359,6 +1657,15 @@ class ScenarioWorkflow {
                 this.collectedData.tags[tagId] = values;
             } else if (tagConfig.type === 'configurable_dropdown') {
                 // Check if custom value was entered
+                const select = document.getElementById(`tag-${tagId}`);
+                const customInput = document.getElementById(`tag-${tagId}-custom`);
+                if (select && select.value === '__custom__' && customInput) {
+                    this.collectedData.tags[tagId] = customInput.value;
+                } else if (select) {
+                    this.collectedData.tags[tagId] = select.value;
+                }
+            } else if (tagConfig.type === 'dropdown' && tagConfig.allowCustom) {
+                // Handle dropdown with allowCustom (like location_name)
                 const select = document.getElementById(`tag-${tagId}`);
                 const customInput = document.getElementById(`tag-${tagId}-custom`);
                 if (select && select.value === '__custom__' && customInput) {
@@ -1477,6 +1784,8 @@ class ScenarioWorkflow {
                     scenario: this.currentScenario.id,
                     bboxes: this.collectedData.bboxes,
                     notVisible: this.collectedData.notVisible,
+                    notPresent: this.collectedData.notPresent || [],
+                    skipped: this.collectedData.skipped || [],
                     comment: this.collectedData.notes || notes,
                     ...this.collectedData.tags
                 };
@@ -1503,8 +1812,59 @@ class ScenarioWorkflow {
                 }
 
                 // Success - reload and reset
+                const savedScenarioId = this.currentScenario ? this.currentScenario.id : null;
+                const savedFrameData = this.extractedFrameData;
+                const allBboxes = JSON.parse(JSON.stringify(this.collectedData.bboxes));
+
+                // For person_identification (new annotations only), create a separate annotation for each additional person
+                const personQueue = [];
+                const isNewAnnotation = !this.annotationIdBeingEdited;
+                if (savedScenarioId === 'person_identification' && isNewAnnotation) {
+                    // Primary person already saved as annotationId
+                    personQueue.push({ annotationId: annotationId, bbox: allBboxes[primaryBBoxKey] });
+
+                    // Create annotations for additional people
+                    for (const [stepId, bbox] of Object.entries(allBboxes)) {
+                        if (stepId === primaryBBoxKey) continue; // already saved
+                        try {
+                            const extraResp = await fetch(`/api/videos/${currentVideoId}/keyframe-annotations`, {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify({
+                                    timestamp: this.startTime,
+                                    bbox_x: bbox.x,
+                                    bbox_y: bbox.y,
+                                    bbox_width: bbox.width,
+                                    bbox_height: bbox.height,
+                                    activity_tag: 'person_identification',
+                                    moment_tag: null,
+                                    is_negative: false,
+                                    comment: notes || ''
+                                })
+                            });
+                            const extraData = await extraResp.json();
+                            if (extraData.success) {
+                                personQueue.push({ annotationId: extraData.annotation_id, bbox: bbox });
+                                console.log('[Scenario Workflow] Created annotation for', stepId, ':', extraData.annotation_id);
+                            }
+                        } catch (err) {
+                            console.error('[Scenario Workflow] Failed to create annotation for', stepId, err);
+                        }
+                    }
+                }
+
                 this.cancel();
                 loadKeyframeAnnotations();
+
+                // If person_identification scenario (new only), iterate through identification queue
+                if (savedScenarioId === 'person_identification' && isNewAnnotation && personQueue.length > 0) {
+                    this._savedFrameData = savedFrameData;
+                    this._personQueue = personQueue;
+                    this._personQueueIndex = 0;
+                    this.showNextPersonIdentify();
+                } else if (window._saveAction) {
+                    navigateAfterSave();
+                }
             } else {
                 alert('Error saving annotation: ' + (data.error || 'Unknown error'));
             }
@@ -1582,6 +1942,9 @@ class ScenarioWorkflow {
                 // Success - reload and reset
                 this.cancel();
                 loadTimeRangeTags();
+                if (window._saveAction) {
+                    navigateAfterSave();
+                }
             } else {
                 alert('Error saving tag: ' + (data.error || 'Unknown error'));
             }
@@ -1630,11 +1993,15 @@ class ScenarioWorkflow {
             this.annotationIdBeingEdited = annotationId;
 
             // Extract frame at the annotation timestamp
-            videoPlayer.currentTime = timestamp;
-            await new Promise(resolve => {
-                videoPlayer.addEventListener('seeked', resolve, { once: true });
-            });
-            this.extractCurrentFrame();
+            if (window.isImageMode) {
+                this.extractCurrentFrame();
+            } else {
+                videoPlayer.currentTime = timestamp;
+                await new Promise(resolve => {
+                    videoPlayer.addEventListener('seeked', resolve, { once: true });
+                });
+                this.extractCurrentFrame();
+            }
 
             // Load scenario configuration
             const scenarioId = tags.scenario || anno.activity_tag;
@@ -1691,8 +2058,8 @@ class ScenarioWorkflow {
             let bboxes = tags.bboxes || {};
             if (Object.keys(bboxes).length === 0 && anno.bbox_x !== undefined) {
                 console.log('[Scenario Workflow] No structured bboxes found, creating from main annotation bbox');
-                // Create a bbox for the primary subject (use entire_boat or primary_subject)
-                const primaryKey = this.currentScenario.steps.find(s => s.id === 'entire_boat') ? 'entire_boat' : 'primary_subject';
+                // Create a bbox for the primary subject (use first step ID from scenario)
+                const primaryKey = (this.currentScenario.steps[0] && this.currentScenario.steps[0].id) || 'primary_subject';
                 bboxes[primaryKey] = {
                     x: anno.bbox_x,
                     y: anno.bbox_y,
@@ -1718,9 +2085,10 @@ class ScenarioWorkflow {
             console.log('[Scenario Workflow] Not present items:', this.collectedData.notPresent);
             console.log('[Scenario Workflow] Skipped items:', this.collectedData.skipped);
 
-            // Load tag values
+            // Load tag values (exclude structural keys that are stored separately)
+            const structuralKeys = ['scenario', 'bboxes', 'notVisible', 'notPresent', 'skipped', 'comment'];
             for (const [tagId, tagValue] of Object.entries(tags)) {
-                if (tagId !== 'scenario' && tagId !== 'bboxes' && tagId !== 'notVisible' && tagId !== 'comment') {
+                if (!structuralKeys.includes(tagId)) {
                     this.collectedData.tags[tagId] = tagValue;
                 }
             }
@@ -1929,6 +2297,87 @@ class ScenarioWorkflow {
     }
 
     /**
+     * Handle custom dropdown (show text input for "Other...")
+     */
+    handleCustomDropdown(select, tagId) {
+        const customInput = document.getElementById(`tag-${tagId}-custom`);
+        if (!customInput) return;
+
+        if (select.value === '__custom__') {
+            customInput.style.display = 'block';
+            customInput.focus();
+            customInput.required = select.required;
+            select.required = false;
+        } else {
+            customInput.style.display = 'none';
+            customInput.required = false;
+            select.required = true;
+        }
+    }
+
+    /**
+     * Load dynamic options for a tag from API
+     */
+    async loadDynamicOptionsForTag(tagId, tagConfig) {
+        const selectElement = document.getElementById(`tag-${tagId}`);
+        if (!selectElement || !tagConfig.dynamicOptions) return;
+
+        try {
+            const response = await fetch(tagConfig.dynamicOptions);
+            const data = await response.json();
+
+            let options = [];
+            if (tagConfig.dynamicOptionsMap && typeof tagConfig.dynamicOptionsMap === 'function') {
+                options = tagConfig.dynamicOptionsMap(data);
+            } else if (data.locations) {
+                options = data.locations.map(loc => loc.location_name);
+            }
+
+            // Add fetched options to the select (preserve the "-- Select --" option)
+            options.forEach(opt => {
+                const optionEl = document.createElement('option');
+                optionEl.value = opt;
+                optionEl.textContent = opt;
+                selectElement.appendChild(optionEl);
+            });
+
+            // Add "Other..." option if allowCustom is true
+            if (tagConfig.allowCustom) {
+                const otherOption = document.createElement('option');
+                otherOption.value = '__custom__';
+                otherOption.textContent = 'Other...';
+                selectElement.appendChild(otherOption);
+
+                // Add change handler for custom input
+                selectElement.setAttribute('onchange', `scenarioWorkflow.handleCustomDropdown(this, '${tagId}')`);
+
+                // Add hidden custom input
+                const formGroup = selectElement.closest('.form-group');
+                const customInput = document.createElement('input');
+                customInput.type = 'text';
+                customInput.id = `tag-${tagId}-custom`;
+                customInput.style.cssText = 'display:none; margin-top:5px;';
+                customInput.placeholder = 'Enter custom location name';
+                formGroup.appendChild(customInput);
+            }
+
+            // Auto-populate if camera location is detected
+            if (tagId === 'location_name' && window.currentLocation && window.currentLocation.location_name) {
+                const locationName = window.currentLocation.location_name;
+                // Check if this location exists in the options
+                const matchingOption = Array.from(selectElement.options).find(opt => opt.value === locationName);
+                if (matchingOption) {
+                    selectElement.value = locationName;
+                    console.log('[Scenario Workflow] Auto-populated location_name:', locationName);
+                }
+            }
+
+        } catch (error) {
+            console.error(`Failed to load dynamic options for ${tagId}:`, error);
+        }
+    }
+
+    /**
      * Cancel workflow and restore panel
      */
     cancel() {
@@ -1937,7 +2386,9 @@ class ScenarioWorkflow {
         // Cancel any bbox waiting
         if (this.bboxWaitInterval) {
             clearInterval(this.bboxWaitInterval);
+            this.bboxWaitInterval = null;
         }
+        window.onBBoxDrawn = null;
 
         // Restore video display
         this.restoreVideoDisplay();
@@ -1955,6 +2406,241 @@ class ScenarioWorkflow {
         }
 
         this.reset();
+    }
+
+    /**
+     * Iterate through person identification queue, showing modal for each unidentified person.
+     */
+    showNextPersonIdentify() {
+        if (!this._personQueue || this._personQueueIndex >= this._personQueue.length) {
+            // Done with all people
+            this._personQueue = null;
+            this._personQueueIndex = 0;
+            this._savedFrameData = null;
+            // Navigate if save action was set (Save & Close / Save & Next)
+            if (window._saveAction) {
+                navigateAfterSave();
+            }
+            return;
+        }
+
+        const current = this._personQueue[this._personQueueIndex];
+        this._savedBBox = current.bbox;
+        this.showPersonIdentifyModal(current.annotationId);
+    }
+
+    /**
+     * Show person identification modal after saving a person_identification annotation.
+     * Fetches known persons and lets the user quickly assign a name.
+     */
+    async showPersonIdentifyModal(annotationId) {
+        const modal = document.getElementById('person-identify-modal');
+        if (!modal) return;
+
+        const cropContainer = document.getElementById('person-identify-crop');
+        const knownContainer = document.getElementById('person-identify-known');
+        const nameInput = document.getElementById('person-identify-input');
+        const assignBtn = document.getElementById('person-identify-assign-btn');
+        const skipBtn = document.getElementById('person-identify-skip');
+
+        // Update header with person counter
+        const headerTitle = modal.querySelector('.person-identify-header h3');
+        if (headerTitle && this._personQueue && this._personQueue.length > 1) {
+            headerTitle.textContent = `Identify Person (${this._personQueueIndex + 1} of ${this._personQueue.length})`;
+        } else if (headerTitle) {
+            headerTitle.textContent = 'Identify Person';
+        }
+
+        // Update skip button text based on queue position
+        if (this._personQueue && this._personQueueIndex < this._personQueue.length - 1) {
+            skipBtn.textContent = 'Skip';
+        } else {
+            skipBtn.textContent = 'Done';
+        }
+
+        // Build the crop display: full frame with bbox + cropped enlargement
+        cropContainer.textContent = '';
+        const frameData = this._savedFrameData || this.extractedFrameData;
+        const bbox = this._savedBBox;
+
+        if (frameData && bbox) {
+            // Create a container with two views side by side
+            const cropLayout = document.createElement('div');
+            cropLayout.style.cssText = 'display: flex; gap: 12px; align-items: center; justify-content: center; flex-wrap: wrap;';
+
+            // Full frame with bbox overlay
+            const contextView = document.createElement('div');
+            contextView.style.cssText = 'position: relative; flex: 1; min-width: 200px; max-width: 50%;';
+            const contextCanvas = document.createElement('canvas');
+            contextCanvas.style.cssText = 'width: 100%; border-radius: 6px; border: 2px solid #444;';
+            contextView.appendChild(contextCanvas);
+            cropLayout.appendChild(contextView);
+
+            // Cropped enlargement
+            const cropView = document.createElement('div');
+            cropView.style.cssText = 'flex: 1; min-width: 120px; max-width: 50%; display: flex; align-items: center; justify-content: center;';
+            const cropCanvas = document.createElement('canvas');
+            cropCanvas.style.cssText = 'max-width: 100%; max-height: 240px; border-radius: 6px; border: 2px solid #4CAF50;';
+            cropView.appendChild(cropCanvas);
+            cropLayout.appendChild(cropView);
+
+            cropContainer.appendChild(cropLayout);
+
+            // Draw once the image loads
+            const img = new Image();
+            img.onload = () => {
+                const imgW = img.naturalWidth;
+                const imgH = img.naturalHeight;
+
+                // Bbox is already in native pixel coords (same space as the frame)
+                const bx = Math.round(bbox.x);
+                const by = Math.round(bbox.y);
+                const bw = Math.round(bbox.width);
+                const bh = Math.round(bbox.height);
+
+                // Context canvas: full frame with bbox
+                contextCanvas.width = imgW;
+                contextCanvas.height = imgH;
+                const ctxCtx = contextCanvas.getContext('2d');
+                ctxCtx.drawImage(img, 0, 0);
+                // Draw bbox rectangle
+                ctxCtx.strokeStyle = '#4CAF50';
+                ctxCtx.lineWidth = Math.max(3, Math.round(imgW / 200));
+                ctxCtx.strokeRect(bx, by, bw, bh);
+                // Dim area outside bbox
+                ctxCtx.fillStyle = 'rgba(0, 0, 0, 0.4)';
+                ctxCtx.fillRect(0, 0, imgW, by); // top
+                ctxCtx.fillRect(0, by + bh, imgW, imgH - by - bh); // bottom
+                ctxCtx.fillRect(0, by, bx, bh); // left
+                ctxCtx.fillRect(bx + bw, by, imgW - bx - bw, bh); // right
+
+                // Crop canvas: just the person, enlarged
+                cropCanvas.width = bw;
+                cropCanvas.height = bh;
+                const cropCtx = cropCanvas.getContext('2d');
+                cropCtx.drawImage(img, bx, by, bw, bh, 0, 0, bw, bh);
+            };
+            img.src = frameData;
+        } else if (frameData) {
+            // Fallback: just show full frame if no bbox
+            const img = document.createElement('img');
+            img.src = frameData;
+            img.alt = 'Captured frame';
+            img.style.cssText = 'max-height: 180px; max-width: 100%; border-radius: 6px; border: 2px solid #444;';
+            cropContainer.appendChild(img);
+        }
+
+        nameInput.value = '';
+        modal.style.display = 'flex';
+
+        // Close handler - advances to next person in queue
+        const closeModal = () => {
+            modal.style.display = 'none';
+            this._savedBBox = null;
+            // Advance to next person in queue
+            if (this._personQueue) {
+                this._personQueueIndex++;
+                this.showNextPersonIdentify();
+            }
+        };
+
+        skipBtn.onclick = closeModal;
+        modal.addEventListener('click', (e) => {
+            if (e.target === modal) closeModal();
+        }, { once: true });
+
+        // Assign handler
+        const assignName = async (name) => {
+            if (!name || !name.trim()) return;
+            try {
+                const resp = await fetch('/api/person-detections/assign-name', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        detection_ids: [annotationId],
+                        person_name: name.trim()
+                    })
+                });
+                const result = await resp.json();
+                if (result.success) {
+                    console.log('[Person Identify] Assigned name:', name.trim());
+                    loadKeyframeAnnotations();
+                } else {
+                    console.error('[Person Identify] Assign failed:', result.error);
+                }
+            } catch (err) {
+                console.error('[Person Identify] Error assigning name:', err);
+            }
+            closeModal();
+        };
+
+        assignBtn.onclick = () => assignName(nameInput.value);
+        nameInput.onkeydown = (e) => {
+            if (e.key === 'Enter') assignName(nameInput.value);
+        };
+
+        // Fetch known persons
+        knownContainer.textContent = '';
+        const loadingDiv = document.createElement('div');
+        loadingDiv.className = 'person-identify-loading';
+        loadingDiv.textContent = 'Loading known persons...';
+        knownContainer.appendChild(loadingDiv);
+
+        try {
+            const resp = await fetch('/api/person-detections');
+            const data = await resp.json();
+
+            knownContainer.textContent = '';
+
+            if (data.success && data.people && data.people.length > 0) {
+                const knownPeople = data.people.filter(p => p.name && p.name !== 'Unknown');
+
+                if (knownPeople.length === 0) {
+                    const empty = document.createElement('div');
+                    empty.className = 'person-identify-empty';
+                    empty.textContent = 'No known persons yet. Type a name above.';
+                    knownContainer.appendChild(empty);
+                    return;
+                }
+
+                const grid = document.createElement('div');
+                grid.className = 'person-identify-grid';
+
+                for (const person of knownPeople) {
+                    const card = document.createElement('div');
+                    card.className = 'person-identify-card';
+                    card.addEventListener('click', () => assignName(person.name));
+
+                    const nameEl = document.createElement('div');
+                    nameEl.className = 'person-name';
+                    nameEl.textContent = person.name;
+                    card.appendChild(nameEl);
+
+                    const countEl = document.createElement('div');
+                    countEl.className = 'person-count';
+                    countEl.textContent = person.count + ' detection' + (person.count !== 1 ? 's' : '');
+                    card.appendChild(countEl);
+
+                    grid.appendChild(card);
+                }
+
+                knownContainer.appendChild(grid);
+            } else {
+                const empty = document.createElement('div');
+                empty.className = 'person-identify-empty';
+                empty.textContent = 'No known persons yet. Type a name above.';
+                knownContainer.appendChild(empty);
+            }
+        } catch (err) {
+            console.error('[Person Identify] Error loading persons:', err);
+            knownContainer.textContent = '';
+            const errDiv = document.createElement('div');
+            errDiv.className = 'person-identify-empty';
+            errDiv.textContent = 'Could not load known persons.';
+            knownContainer.appendChild(errDiv);
+        }
+
+        nameInput.focus();
     }
 }
 

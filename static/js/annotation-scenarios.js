@@ -130,48 +130,20 @@ const annotationScenarios = {
         }
     },
 
-    // Person identification
+    // Person identification — bbox a person and feed into person-manager
     'person_identification': {
         label: 'Person Identification',
-        description: 'Identify and annotate people in the scene',
+        description: 'Draw a bounding box around a person to identify them via Person Manager',
         category: 'Person Activity',
         requiresBoundingBox: true,
         allowEventBoundaries: false,
-        allowDynamicSteps: true, // Allow annotating multiple people
+        allowDynamicSteps: true, // Allow identifying multiple people
         steps: [
             {
                 id: 'person_full_body',
-                label: 'Person - Full Body',
-                prompt: 'Draw bounding box around the entire person (even if partially occluded)',
+                label: 'Person',
+                prompt: 'Draw bounding box around the person you want to identify',
                 optional: false,
-                notVisibleOption: false
-            },
-            {
-                id: 'face',
-                label: 'Face',
-                prompt: 'Draw tight box around face (when visible and resolution permits)',
-                optional: true,
-                notVisibleOption: true
-            },
-            {
-                id: 'head',
-                label: 'Head',
-                prompt: 'Draw box around head (when face isn\'t clear enough for face box)',
-                optional: true,
-                notVisibleOption: true
-            },
-            {
-                id: 'upper_body',
-                label: 'Upper Body',
-                prompt: 'Draw box around torso/shoulders (helps with partial occlusions)',
-                optional: true,
-                notVisibleOption: false
-            },
-            {
-                id: 'lower_body',
-                label: 'Lower Body',
-                prompt: 'Draw box around legs/hips (for tracking when upper body hidden)',
-                optional: true,
                 notVisibleOption: false
             }
         ],
@@ -182,76 +154,47 @@ const annotationScenarios = {
             optional: true,
             notVisibleOption: false
         },
-        tags: {
-            'person_name': {
-                type: 'name_autocomplete',
-                label: 'Person Name',
-                placeholder: 'Enter person name (or "Unknown")',
-                required: false,
-                showRecentNames: true,
-                recentCount: 10
-            },
-            'occlusion_level': {
-                type: 'dropdown',
-                label: 'Occlusion Level',
-                options: ['none', 'partial', 'heavy'],
-                required: false
-            },
-            'pose': {
-                type: 'dropdown',
-                label: 'Pose',
-                options: ['standing', 'sitting', 'crouching', 'lying', 'bending', 'kneeling'],
-                required: false
-            },
-            'visibility_quality': {
-                type: 'dropdown',
-                label: 'Visibility Quality',
-                options: ['clear', 'blurry', 'dark', 'backlit', 'motion_blur'],
-                required: false
-            },
-            'distance_category': {
-                type: 'dropdown',
-                label: 'Distance Category',
-                options: ['close', 'medium', 'far'],
-                required: false
-            },
-            'person_role': {
-                type: 'dropdown',
-                label: 'Person Role',
-                options: ['boat_operator', 'passenger', 'vehicle_driver', 'pedestrian', 'authority', 'bystander', 'other'],
-                required: false
-            },
-            'person_activity': {
-                type: 'dropdown',
-                label: 'Activity',
-                options: ['standing', 'walking', 'running', 'sitting', 'operating_vehicle', 'operating_boat', 'loading_unloading', 'observing', 'other'],
-                required: false
-            },
-            'clothing_color': {
-                type: 'dropdown',
-                label: 'Clothing Color (primary)',
-                options: ['white', 'black', 'gray', 'red', 'blue', 'green', 'yellow', 'orange', 'brown', 'multicolor', 'unclear'],
-                required: false
-            },
-            'safety_equipment': {
-                type: 'checkbox',
-                label: 'Safety Equipment Visible',
-                options: ['life_jacket', 'helmet', 'high_vis_vest', 'safety_harness', 'gloves'],
-                required: false
-            },
-            'face_visibility': {
-                type: 'dropdown',
-                label: 'Face Visibility',
-                options: ['clearly_visible', 'partially_visible', 'obscured', 'not_visible', 'back_to_camera'],
-                required: false
-            },
-            'person_count': {
-                type: 'dropdown',
-                label: 'Total People in Scene',
-                options: ['1', '2', '3', '4', '5-10', '10+'],
-                required: false
+        tags: {}
+    },
+
+    // AI-detected person (from auto-detect)
+    'person_detection': {
+        label: 'Person Detection',
+        description: 'AI-detected person bounding box',
+        category: 'Person Activity',
+        requiresBoundingBox: true,
+        allowEventBoundaries: false,
+        allowDynamicSteps: false,
+        steps: [
+            {
+                id: 'person_full_body',
+                label: 'Person',
+                prompt: 'Bounding box around detected person',
+                optional: false,
+                notVisibleOption: false
             }
-        }
+        ],
+        tags: {}
+    },
+
+    // AI-detected face (from auto-detect)
+    'face_detection': {
+        label: 'Face Detection',
+        description: 'AI-detected face bounding box',
+        category: 'Person Activity',
+        requiresBoundingBox: true,
+        allowEventBoundaries: false,
+        allowDynamicSteps: false,
+        steps: [
+            {
+                id: 'face',
+                label: 'Face',
+                prompt: 'Bounding box around detected face',
+                optional: false,
+                notVisibleOption: false
+            }
+        ],
+        tags: {}
     },
 
     // Vehicle identification
@@ -292,9 +235,37 @@ const annotationScenarios = {
                 notVisibleOption: true
             },
             {
+                id: 'fleet_number_2',
+                label: 'Fleet Number/ID (2)',
+                prompt: 'Draw box around additional unit number (e.g., opposite door, rear)',
+                optional: true,
+                notVisibleOption: true
+            },
+            {
+                id: 'fleet_number_3',
+                label: 'Fleet Number/ID (3)',
+                prompt: 'Draw box around additional unit number (e.g., roof, bumper)',
+                optional: true,
+                notVisibleOption: true
+            },
+            {
                 id: 'fleet_logo',
                 label: 'Fleet Logo/Markings',
                 prompt: 'Draw box around police badge, company logo, or distinguishing graphics',
+                optional: true,
+                notVisibleOption: true
+            },
+            {
+                id: 'fleet_logo_2',
+                label: 'Fleet Logo/Markings (2)',
+                prompt: 'Draw box around additional logo or marking (e.g., opposite side)',
+                optional: true,
+                notVisibleOption: true
+            },
+            {
+                id: 'fleet_logo_3',
+                label: 'Fleet Logo/Markings (3)',
+                prompt: 'Draw box around additional logo or marking (e.g., rear, roof)',
                 optional: true,
                 notVisibleOption: true
             },
@@ -600,6 +571,20 @@ const annotationScenarios = {
         allowEventBoundaries: false,
         appliesToEntireClip: true,
         tags: {
+            'location_name': {
+                type: 'dropdown',
+                label: 'Location Name',
+                options: [],
+                dynamicOptions: '/api/camera-locations',
+                dynamicOptionsMap: function(data) {
+                    if (data.locations) {
+                        return data.locations.map(function(loc) { return loc.location_name; });
+                    }
+                    return [];
+                },
+                allowCustom: true,
+                required: true
+            },
             'location_type': {
                 type: 'dropdown',
                 label: 'Location Type',

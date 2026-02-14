@@ -7,16 +7,21 @@ const predictionReview = {
     selectedId: null,
     videoId: null,
     bboxSvgOverlay: null,
+    showAll: false,
 
     init(videoId) {
         this.videoId = videoId;
         this.loadPredictions();
     },
 
-    async loadPredictions() {
-        if (!this.videoId) return;
+    async loadPredictions(videoIdOverride) {
+        const vid = videoIdOverride || this.videoId;
+        if (!vid) return;
+        this.videoId = vid;
         try {
-            const resp = await fetch(`/api/ai/predictions/pending?video_id=${this.videoId}`);
+            let url = `/api/ai/predictions/pending?video_id=${vid}`;
+            if (this.showAll) url += '&include_all=1';
+            const resp = await fetch(url);
             const data = await resp.json();
             if (data.success) {
                 this.predictions = data.predictions;
@@ -29,22 +34,29 @@ const predictionReview = {
         }
     },
 
+    async toggleShowAll(checked) {
+        this.showAll = checked;
+        await this.loadPredictions();
+        this.drawAllBboxOverlays();
+    },
+
     updateBadges() {
-        const count = this.predictions.length;
+        const pending = this.predictions.filter(p => p.review_status === 'pending').length;
+        const total = this.predictions.length;
         const badge = document.getElementById('tab-prediction-badge');
         const sectionBadge = document.getElementById('prediction-badge');
         const countDisplay = document.getElementById('prediction-count-display');
 
         if (badge) {
-            badge.textContent = count;
-            badge.style.display = count > 0 ? 'inline-block' : 'none';
+            badge.textContent = pending;
+            badge.style.display = pending > 0 ? 'inline-block' : 'none';
         }
         if (sectionBadge) {
-            sectionBadge.textContent = count;
-            sectionBadge.style.display = count > 0 ? 'inline-block' : 'none';
+            sectionBadge.textContent = pending;
+            sectionBadge.style.display = pending > 0 ? 'inline-block' : 'none';
         }
         if (countDisplay) {
-            countDisplay.textContent = count + ' pending';
+            countDisplay.textContent = this.showAll ? total + ' total (' + pending + ' pending)' : pending + ' pending';
         }
     },
 
@@ -76,7 +88,16 @@ const predictionReview = {
         }
 
         if (filtered.length === 0) {
-            container.innerHTML = '<div class="empty-state" style="padding:30px;"><p style="color:#95a5a6;font-size:14px;">No pending predictions</p></div>';
+            const emptyMsg = this.showAll ? 'No predictions for this video' : 'No pending predictions';
+            container.textContent = '';
+            const emptyDiv = document.createElement('div');
+            emptyDiv.className = 'empty-state';
+            emptyDiv.style.padding = '30px';
+            const emptyP = document.createElement('p');
+            emptyP.style.cssText = 'color:#95a5a6;font-size:14px;';
+            emptyP.textContent = emptyMsg;
+            emptyDiv.appendChild(emptyP);
+            container.appendChild(emptyDiv);
             return;
         }
 
@@ -110,6 +131,15 @@ const predictionReview = {
         header.appendChild(scenario);
         header.appendChild(confPill);
 
+        // Show status badge for non-pending predictions
+        if (p.review_status && p.review_status !== 'pending') {
+            const statusBadge = document.createElement('span');
+            const statusColors = {auto_rejected: '#e74c3c', auto_approved: '#27ae60', approved: '#2ecc71', rejected: '#c0392b'};
+            statusBadge.style.cssText = 'font-size:10px;padding:1px 5px;border-radius:3px;margin-left:4px;color:#fff;background:' + (statusColors[p.review_status] || '#95a5a6');
+            statusBadge.textContent = p.review_status.replace('_', ' ');
+            header.appendChild(statusBadge);
+        }
+
         // Meta
         const meta = document.createElement('div');
         meta.className = 'prediction-meta';
@@ -129,17 +159,23 @@ const predictionReview = {
         const btnApprove = document.createElement('button');
         btnApprove.className = 'btn-approve';
         btnApprove.textContent = 'Approve';
+        btnApprove.title = 'Shift+click to quick-approve without follow-up';
         btnApprove.onclick = (e) => {
             e.stopPropagation();
-            this.reviewPrediction(p.id, 'approve');
+            this.reviewPrediction(p.id, 'approve', e.shiftKey);
         };
 
         const btnReject = document.createElement('button');
         btnReject.className = 'btn-reject';
         btnReject.textContent = 'Reject';
+        btnReject.title = 'Shift+click to quick-reject without reason';
         btnReject.onclick = (e) => {
             e.stopPropagation();
-            this.reviewPrediction(p.id, 'reject');
+            if (e.shiftKey) {
+                this.reviewPrediction(p.id, 'reject', false, 'unspecified');
+            } else {
+                this.showRejectReasonPicker(p.id, btnReject);
+            }
         };
 
         const btnCorrect = document.createElement('button');
@@ -174,8 +210,12 @@ const predictionReview = {
             video.currentTime = pred.start_time;
         }
 
-        // Update highlight on SVG overlay
-        this.updateBboxHighlight();
+        // Ensure bbox overlay exists, then highlight selected
+        if (!this.bboxSvgOverlay) {
+            this.drawAllBboxOverlays();
+        } else {
+            this.updateBboxHighlight();
+        }
 
         this.render(document.getElementById('prediction-model-filter')?.value || '');
     },
@@ -226,8 +266,15 @@ const predictionReview = {
             rect.setAttribute('width', p.bbox_width);
             rect.setAttribute('height', p.bbox_height);
             rect.setAttribute('data-pred-id', p.id);
-            rect.setAttribute('class', p.id === this.selectedId ? 'pred-bbox pred-bbox-selected' : 'pred-bbox');
+            const isLowConf = p.review_status === 'auto_rejected';
+            let cls = p.id === this.selectedId ? 'pred-bbox pred-bbox-selected' : 'pred-bbox';
+            if (isLowConf) cls += ' pred-bbox-low-conf';
+            rect.setAttribute('class', cls);
             rect.setAttribute('vector-effect', 'non-scaling-stroke');
+            if (isLowConf) {
+                rect.setAttribute('stroke-dasharray', '8 6');
+                rect.setAttribute('stroke-opacity', '0.6');
+            }
             svg.appendChild(rect);
         });
 
@@ -255,6 +302,18 @@ const predictionReview = {
         }
     },
 
+    /** Reposition SVG overlay to match canvas after resize */
+    repositionBboxOverlay() {
+        if (!this.bboxSvgOverlay) return;
+        const canvas = document.getElementById('bbox-canvas');
+        if (!canvas) return;
+        this.bboxSvgOverlay.style.width = canvas.style.width;
+        this.bboxSvgOverlay.style.height = canvas.style.height;
+        this.bboxSvgOverlay.style.top = canvas.style.top || '50%';
+        this.bboxSvgOverlay.style.left = canvas.style.left || '50%';
+        this.bboxSvgOverlay.style.transform = canvas.style.transform || 'translate(-50%, -50%)';
+    },
+
     /** Called from switchTab to show/hide prediction overlays */
     onTabSwitch(tab) {
         if (tab === 'predictions') {
@@ -264,7 +323,7 @@ const predictionReview = {
         }
     },
 
-    async reviewPrediction(id, action) {
+    async reviewPrediction(id, action, quickApprove) {
         // Grab prediction before removing from list (need scenario/bbox for person identify)
         const pred = this.predictions.find(p => p.id === id);
         try {
@@ -278,19 +337,46 @@ const predictionReview = {
             });
             const data = await resp.json();
             if (data.success) {
-                this.predictions = this.predictions.filter(p => p.id !== id);
-                if (this.selectedId === id) {
-                    this.selectedId = null;
+                // Determine next prediction to auto-select before removing current
+                const modelFilter = document.getElementById('prediction-model-filter')?.value || '';
+                let filtered = this.predictions;
+                if (modelFilter) {
+                    filtered = filtered.filter(p => (p.model_name + ' v' + p.model_version) === modelFilter);
                 }
+                const idx = filtered.findIndex(p => p.id === id);
+
+                this.predictions = this.predictions.filter(p => p.id !== id);
+
+                // Auto-select next prediction in filtered list
+                if (this.selectedId === id) {
+                    const remaining = modelFilter
+                        ? this.predictions.filter(p => (p.model_name + ' v' + p.model_version) === modelFilter)
+                        : this.predictions;
+                    if (remaining.length > 0) {
+                        const nextIdx = Math.min(idx, remaining.length - 1);
+                        const nextPred = remaining[nextIdx];
+                        this.selectedId = nextPred.id;
+                        // Seek video to the next prediction's timestamp
+                        const video = document.getElementById('video-player');
+                        if (video && nextPred.prediction_type === 'keyframe' && nextPred.timestamp != null) {
+                            video.currentTime = nextPred.timestamp;
+                        } else if (video && nextPred.start_time != null) {
+                            video.currentTime = nextPred.start_time;
+                        }
+                    } else {
+                        this.selectedId = null;
+                    }
+                }
+
                 this.drawAllBboxOverlays();
-                this.render(document.getElementById('prediction-model-filter')?.value || '');
+                this.render(modelFilter);
                 this.updateBadges();
                 // Refresh annotations list when a prediction is approved/corrected
                 if ((action === 'approve' || action === 'correct') && typeof loadKeyframeAnnotations === 'function') {
                     loadKeyframeAnnotations();
                 }
-                // Trigger person identification for person-related predictions
-                if ((action === 'approve' || action === 'correct') && data.annotation_id && pred) {
+                // Trigger person identification for person-related predictions (skip on shift+click quick-approve)
+                if (!quickApprove && (action === 'approve' || action === 'correct') && data.annotation_id && pred) {
                     this.triggerPersonIdentify(pred, data.annotation_id);
                 }
             } else {
