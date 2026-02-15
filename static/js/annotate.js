@@ -153,20 +153,63 @@ async function loadAnnotateLibraryBar() {
         const libData = await libRes.json();
         const vidData = await vidRes.json();
         const videoLibIds = (vidData.video?.libraries || []).map(l => l.id);
-        // Video is "uncategorized" if it's not in any non-default library
         const inAnyCustomLib = videoLibIds.length > 0;
-
-        // Only show non-default libraries as toggleable chips
         const nonDefault = libData.libraries.filter(l => !l.is_default);
-        let html = '<span class="lib-label">Libraries:</span>';
+
+        bar.textContent = '';
+
+        // Row 1: Library membership toggles
+        const memberRow = document.createElement('div');
+        memberRow.style.cssText = 'display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+        const memberLabel = document.createElement('span');
+        memberLabel.className = 'lib-label';
+        memberLabel.textContent = 'Libraries:';
+        memberRow.appendChild(memberLabel);
+
         if (!inAnyCustomLib) {
-            html += '<span class="lib-chip active" style="cursor: default; opacity: 0.7;">Uncategorized</span>';
+            const uncatChip = document.createElement('span');
+            uncatChip.className = 'lib-chip active';
+            uncatChip.style.cssText = 'cursor:default;opacity:0.7;';
+            uncatChip.textContent = 'Uncategorized';
+            memberRow.appendChild(uncatChip);
         }
-        html += nonDefault.map(lib => {
+        nonDefault.forEach(lib => {
             const isActive = videoLibIds.includes(lib.id);
-            return `<span class="lib-chip ${isActive ? 'active' : ''}" onclick="toggleAnnotateLibrary(this, ${lib.id})">${lib.name}</span>`;
-        }).join('');
-        bar.innerHTML = html;
+            const chip = document.createElement('span');
+            chip.className = 'lib-chip' + (isActive ? ' active' : '');
+            chip.style.cursor = 'pointer';
+            chip.textContent = lib.name;
+            chip.onclick = () => toggleAnnotateLibrary(chip, lib.id);
+            memberRow.appendChild(chip);
+        });
+        bar.appendChild(memberRow);
+
+        // Row 2: Navigation context (smaller, distinct style)
+        const navRow = document.createElement('div');
+        navRow.style.cssText = 'display:flex;align-items:center;gap:5px;flex-wrap:wrap;margin-top:4px;';
+        const navLabel = document.createElement('span');
+        navLabel.style.cssText = 'font-size:11px;color:#95a5a6;white-space:nowrap;';
+        navLabel.textContent = 'Next/Prev:';
+        navRow.appendChild(navLabel);
+
+        // "All" option
+        const allBtn = document.createElement('span');
+        allBtn.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;' +
+            (!activeAnnotateLibrary ? 'background:#3498db;color:#fff;' : 'background:#ecf0f1;color:#7f8c8d;');
+        allBtn.textContent = 'All Videos';
+        allBtn.onclick = () => setAnnotateNavContext(null);
+        navRow.appendChild(allBtn);
+
+        nonDefault.forEach(lib => {
+            const isNavActive = activeAnnotateLibrary && parseInt(activeAnnotateLibrary) === lib.id;
+            const btn = document.createElement('span');
+            btn.style.cssText = 'font-size:11px;padding:2px 8px;border-radius:10px;cursor:pointer;' +
+                (isNavActive ? 'background:#3498db;color:#fff;' : 'background:#ecf0f1;color:#7f8c8d;');
+            btn.textContent = lib.name;
+            btn.onclick = () => setAnnotateNavContext(lib.id);
+            navRow.appendChild(btn);
+        });
+        bar.appendChild(navRow);
     } catch (e) {
         console.error('Error loading library bar:', e);
     }
@@ -186,12 +229,26 @@ async function toggleAnnotateLibrary(chip, libraryId) {
             });
             chip.classList.add('active');
         }
-        // Refresh to update Uncategorized state
         loadAnnotateLibraryBar();
     } catch (e) {
         console.error('Error toggling library:', e);
     }
 }
+
+function setAnnotateNavContext(libraryId) {
+    activeAnnotateLibrary = libraryId ? String(libraryId) : null;
+    const url = new URL(window.location);
+    if (libraryId) {
+        url.searchParams.set('library', libraryId);
+    } else {
+        url.searchParams.delete('library');
+    }
+    history.replaceState(null, '', url);
+    navHistory = [];
+    sessionStorage.setItem('annotateNavHistory', '[]');
+    loadAnnotateLibraryBar();
+}
+
 
 // Navigation history
 let navHistory = [];

@@ -279,6 +279,12 @@ def get_ecoeye_events():
             print(f"[EcoEye Events] Returned {len(result['events'])} events, {len(local_imports)} imported locally")
 
         return jsonify(result)
+    except requests.exceptions.Timeout:
+        print(f"[EcoEye Events] Timeout connecting to alert relay")
+        return jsonify({'success': False, 'error': 'EcoEye alert relay timed out — try again', 'events': [], 'total': 0}), 200
+    except requests.exceptions.ConnectionError as e:
+        print(f"[EcoEye Events] Connection error: {e}")
+        return jsonify({'success': False, 'error': 'Cannot reach EcoEye alert relay', 'events': [], 'total': 0}), 200
     except Exception as e:
         print(f"[EcoEye Events] Error: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -1681,7 +1687,7 @@ def get_person_detections():
                     v.thumbnail_path,
                     STRING_AGG(
                         CASE WHEN at.tag_value LIKE '%%person_name%%'
-                        THEN REPLACE(at.tag_value, '"person_name":', '')
+                        THEN at.tag_value::json->>'person_name'
                         END, ','
                     ) as person_name_json,
                     STRING_AGG(
@@ -1709,17 +1715,13 @@ def get_person_detections():
 
             detections = []
             for row in cursor.fetchall():
-                # Parse person name from JSON tag value
+                # Parse person name from JSON-extracted value
                 person_name = None
                 if row['person_name_json']:
-                    try:
-                        # Extract value from JSON string
-                        import re
-                        match = re.search(r'"([^"]*)"', row['person_name_json'])
-                        if match:
-                            person_name = match.group(1)
-                    except:
-                        pass
+                    # STRING_AGG may produce comma-separated names, take first
+                    name = row['person_name_json'].split(',')[0].strip()
+                    if name and name != 'Unknown':
+                        person_name = name
 
                 detections.append({
                     'id': row['id'],
@@ -1748,9 +1750,10 @@ def get_person_detections():
             ''')
             videos_with_people = cursor.fetchone()['count']
 
-            # Count named vs unknown
-            named_count = len([d for d in detections if d['person_name'] and d['person_name'] != 'Unknown'])
-            unknown_count = len(detections) - named_count
+            # Count distinct named people and unknown detections
+            named_set = set(d['person_name'] for d in detections if d['person_name'] and d['person_name'] != 'Unknown')
+            named_count = len(named_set)
+            unknown_count = len([d for d in detections if not d['person_name'] or d['person_name'] == 'Unknown'])
 
             # Get unique people
             people = {}
@@ -1790,14 +1793,14 @@ def get_recent_person_names():
             # Get unique person names from annotation_tags
             cursor.execute('''
                 SELECT DISTINCT
-                    REPLACE(REPLACE(tag_value, '"person_name":', ''), '"', '') as person_name,
+                    tag_value::json->>'person_name' as person_name,
                     MAX(created_date) as last_used
                 FROM annotation_tags
                 WHERE annotation_type = 'keyframe'
                 AND tag_value LIKE '%%person_name%%'
                 AND tag_value NOT LIKE '%%Unknown%%'
                 AND tag_value != ''
-                GROUP BY REPLACE(REPLACE(tag_value, '"person_name":', ''), '"', '')
+                GROUP BY tag_value::json->>'person_name'
                 ORDER BY last_used DESC
                 LIMIT %s
             ''', (limit,))
@@ -1821,19 +1824,19 @@ def get_recent_tag_values():
         with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-            # Get unique values for this tag
+            # Get unique values for this tag using JSON extraction
             cursor.execute('''
                 SELECT DISTINCT
-                    REPLACE(REPLACE(REPLACE(tag_value, %s, ''), '"', ''), ':', '') as tag_value,
+                    tag_value::json->>%s as tag_value,
                     MAX(created_date) as last_used
                 FROM annotation_tags
                 WHERE annotation_type = 'keyframe'
                 AND tag_value LIKE %s
                 AND tag_value != ''
-                GROUP BY REPLACE(REPLACE(REPLACE(tag_value, %s, ''), '"', ''), ':', '')
+                GROUP BY tag_value::json->>%s
                 ORDER BY last_used DESC
                 LIMIT %s
-            ''', (f'"{tag_name}"', f'%{tag_name}%', f'"{tag_name}"', limit))
+            ''', (tag_name, f'%{tag_name}%', tag_name, limit))
 
             values = [row['tag_value'].strip() for row in cursor.fetchall() if row['tag_value'] and row['tag_value'].strip()]
 
