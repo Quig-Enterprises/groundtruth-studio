@@ -276,6 +276,9 @@ def get_ecoeye_events():
                     event['local_video_id'] = None
                     event['has_local_video'] = False
 
+            # Filter out test alerts (FAKE_MAC)
+            result['events'] = [e for e in result['events'] if e.get('camera_id') != 'FAKE_MAC']
+
             print(f"[EcoEye Events] Returned {len(result['events'])} events, {len(local_imports)} imported locally")
 
         return jsonify(result)
@@ -381,7 +384,7 @@ def sync_ecoeye_sample():
             video_filename = video_path.split('/videos/')[-1] if '/videos/' in video_path else video_path
             video_url = f'{ECOEYE_API_BASE}/videos/{video_filename}'
 
-            dl_result = downloader.download(video_url, event.get('camera_name', 'ecoeye'))
+            dl_result = downloader.download_video(video_url)
 
             if dl_result.get('success'):
                 video_id = db.add_video(
