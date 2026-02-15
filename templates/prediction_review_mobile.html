@@ -1,0 +1,214 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Groundtruth Studio - Quick Review</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="{{ static_v('css/prediction-review-mobile.css') }}">
+</head>
+<body>
+    <!-- Screen 1: Queue Screen -->
+    <div id="queue-screen" class="screen">
+        <div class="queue-header">
+            <div class="queue-top-bar">
+                <a href="/" class="back-button" id="queue-back">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M15 18l-6-6 6-6"/>
+                    </svg>
+                </a>
+                <h1 class="queue-title">Review Queue</h1>
+                <div class="spacer"></div>
+            </div>
+            <div class="queue-summary" id="queue-summary">
+                <span id="pending-count">0</span> pending across <span id="video-count">0</span> videos
+            </div>
+            <div class="filter-chips">
+                <button class="filter-chip active" data-filter="all">All</button>
+                <button class="filter-chip" data-filter="high">High Conf</button>
+                <button class="filter-chip" data-filter="low">Low Conf</button>
+            </div>
+        </div>
+
+        <div class="video-list" id="video-list">
+            <!-- All Videos card -->
+            <div class="video-card" data-video-id="all" id="all-videos-card">
+                <div class="video-card-thumbnail">
+                    <svg width="56" height="56" viewBox="0 0 56 56" fill="none">
+                        <rect width="56" height="56" rx="8" fill="#262626"/>
+                        <path d="M28 14v28M14 28h28" stroke="#0D9488" stroke-width="2" stroke-linecap="round"/>
+                    </svg>
+                </div>
+                <div class="video-card-info">
+                    <div class="video-card-title">All Videos</div>
+                    <div class="video-card-subtitle" id="all-videos-subtitle">0 predictions pending</div>
+                </div>
+                <svg class="progress-ring" width="32" height="32">
+                    <circle cx="16" cy="16" r="14" stroke="#262626" stroke-width="2.5" fill="none"/>
+                    <circle cx="16" cy="16" r="14" stroke="#0D9488" stroke-width="2.5" fill="none"
+                            stroke-dasharray="87.96" stroke-dashoffset="87.96" stroke-linecap="round"
+                            transform="rotate(-90 16 16)" class="progress-ring-fill"/>
+                </svg>
+            </div>
+
+            <!-- Video cards will be inserted here by JS -->
+        </div>
+    </div>
+
+    <!-- Screen 2: Review Screen -->
+    <div id="review-screen" class="screen hidden">
+        <div class="review-header">
+            <button class="back-button" id="review-back">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M15 18l-6-6 6-6"/>
+                </svg>
+            </button>
+            <h2 class="review-title" id="review-video-title">Video Title</h2>
+            <button class="menu-button" id="review-menu">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="5" r="1.5"/>
+                    <circle cx="12" cy="12" r="1.5"/>
+                    <circle cx="12" cy="19" r="1.5"/>
+                </svg>
+            </button>
+        </div>
+
+        <div class="card-stage">
+            <div id="card-container">
+                <!-- Cards will be inserted here by JS -->
+            </div>
+        </div>
+
+        <div class="metadata-strip" id="metadata-strip">
+            <span class="metadata-label" id="pred-class">Object</span>
+            <span class="metadata-confidence" id="pred-confidence">95%</span>
+            <span class="metadata-model" id="pred-model">YOLOv8</span>
+        </div>
+
+        <div class="action-zone">
+            <div class="card-position-dots" id="position-dots">
+                <div class="dot"></div>
+                <div class="dot active"></div>
+                <div class="dot"></div>
+            </div>
+
+            <div class="action-buttons">
+                <button class="action-button reject-button" id="reject-button">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
+                        <path d="M18 6L6 18M6 6l12 12"/>
+                    </svg>
+                </button>
+
+                <button class="action-button skip-button" id="skip-button">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
+                        <path d="M5 12h14M13 5l7 7-7 7"/>
+                    </svg>
+                </button>
+
+                <button class="action-button approve-button" id="approve-button">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M20 6L9 17l-5-5"/>
+                    </svg>
+                </button>
+            </div>
+
+            <div class="progress-bar">
+                <div class="progress-track">
+                    <div class="progress-fill" id="progress-fill" style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="action-footer">
+                <button class="undo-button" id="undo-button">Undo</button>
+                <div class="review-count" id="review-count">0/0</div>
+            </div>
+        </div>
+
+        <!-- Edge glow indicators -->
+        <div class="edge-glow edge-glow-left" id="glow-left"></div>
+        <div class="edge-glow edge-glow-right" id="glow-right"></div>
+    </div>
+
+    <!-- Rejection Feedback Bottom Sheet -->
+    <div id="reject-sheet" class="bottom-sheet">
+        <div class="sheet-grabber"></div>
+        <h3 class="sheet-heading">What was wrong?</h3>
+
+        <div class="rejection-reasons">
+            <button class="reason-chip" data-reason="wrong_location">Wrong location</button>
+            <button class="reason-chip" data-reason="bad_size">Bad size</button>
+            <button class="reason-chip" data-reason="wrong_class">Wrong class</button>
+            <button class="reason-chip" data-reason="false_positive">False positive</button>
+            <button class="reason-chip" data-reason="missed_detection">Missed detection</button>
+            <button class="reason-chip" data-reason="other">Other</button>
+        </div>
+
+        <div class="other-input-container hidden" id="other-input-container">
+            <input type="text" class="other-input" id="other-input" placeholder="Describe the issue..." maxlength="100">
+        </div>
+
+        <div class="sheet-actions">
+            <button class="skip-feedback-button" id="skip-feedback">Skip feedback</button>
+            <button class="done-button" id="done-feedback">Done</button>
+        </div>
+    </div>
+
+    <!-- Screen 3: Summary Screen -->
+    <div id="summary-screen" class="screen hidden">
+        <div class="summary-container">
+            <div class="completion-ring-container">
+                <svg class="completion-ring" width="160" height="160" viewBox="0 0 160 160">
+                    <circle cx="80" cy="80" r="70" stroke="#262626" stroke-width="8" fill="none"/>
+                    <circle cx="80" cy="80" r="70" stroke="url(#gradient-ring)" stroke-width="8" fill="none"
+                            stroke-dasharray="439.82" stroke-dashoffset="439.82" stroke-linecap="round"
+                            transform="rotate(-90 80 80)" class="completion-ring-fill" id="completion-ring-fill"/>
+                    <defs>
+                        <linearGradient id="gradient-ring" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#2DD4BF"/>
+                            <stop offset="100%" stop-color="#0D9488"/>
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <div class="completion-count" id="completion-count">0</div>
+            </div>
+
+            <div class="completion-subtitle">predictions reviewed</div>
+
+            <div class="summary-stats">
+                <div class="stat-card stat-approved">
+                    <div class="stat-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M20 6L9 17l-5-5"/>
+                        </svg>
+                    </div>
+                    <div class="stat-value" id="approved-count">0</div>
+                    <div class="stat-label">Approved</div>
+                </div>
+
+                <div class="stat-card stat-rejected">
+                    <div class="stat-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M18 6L6 18M6 6l12 12"/>
+                        </svg>
+                    </div>
+                    <div class="stat-value" id="rejected-count">0</div>
+                    <div class="stat-label">Rejected</div>
+                </div>
+            </div>
+
+            <div class="skipped-line" id="skipped-line">
+                <span id="skipped-count">0</span> skipped
+            </div>
+
+            <div class="summary-actions">
+                <button class="summary-button primary-button" id="back-to-queue">Back to Queue</button>
+                <button class="summary-button secondary-button" id="review-skipped">Review Skipped</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ static_v('js/prediction-review-mobile.js') }}"></script>
+</body>
+</html>

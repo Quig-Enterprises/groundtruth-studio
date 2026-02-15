@@ -24,6 +24,7 @@ from sample_router import SampleRouter
 from face_clustering import FaceClusterer
 from auto_detect_runner import trigger_auto_detect, run_detection_on_thumbnail
 from person_recognizer import get_recognizer
+from frigate_ingester import get_ingester, start_background_ingester, stop_background_ingester
 import time
 
 app = Flask(__name__,
@@ -1405,6 +1406,10 @@ def location_export_page():
 @app.route('/prediction-review')
 def prediction_review_page():
     return render_template('prediction_review.html')
+
+@app.route('/review')
+def mobile_review_page():
+    return render_template('prediction_review_mobile.html')
 
 @app.route('/yolo-export')
 def yolo_export_page():
@@ -2915,6 +2920,7 @@ def submit_predictions_batch():
         model_version = data.get('model_version')
         predictions = data.get('predictions', [])
         batch_id = data.get('batch_id')
+        force_review = data.get('force_review', False)
 
         if not all([video_id, model_name, model_version, predictions]):
             return jsonify({'success': False, 'error': 'video_id, model_name, model_version, and predictions required'}), 400
@@ -2947,9 +2953,14 @@ def submit_predictions_batch():
         )
 
         # Route predictions based on confidence thresholds
-        routing_summary = sample_router.route_and_apply(
-            prediction_ids, predictions, model_name, model_version
-        )
+        if force_review:
+            # Force all predictions to pending review (skip confidence-based routing)
+            routing_summary = sample_router.force_all_to_review(prediction_ids)
+            logger.info(f"Force-review: {len(prediction_ids)} predictions set to pending")
+        else:
+            routing_summary = sample_router.route_and_apply(
+                prediction_ids, predictions, model_name, model_version
+            )
 
         return jsonify({
             'success': True,
@@ -3037,6 +3048,83 @@ def get_prediction_stats():
         video_id = request.args.get('video_id', type=int)
         counts = db.get_prediction_counts(video_id)
         return jsonify({'success': True, 'counts': counts})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/predictions/review-queue', methods=['GET'])
+def get_review_queue():
+    """Get pending predictions for mobile review queue"""
+    try:
+        video_id = request.args.get('video_id', type=int)
+        model_name = request.args.get('model_name')
+        min_confidence = request.args.get('min_confidence', type=float)
+        max_confidence = request.args.get('max_confidence', type=float)
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
+
+        predictions = db.get_review_queue(video_id, model_name, min_confidence, max_confidence, limit, offset)
+
+        # Serialize for JSON (handle datetime, Decimal, etc.)
+        for p in predictions:
+            if p.get('predicted_tags') and hasattr(p['predicted_tags'], 'items'):
+                pass  # already a dict from RealDictCursor
+            for key in ['confidence', 'avg_confidence', 'min_confidence']:
+                if key in p and p[key] is not None:
+                    p[key] = float(p[key])
+
+        return jsonify({'success': True, 'predictions': predictions, 'count': len(predictions)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/predictions/review-queue/summary', methods=['GET'])
+def get_review_queue_summary():
+    """Get summary of pending predictions by video for queue entry screen"""
+    try:
+        summary = db.get_review_queue_summary()
+        for s in summary:
+            for key in ['avg_confidence', 'min_confidence']:
+                if key in s and s[key] is not None:
+                    s[key] = float(s[key])
+        total_pending = sum(s['pending_count'] for s in summary)
+        return jsonify({
+            'success': True,
+            'videos': summary,
+            'total_pending': total_pending,
+            'video_count': len(summary)
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/predictions/batch-review', methods=['POST'])
+def batch_review_predictions():
+    """Batch review multiple predictions at once (for mobile queue)"""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'Request body required'}), 400
+        reviews = data.get('reviews', [])
+        reviewer = data.get('reviewer', 'studio_user')
+        if not reviews:
+            return jsonify({'success': False, 'error': 'reviews array required'}), 400
+        if len(reviews) > 100:
+            return jsonify({'success': False, 'error': 'Maximum 100 reviews per batch'}), 400
+        results = db.batch_review_predictions(reviews, reviewer)
+        return jsonify({'success': True, **results})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/predictions/<int:prediction_id>/undo', methods=['POST'])
+def undo_prediction_review(prediction_id):
+    """Undo a prediction review (revert to pending)"""
+    try:
+        success = db.unreview_prediction(prediction_id)
+        if not success:
+            return jsonify({'success': False, 'error': 'Prediction not found or already pending'}), 404
+        return jsonify({'success': True, 'prediction_id': prediction_id, 'review_status': 'pending'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
@@ -4040,6 +4128,97 @@ def backfill_person_recognition():
         "success": True,
         "message": "Backfill started in background"
     })
+
+
+# ==================== Frigate Ingester Endpoints ====================
+
+@app.route('/api/frigate/start', methods=['POST'])
+def frigate_start():
+    """Start the Frigate background ingester."""
+    role = request.headers.get('X-Auth-Role', '')
+    if role != 'admin':
+        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+
+    try:
+        data = request.get_json() or {}
+        interval = data.get('interval', 60)
+
+        start_background_ingester(interval)
+
+        return jsonify({
+            'success': True,
+            'message': 'Frigate ingester started',
+            'interval': interval
+        })
+    except Exception as e:
+        logger.error(f"Failed to start Frigate ingester: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/frigate/stop', methods=['POST'])
+def frigate_stop():
+    """Stop the Frigate background ingester."""
+    role = request.headers.get('X-Auth-Role', '')
+    if role != 'admin':
+        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+
+    try:
+        stop_background_ingester()
+
+        return jsonify({
+            'success': True,
+            'message': 'Frigate ingester stopped'
+        })
+    except Exception as e:
+        logger.error(f"Failed to stop Frigate ingester: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/frigate/status', methods=['GET'])
+def frigate_status():
+    """Get the status of the Frigate ingester."""
+    role = request.headers.get('X-Auth-Role', '')
+    if role != 'admin':
+        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+
+    try:
+        ingester = get_ingester()
+
+        try:
+            cameras = ingester.get_cameras()
+        except Exception as e:
+            logger.warning(f"Failed to get cameras (Frigate may not be reachable): {e}")
+            cameras = []
+
+        return jsonify({
+            'success': True,
+            'running': not ingester._stop_flag.is_set(),
+            'interval': ingester.interval,
+            'cameras': cameras
+        })
+    except Exception as e:
+        logger.error(f"Failed to get Frigate ingester status: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/frigate/capture', methods=['POST'])
+def frigate_capture():
+    """Run a single Frigate capture cycle."""
+    role = request.headers.get('X-Auth-Role', '')
+    if role != 'admin':
+        return jsonify({'success': False, 'error': 'Admin access required'}), 403
+
+    try:
+        ingester = get_ingester()
+        cycle_result = ingester.run_cycle()
+
+        return jsonify({
+            'success': True,
+            **cycle_result
+        })
+    except Exception as e:
+        logger.error(f"Failed to run Frigate capture cycle: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 if __name__ == '__main__':

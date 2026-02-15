@@ -1837,6 +1837,113 @@ class VideoDatabase:
             ''', (review_status, routed_by, extras.Json(threshold_used) if threshold_used else None, prediction_id))
             return cursor.rowcount > 0
 
+    def get_review_queue(self, video_id=None, model_name=None, min_confidence=None,
+                         max_confidence=None, limit=50, offset=0):
+        """Get pending predictions for mobile review queue, with thumbnail paths."""
+        with get_cursor(commit=False) as cursor:
+            conditions = ["p.review_status = 'pending'"]
+            params = []
+            if video_id:
+                conditions.append("p.video_id = %s")
+                params.append(video_id)
+            if model_name:
+                conditions.append("p.model_name = %s")
+                params.append(model_name)
+            if min_confidence is not None:
+                conditions.append("p.confidence >= %s")
+                params.append(min_confidence)
+            if max_confidence is not None:
+                conditions.append("p.confidence <= %s")
+                params.append(max_confidence)
+            where = " AND ".join(conditions)
+            params.extend([limit, offset])
+            cursor.execute(f'''
+                SELECT p.id, p.video_id, p.model_name, p.model_version, p.prediction_type,
+                       p.confidence, p.timestamp, p.start_time, p.end_time,
+                       p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
+                       p.scenario, p.predicted_tags, p.inference_time_ms,
+                       v.title as video_title, v.thumbnail_path, v.width as video_width, v.height as video_height
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                WHERE {where}
+                ORDER BY p.confidence ASC, p.created_at DESC
+                LIMIT %s OFFSET %s
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_review_queue_summary(self):
+        """Get summary of pending predictions grouped by video for review queue entry screen."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT v.id as video_id, v.title as video_title, v.thumbnail_path,
+                       COUNT(*) as pending_count,
+                       COUNT(*) FILTER (WHERE p.review_status IN ('approved', 'rejected')) as reviewed_count,
+                       COUNT(*) FILTER (WHERE p.review_status = 'pending') +
+                       COUNT(*) FILTER (WHERE p.review_status IN ('approved', 'rejected')) as total_count,
+                       ROUND(AVG(p.confidence)::numeric, 3) as avg_confidence,
+                       MIN(p.confidence) as min_confidence
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                WHERE p.review_status = 'pending'
+                GROUP BY v.id, v.title, v.thumbnail_path
+                ORDER BY pending_count DESC
+            ''')
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def batch_review_predictions(self, reviews, reviewer='studio_user'):
+        """Batch review multiple predictions. Returns summary."""
+        results = {'approved': 0, 'rejected': 0, 'failed': 0, 'annotation_ids': []}
+        with get_cursor() as cursor:
+            for review in reviews:
+                pred_id = review.get('prediction_id')
+                action = review.get('action')
+                notes = review.get('notes')
+                if action not in ('approve', 'reject'):
+                    results['failed'] += 1
+                    continue
+                status = 'approved' if action == 'approve' else 'rejected'
+                cursor.execute('''
+                    UPDATE ai_predictions
+                    SET review_status = %s, reviewed_by = %s, reviewed_at = NOW(), review_notes = %s
+                    WHERE id = %s AND review_status = 'pending'
+                    RETURNING id, model_name, model_version
+                ''', (status, reviewer, notes, pred_id))
+                row = cursor.fetchone()
+                if row:
+                    results[action + 'd'] += 1
+                else:
+                    results['failed'] += 1
+        # Create annotations for approved predictions (outside the batch cursor)
+        # We do this separately to avoid nested cursor issues
+        for review in reviews:
+            if review.get('action') == 'approve':
+                ann_id = self.approve_prediction_to_annotation(review['prediction_id'])
+                if ann_id:
+                    results['annotation_ids'].append(ann_id)
+        return results
+
+    def unreview_prediction(self, prediction_id):
+        """Revert a prediction back to pending (for undo). Also removes created annotation."""
+        with get_cursor() as cursor:
+            # Get current state
+            cursor.execute('SELECT created_annotation_id, review_status FROM ai_predictions WHERE id = %s', (prediction_id,))
+            row = cursor.fetchone()
+            if not row or row['review_status'] == 'pending':
+                return False
+            # Remove created annotation if any
+            if row['created_annotation_id']:
+                cursor.execute('DELETE FROM keyframe_annotations WHERE id = %s', (row['created_annotation_id'],))
+            # Reset prediction to pending
+            cursor.execute('''
+                UPDATE ai_predictions
+                SET review_status = 'pending', reviewed_by = NULL, reviewed_at = NULL,
+                    review_notes = NULL, created_annotation_id = NULL
+                WHERE id = %s
+            ''', (prediction_id,))
+            return cursor.rowcount > 0
+
     # ==================== Model Registry ====================
 
     def get_or_create_model_registry(self, model_name: str, model_version: str,
