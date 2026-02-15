@@ -1045,6 +1045,7 @@ var ReviewApp = {
                 this.commitAction('approve');
             } else {
                 this.animateCardExit('left');
+                this.commitAction('reject', null, true);
                 this.showRejectSheet();
             }
         } else if (this.touch.direction === 'vertical' && deltaY < -100) {
@@ -1100,12 +1101,13 @@ var ReviewApp = {
     handleRejectButton: function() {
         var self = this;
         this.animateCardExit('left');
+        this.commitAction('reject', null, true);
         setTimeout(function() {
             self.showRejectSheet();
         }, 200);
     },
 
-    commitAction: function(action, notes) {
+    commitAction: function(action, notes, skipAdvance) {
         if (this.screen !== 'review') return;
         if (this.currentIndex >= this.predictions.length) return;
 
@@ -1171,11 +1173,16 @@ var ReviewApp = {
             notes: notes || null
         };
 
-        // Advance
+        // Advance (unless deferred for reject sheet)
+        if (!skipAdvance) {
+            this.advanceToNextCard();
+        }
+    },
+
+    advanceToNextCard: function() {
         this.currentIndex++;
         this.updateUndoButton();
 
-        // Render next card after exit animation
         var self = this;
         setTimeout(function() {
             if (self.currentIndex < self.predictions.length) {
@@ -1227,12 +1234,32 @@ var ReviewApp = {
         }
         var notes = reasons.length > 0 ? reasons.join(', ') : null;
         this.hideRejectSheet();
-        this.commitAction('reject', notes);
+        // Update notes on the already-committed rejection in the sync queue
+        if (notes && this.undoStack) {
+            this.undoStack.notes = notes;
+            for (var i = this.syncQueue.length - 1; i >= 0; i--) {
+                if (this.syncQueue[i].prediction_id === this.undoStack.prediction.id) {
+                    this.syncQueue[i].notes = notes;
+                    break;
+                }
+            }
+        }
+        this.advanceToNextCard();
     },
 
     finishReject: function(notes) {
         this.hideRejectSheet();
-        this.commitAction('reject', notes);
+        // Update notes on the already-committed rejection if provided
+        if (notes && this.undoStack) {
+            this.undoStack.notes = notes;
+            for (var i = this.syncQueue.length - 1; i >= 0; i--) {
+                if (this.syncQueue[i].prediction_id === this.undoStack.prediction.id) {
+                    this.syncQueue[i].notes = notes;
+                    break;
+                }
+            }
+        }
+        this.advanceToNextCard();
     },
 
     // Sheet swipe-to-dismiss
@@ -1264,9 +1291,9 @@ var ReviewApp = {
         }
 
         if (deltaY > 100) {
-            // Dismiss without feedback
+            // Dismiss without feedback (reject already committed)
             this.hideRejectSheet();
-            this.commitAction('reject', null);
+            this.advanceToNextCard();
         } else {
             // Snap back
             if (this.els.rejectSheet) {
@@ -1289,7 +1316,7 @@ var ReviewApp = {
     },
 
     syncReviews: function() {
-        if (this.syncQueue.length === 0) return;
+        if (this.syncQueue.length === 0) return Promise.resolve();
 
         var batch = this.syncQueue.splice(0);
         var self = this;
@@ -1303,9 +1330,9 @@ var ReviewApp = {
             });
         }
 
-        if (reviews.length === 0) return;
+        if (reviews.length === 0) return Promise.resolve();
 
-        fetch('/api/ai/predictions/batch-review', {
+        return fetch('/api/ai/predictions/batch-review', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -1338,7 +1365,7 @@ var ReviewApp = {
             clearTimeout(this.syncTimer);
             this.syncTimer = null;
         }
-        this.syncReviews();
+        return this.syncReviews();
     },
 
     showSyncError: function() {
@@ -1482,7 +1509,13 @@ var ReviewApp = {
     // --------------- Navigation ---------------
     showQueue: function() {
         this.showScreen('queue');
-        this.loadQueueSummary();
+        var self = this;
+        var pending = this.flushSync();
+        if (pending && pending.then) {
+            pending.then(function() { self.loadQueueSummary(); });
+        } else {
+            this.loadQueueSummary();
+        }
     },
 
     reviewSkippedItems: function() {

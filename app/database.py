@@ -1912,7 +1912,7 @@ class VideoDatabase:
                 ''', (status, reviewer, notes, pred_id))
                 row = cursor.fetchone()
                 if row:
-                    results[action + 'd'] += 1
+                    results[status] += 1
                 else:
                     results['failed'] += 1
         # Create annotations for approved predictions (outside the batch cursor)
