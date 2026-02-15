@@ -563,16 +563,48 @@ var ReviewApp = {
         var imgWrap = document.createElement('div');
         imgWrap.className = 'card-image-container';
 
-        var img = document.createElement('img');
-        img.className = 'card-image';
-        img.alt = 'Prediction frame';
-        img.src = this.getThumbUrl(pred.thumbnail_path);
-        img.onerror = function() { this.style.display = 'none'; };
-        imgWrap.appendChild(img);
+        var clipUrl = '/api/ai/predictions/' + pred.id + '/clip';
+        var thumbUrl = this.getThumbUrl(pred.thumbnail_path);
+        var self = this;
 
-        // SVG bbox overlay — use image natural dimensions for accurate placement
+        // Try video clip first, fall back to thumbnail image
+        var video = document.createElement('video');
+        video.className = 'card-image';
+        video.autoplay = true;
+        video.loop = true;
+        video.muted = true;
+        video.playsInline = true;
+        video.setAttribute('playsinline', '');
+        video.setAttribute('webkit-playsinline', '');
+        video.preload = 'auto';
+        video.src = clipUrl;
+        imgWrap.appendChild(video);
+
+        // On video error (404 for snapshots), swap to static thumbnail
+        video.onerror = function() {
+            imgWrap.removeChild(video);
+            var img = document.createElement('img');
+            img.className = 'card-image';
+            img.alt = 'Prediction frame';
+            img.src = thumbUrl;
+            img.onerror = function() { this.style.display = 'none'; };
+            // Insert before any existing bbox overlay
+            if (imgWrap.firstChild) {
+                imgWrap.insertBefore(img, imgWrap.firstChild);
+            } else {
+                imgWrap.appendChild(img);
+            }
+            // Add bbox once image loads (if dimensions not known)
+            if (pred.bbox_x != null && pred.bbox_width > 0 && !pred.video_width) {
+                img.addEventListener('load', function() {
+                    var bboxSvg = self.createBboxOverlay(pred, this.naturalWidth, this.naturalHeight);
+                    imgWrap.appendChild(bboxSvg);
+                });
+            }
+        };
+
+        // SVG bbox overlay — use known dimensions or wait for video metadata
         if (pred.bbox_x != null && pred.bbox_width > 0) {
-            var self = this;
             var addBbox = function(vw, vh) {
                 var bboxSvg = self.createBboxOverlay(pred, vw, vh);
                 imgWrap.appendChild(bboxSvg);
@@ -580,8 +612,8 @@ var ReviewApp = {
             if (pred.video_width && pred.video_height) {
                 addBbox(pred.video_width, pred.video_height);
             } else {
-                img.addEventListener('load', function() {
-                    addBbox(this.naturalWidth, this.naturalHeight);
+                video.addEventListener('loadedmetadata', function() {
+                    addBbox(this.videoWidth, this.videoHeight);
                 });
             }
         }
@@ -1447,6 +1479,16 @@ var ReviewApp = {
                 var img = new Image();
                 img.src = url;
                 this.imageCache[url] = img;
+            }
+            // Prefetch video clip via link hint
+            var clipUrl = '/api/ai/predictions/' + pred.id + '/clip';
+            if (!this.imageCache[clipUrl]) {
+                var link = document.createElement('link');
+                link.rel = 'prefetch';
+                link.as = 'video';
+                link.href = clipUrl;
+                document.head.appendChild(link);
+                this.imageCache[clipUrl] = link;
             }
         }
     },

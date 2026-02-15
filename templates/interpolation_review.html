@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Track Review - Groundtruth Studio</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/interpolation_review.css') }}">
+</head>
+<body>
+    <div class="review-layout">
+        <!-- Sidebar: Track List -->
+        <aside class="track-sidebar" id="track-sidebar">
+            <div class="sidebar-header">
+                <h2>Interpolation Tracks</h2>
+                <div class="sidebar-filters">
+                    <select id="filter-status" onchange="interpReview.filterTracks()">
+                        <option value="">All Status</option>
+                        <option value="ready" selected>Ready for Review</option>
+                        <option value="processing">Processing</option>
+                        <option value="approved">Approved</option>
+                        <option value="rejected">Rejected</option>
+                        <option value="pending">Pending</option>
+                    </select>
+                    <select id="filter-video" onchange="interpReview.filterTracks()">
+                        <option value="">All Videos</option>
+                    </select>
+                </div>
+            </div>
+            <div class="track-list" id="track-list">
+                <div class="loading-placeholder">Loading tracks...</div>
+            </div>
+        </aside>
+
+        <!-- Main: Filmstrip -->
+        <main class="filmstrip-main" id="filmstrip-main">
+            <div class="no-track-selected" id="no-track-msg">
+                <div class="empty-state">
+                    <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <rect x="2" y="2" width="20" height="20" rx="2"/>
+                        <path d="M7 2v20M17 2v20M2 7h20M2 17h20"/>
+                    </svg>
+                    <h3>Select a track to review</h3>
+                    <p>Choose an interpolation track from the sidebar to view its filmstrip</p>
+                </div>
+            </div>
+
+            <div class="filmstrip-content" id="filmstrip-content" style="display:none;">
+                <!-- Track Header -->
+                <div class="track-header" id="track-header">
+                    <div class="track-info">
+                        <h2 id="track-title">Track</h2>
+                        <div class="track-meta">
+                            <span class="meta-badge class-badge" id="track-class"></span>
+                            <span class="meta-badge time-badge" id="track-time"></span>
+                            <span class="meta-badge detect-badge" id="track-detection-rate"></span>
+                        </div>
+                    </div>
+                    <div class="track-actions">
+                        <button class="btn btn-approve" onclick="interpReview.approveTrack()" id="btn-approve-track">
+                            Approve All
+                        </button>
+                        <button class="btn btn-reject" onclick="interpReview.rejectTrack()" id="btn-reject-track">
+                            Reject Track
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Filmstrip Grid -->
+                <div class="filmstrip-grid" id="filmstrip-grid"></div>
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/interpolation_review.js') }}"></script>
+</body>
+</html>

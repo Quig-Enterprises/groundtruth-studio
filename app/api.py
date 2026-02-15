@@ -26,7 +26,9 @@ from auto_detect_runner import run_detection_on_thumbnail
 from vehicle_detect_runner import trigger_vehicle_detect
 from person_recognizer import get_recognizer
 from frigate_ingester import get_ingester, start_background_ingester, stop_background_ingester
+from auto_retrain import start_auto_retrain_checker, stop_auto_retrain_checker, get_auto_retrain_status
 import time
+import threading
 
 app = Flask(__name__,
             template_folder='../templates',
@@ -115,6 +117,9 @@ unifi_client = None  # Initialized on-demand with credentials
 # Initialize training queue
 init_training_jobs_table(db)
 training_queue = TrainingQueueClient(db)
+
+# Start auto-retrain background checker
+start_auto_retrain_checker(db, yolo_exporter, training_queue)
 
 # Run schema migrations (add camera_id to videos, etc.)
 from schema import run_migrations
@@ -984,6 +989,45 @@ def serve_thumbnail(filename):
     """Serve thumbnail file"""
     return send_from_directory(THUMBNAIL_DIR, filename)
 
+CLIPS_DIR = BASE_DIR / 'clips'
+CLIPS_DIR.mkdir(exist_ok=True)
+
+@app.route('/clips/<path:filename>')
+def serve_clip(filename):
+    """Serve cached video clip"""
+    return send_from_directory(CLIPS_DIR, filename)
+
+@app.route('/api/ai/predictions/<int:prediction_id>/clip')
+def get_prediction_clip(prediction_id):
+    """Generate and serve a ~5 second video clip around a prediction's timestamp."""
+    try:
+        pred = db.get_prediction_by_id(prediction_id)
+        if not pred:
+            return jsonify({'success': False, 'error': 'Prediction not found'}), 404
+
+        video = db.get_video(pred['video_id'])
+        if not video:
+            return jsonify({'success': False, 'error': 'Video not found'}), 404
+
+        video_path = DOWNLOAD_DIR / video['filename']
+        timestamp = pred.get('timestamp') or 0.0
+
+        result = processor.extract_clip(
+            str(video_path),
+            float(timestamp),
+            duration=5.0
+        )
+
+        if not result['success']:
+            return jsonify({'success': False, 'error': result['error']}), 404
+
+        clip_path = Path(result['clip_path'])
+        return send_from_directory(clip_path.parent, clip_path.name, mimetype='video/mp4')
+
+    except Exception as e:
+        logger.error(f'Failed to generate clip for prediction {prediction_id}: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
 @app.route('/api/videos/<int:video_id>/time-range-tags', methods=['GET'])
 def get_time_range_tags(video_id):
     """Get all time-range tags for a video"""
@@ -1407,6 +1451,10 @@ def location_export_page():
 @app.route('/prediction-review')
 def prediction_review_page():
     return render_template('prediction_review.html')
+
+@app.route('/vehicle-metrics')
+def vehicle_metrics_page():
+    return render_template('vehicle_metrics.html')
 
 @app.route('/review')
 def mobile_review_page():
@@ -2680,6 +2728,32 @@ def export_and_train():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/training/auto-retrain/status', methods=['GET'])
+def get_auto_retrain_status_endpoint():
+    """Get auto-retrain checker status"""
+    try:
+        status = get_auto_retrain_status()
+        if status is None:
+            return jsonify({'success': False, 'error': 'Auto-retrain checker not running'}), 503
+        return jsonify({'success': True, **status})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/training/auto-retrain/trigger', methods=['POST'])
+def trigger_auto_retrain():
+    """Manually trigger an auto-retrain check (bypasses rate limit)"""
+    try:
+        from auto_retrain import get_checker_instance
+        checker = get_checker_instance()
+        if checker is None:
+            return jsonify({'success': False, 'error': 'Auto-retrain checker not running'}), 503
+        result = checker.check_and_trigger(force=True)
+        return jsonify({'success': True, 'result': result})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ===== Camera Location Endpoints =====
 
 @app.route('/api/camera-locations', methods=['GET'])
@@ -3032,6 +3106,13 @@ def review_prediction(prediction_id):
             # Update model stats
             db.update_model_approval_stats(updated['model_name'], updated['model_version'])
 
+            # Trigger guided interpolation for matching keyframe pairs
+            if updated.get('model_name') == 'vehicle-world-v1':
+                try:
+                    _check_and_trigger_interpolation(updated)
+                except Exception as interp_err:
+                    logger.warning(f"Interpolation trigger check failed: {interp_err}")
+
         return jsonify({
             'success': True,
             'prediction_id': prediction_id,
@@ -3226,6 +3307,146 @@ def get_all_pending_predictions():
             })
     except Exception as e:
         logger.error(f'Failed to get all pending predictions: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/ai/vehicle-metrics')
+def get_vehicle_metrics():
+    """Get vehicle detection metrics: per-class counts, correction rates, confusion matrix."""
+    try:
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+            # 1. Per-class counts by review status
+            cursor.execute('''
+                SELECT
+                    COALESCE(
+                        corrected_tags->>'vehicle_type',
+                        predicted_tags->>'vehicle_type',
+                        predicted_tags->>'class'
+                    ) as vehicle_class,
+                    review_status,
+                    COUNT(*) as count
+                FROM ai_predictions
+                WHERE scenario = 'vehicle_detection'
+                   OR predicted_tags->>'vehicle_type' IS NOT NULL
+                GROUP BY vehicle_class, review_status
+                ORDER BY vehicle_class, review_status
+            ''')
+            class_status_rows = cursor.fetchall()
+
+            # Build per-class stats
+            class_stats = {}
+            for row in class_status_rows:
+                cls = row['vehicle_class'] or 'unknown'
+                if cls not in class_stats:
+                    class_stats[cls] = {'pending': 0, 'approved': 0, 'rejected': 0, 'corrected': 0, 'auto_approved': 0, 'total': 0}
+                status = row['review_status'] or 'pending'
+                class_stats[cls][status] = class_stats[cls].get(status, 0) + row['count']
+                class_stats[cls]['total'] += row['count']
+
+            # 2. Correction counts (how many were reclassified)
+            cursor.execute('''
+                SELECT
+                    COALESCE(
+                        corrected_tags->>'vehicle_type',
+                        predicted_tags->>'vehicle_type',
+                        predicted_tags->>'class'
+                    ) as vehicle_class,
+                    COUNT(*) as corrected_count
+                FROM ai_predictions
+                WHERE correction_type = 'vehicle_reclass'
+                GROUP BY vehicle_class
+            ''')
+            for row in cursor.fetchall():
+                cls = row['vehicle_class'] or 'unknown'
+                if cls in class_stats:
+                    class_stats[cls]['corrected'] = row['corrected_count']
+
+            # 3. Confusion matrix: original class -> corrected class
+            cursor.execute('''
+                SELECT
+                    COALESCE(predicted_tags->>'vehicle_type', predicted_tags->>'class') as original_class,
+                    corrected_tags->>'vehicle_type' as corrected_class,
+                    COUNT(*) as count
+                FROM ai_predictions
+                WHERE correction_type = 'vehicle_reclass'
+                  AND corrected_tags->>'vehicle_type' IS NOT NULL
+                GROUP BY original_class, corrected_class
+                ORDER BY count DESC
+            ''')
+            confusion_matrix = [dict(row) for row in cursor.fetchall()]
+
+            # 4. Weekly detection trends (last 8 weeks)
+            cursor.execute('''
+                SELECT
+                    date_trunc('week', created_at)::date as week,
+                    COUNT(*) as detections,
+                    COUNT(*) FILTER (WHERE review_status = 'approved') as approved,
+                    COUNT(*) FILTER (WHERE review_status = 'rejected') as rejected,
+                    COUNT(*) FILTER (WHERE correction_type = 'vehicle_reclass') as corrected
+                FROM ai_predictions
+                WHERE (scenario = 'vehicle_detection' OR predicted_tags->>'vehicle_type' IS NOT NULL)
+                  AND created_at >= NOW() - INTERVAL '8 weeks'
+                GROUP BY week
+                ORDER BY week
+            ''')
+            weekly_trends = []
+            for row in cursor.fetchall():
+                weekly_trends.append({
+                    'week': row['week'].isoformat() if row['week'] else None,
+                    'detections': row['detections'],
+                    'approved': row['approved'],
+                    'rejected': row['rejected'],
+                    'corrected': row['corrected']
+                })
+
+            # 5. Fine-tuning readiness (200+ corrected samples per class)
+            readiness = {}
+            for cls, stats in class_stats.items():
+                reviewed = stats.get('approved', 0) + stats.get('corrected', 0)
+                readiness[cls] = {
+                    'reviewed_count': reviewed,
+                    'target': 200,
+                    'ready': reviewed >= 200,
+                    'progress_pct': min(100, round(reviewed / 200 * 100, 1))
+                }
+
+            # 6. Summary totals
+            total_predictions = sum(s['total'] for s in class_stats.values())
+            total_approved = sum(s.get('approved', 0) + s.get('auto_approved', 0) for s in class_stats.values())
+            total_rejected = sum(s.get('rejected', 0) for s in class_stats.values())
+            total_corrected = sum(s.get('corrected', 0) for s in class_stats.values())
+            total_pending = sum(s.get('pending', 0) for s in class_stats.values())
+
+            # 7. Today's review count
+            cursor.execute('''
+                SELECT COUNT(*) as count
+                FROM ai_predictions
+                WHERE (scenario = 'vehicle_detection' OR predicted_tags->>'vehicle_type' IS NOT NULL)
+                  AND reviewed_at >= CURRENT_DATE
+                  AND review_status IN ('approved', 'rejected')
+            ''')
+            reviewed_today = cursor.fetchone()['count']
+
+            return jsonify({
+                'success': True,
+                'summary': {
+                    'total': total_predictions,
+                    'approved': total_approved,
+                    'rejected': total_rejected,
+                    'corrected': total_corrected,
+                    'pending': total_pending,
+                    'reviewed_today': reviewed_today,
+                    'class_count': len(class_stats)
+                },
+                'class_stats': class_stats,
+                'confusion_matrix': confusion_matrix,
+                'weekly_trends': weekly_trends,
+                'readiness': readiness
+            })
+    except Exception as e:
+        logger.error(f'Failed to get vehicle metrics: {e}')
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -4244,6 +4465,201 @@ def frigate_capture():
     except Exception as e:
         logger.error(f"Failed to run Frigate capture cycle: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== Interpolation Track Endpoints ====================
+
+def _check_and_trigger_interpolation(approved_pred):
+    """Find matching approved keyframes and trigger interpolation."""
+    import json as _json
+
+    tags = approved_pred.get('corrected_tags') or approved_pred.get('predicted_tags', {})
+    if isinstance(tags, str):
+        tags = _json.loads(tags)
+
+    class_name = tags.get('class')
+    if not class_name:
+        return
+
+    # Skip interpolation-generated predictions
+    if tags.get('source') == 'interpolation':
+        return
+
+    # Find other approved predictions for same video + class
+    other_approved = db.get_approved_predictions_for_class(
+        video_id=approved_pred['video_id'],
+        class_name=class_name,
+        model_name='vehicle-world-v1'
+    )
+
+    for other in other_approved:
+        if other['id'] == approved_pred['id']:
+            continue
+
+        # Skip interpolation-generated predictions
+        other_tags = other.get('corrected_tags') or other.get('predicted_tags', {})
+        if isinstance(other_tags, str):
+            other_tags = _json.loads(other_tags)
+        if other_tags.get('source') == 'interpolation':
+            continue
+
+        # Check time gap is reasonable (2s to 120s)
+        gap = abs(float(other['timestamp'] or 0) - float(approved_pred['timestamp'] or 0))
+        if gap < 2.0 or gap > 120.0:
+            continue
+
+        # Check no track already exists for this pair
+        if db.interpolation_track_exists(approved_pred['id'], other['id']):
+            continue
+
+        # Determine start/end by timestamp order
+        if float(approved_pred['timestamp'] or 0) < float(other['timestamp'] or 0):
+            start_id, end_id = approved_pred['id'], other['id']
+        else:
+            start_id, end_id = other['id'], approved_pred['id']
+
+        # Trigger in background
+        logger.info(f"Triggering guided interpolation: video {approved_pred['video_id']}, "
+                     f"class '{class_name}', preds {start_id}->{end_id}")
+        from interpolation_runner import run_guided_interpolation
+        threading.Thread(
+            target=run_guided_interpolation,
+            args=(approved_pred['video_id'], start_id, end_id),
+            daemon=True,
+            name=f"interp-{start_id}-{end_id}"
+        ).start()
+
+
+@app.route('/interpolation-review')
+def interpolation_review():
+    return render_template('interpolation_review.html')
+
+
+@app.route('/api/interpolation/tracks', methods=['GET'])
+def get_interpolation_tracks():
+    """List interpolation tracks, optionally filtered."""
+    try:
+        video_id = request.args.get('video_id', type=int)
+        status = request.args.get('status')
+        tracks = db.get_interpolation_tracks(video_id=video_id, status=status)
+        # Ensure numeric types are JSON-serializable
+        for t in tracks:
+            for key in ('start_timestamp', 'end_timestamp', 'frame_interval'):
+                if key in t and t[key] is not None:
+                    t[key] = float(t[key])
+        return jsonify({'success': True, 'tracks': tracks})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/interpolation/track/<int:track_id>', methods=['GET'])
+def get_interpolation_track(track_id):
+    """Get track details with all frame predictions and frame image URLs."""
+    try:
+        track = db.get_interpolation_track(track_id)
+        if not track:
+            return jsonify({'success': False, 'error': 'Track not found'}), 404
+
+        # Ensure numeric types
+        for key in ('start_timestamp', 'end_timestamp', 'frame_interval',
+                     'start_confidence', 'end_confidence'):
+            if key in track and track[key] is not None:
+                track[key] = float(track[key])
+
+        # Get frame predictions
+        frames = []
+        if track.get('batch_id'):
+            preds = db.get_track_predictions(track['batch_id'])
+            for p in preds:
+                tags = p.get('predicted_tags', {})
+                if isinstance(tags, str):
+                    import json as _json
+                    tags = _json.loads(tags)
+                frames.append({
+                    'id': p['id'],
+                    'timestamp': float(p['timestamp']) if p['timestamp'] else 0,
+                    'confidence': float(p['confidence']) if p['confidence'] else 0,
+                    'bbox_x': p['bbox_x'],
+                    'bbox_y': p['bbox_y'],
+                    'bbox_width': p['bbox_width'],
+                    'bbox_height': p['bbox_height'],
+                    'review_status': p['review_status'],
+                    'predicted_tags': tags,
+                    'frame_cache': tags.get('frame_cache', ''),
+                })
+
+        return jsonify({'success': True, 'track': track, 'frames': frames})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/api/interpolation/track/<int:track_id>/review', methods=['POST'])
+def review_interpolation_track(track_id):
+    """Batch approve or reject all predictions in a track."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'Request body required'}), 400
+
+        action = data.get('action')
+        reviewer = data.get('reviewer', 'anonymous')
+
+        if action not in ('approve', 'reject'):
+            return jsonify({'success': False, 'error': 'action must be approve or reject'}), 400
+
+        track = db.get_interpolation_track(track_id)
+        if not track:
+            return jsonify({'success': False, 'error': 'Track not found'}), 404
+
+        # Get all predictions in this track
+        predictions = db.get_track_predictions(track['batch_id']) if track.get('batch_id') else []
+
+        approved_count = 0
+        rejected_count = 0
+        annotation_ids = []
+
+        for pred in predictions:
+            tags = pred.get('predicted_tags', {})
+            if isinstance(tags, str):
+                import json as _json
+                tags = _json.loads(tags)
+
+            # Skip unmatched frames (confidence 0) and already-reviewed
+            if pred['review_status'] not in ('pending',):
+                continue
+
+            if action == 'approve' and not tags.get('unmatched'):
+                db.review_prediction(pred['id'], 'approve', reviewer)
+                ann_id = db.approve_prediction_to_annotation(pred['id'])
+                if ann_id:
+                    annotation_ids.append(ann_id)
+                approved_count += 1
+            elif action == 'reject' or tags.get('unmatched'):
+                db.review_prediction(pred['id'], 'reject', reviewer)
+                rejected_count += 1
+
+        # Update track status
+        new_status = 'approved' if action == 'approve' else 'rejected'
+        db.update_interpolation_track(track_id, status=new_status, reviewed_by=reviewer)
+
+        return jsonify({
+            'success': True,
+            'track_id': track_id,
+            'status': new_status,
+            'approved': approved_count,
+            'rejected': rejected_count,
+            'annotation_ids': annotation_ids,
+        })
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@app.route('/frame-cache/<int:video_id>/<path:filename>')
+def serve_frame_cache(video_id, filename):
+    """Serve pre-extracted frame images from the frame cache."""
+    import os
+    cache_dir = os.path.join('/opt/groundtruth-studio/frame_cache', str(video_id))
+    return send_from_directory(cache_dir, filename)
 
 
 if __name__ == '__main__':

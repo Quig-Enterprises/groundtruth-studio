@@ -547,6 +547,30 @@ CREATE INDEX IF NOT EXISTS idx_ai_predictions_model ON ai_predictions(model_name
 CREATE INDEX IF NOT EXISTS idx_ai_predictions_confidence ON ai_predictions(confidence);
 CREATE INDEX IF NOT EXISTS idx_ai_predictions_batch ON ai_predictions(batch_id);
 CREATE INDEX IF NOT EXISTS idx_ai_predictions_created ON ai_predictions(created_at);
+
+-- Interpolation tracks table (guided keyframe interpolation between approved predictions)
+CREATE TABLE IF NOT EXISTS interpolation_tracks (
+    id SERIAL PRIMARY KEY,
+    video_id INTEGER NOT NULL,
+    class_name VARCHAR(255) NOT NULL,
+    start_prediction_id INTEGER NOT NULL,
+    end_prediction_id INTEGER NOT NULL,
+    start_timestamp REAL NOT NULL,
+    end_timestamp REAL NOT NULL,
+    frame_interval REAL DEFAULT 1.0,
+    status VARCHAR(20) DEFAULT 'pending'
+        CHECK (status IN ('pending', 'processing', 'ready', 'approved', 'rejected')),
+    frames_generated INTEGER DEFAULT 0,
+    frames_detected INTEGER DEFAULT 0,
+    batch_id VARCHAR(255),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    reviewed_at TIMESTAMP WITH TIME ZONE,
+    reviewed_by VARCHAR(255),
+    FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_interp_tracks_video ON interpolation_tracks(video_id);
+CREATE INDEX IF NOT EXISTS idx_interp_tracks_status ON interpolation_tracks(status);
 CREATE INDEX IF NOT EXISTS idx_model_registry_name ON model_registry(model_name);
 CREATE INDEX IF NOT EXISTS idx_model_registry_active ON model_registry(is_active);
 CREATE INDEX IF NOT EXISTS idx_training_metrics_job ON training_metrics(training_job_id);
@@ -621,7 +645,7 @@ def verify_schema():
         'vehicle_person_links', 'trailers', 'vehicle_trailer_links',
         'sync_config', 'sync_history', 'ecoeye_alerts', 'training_jobs',
         'camera_locations', 'ai_predictions', 'model_registry', 'training_metrics',
-        'content_libraries', 'content_library_items',
+        'content_libraries', 'content_library_items', 'interpolation_tracks',
         'identities', 'embeddings', 'associations', 'tracks', 'sightings',
         'camera_topology_learned', 'violations', 'visits'
     ]
@@ -842,6 +866,32 @@ def run_migrations():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_visits_vehicle ON visits(vehicle_identity_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_visits_arrival ON visits(arrival_time)")
             logger.info("Multi-Entity Detection System tables ready")
+
+            # Migration: Create interpolation_tracks table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS interpolation_tracks (
+                    id SERIAL PRIMARY KEY,
+                    video_id INTEGER NOT NULL,
+                    class_name VARCHAR(255) NOT NULL,
+                    start_prediction_id INTEGER NOT NULL,
+                    end_prediction_id INTEGER NOT NULL,
+                    start_timestamp REAL NOT NULL,
+                    end_timestamp REAL NOT NULL,
+                    frame_interval REAL DEFAULT 1.0,
+                    status VARCHAR(20) DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'processing', 'ready', 'approved', 'rejected')),
+                    frames_generated INTEGER DEFAULT 0,
+                    frames_detected INTEGER DEFAULT 0,
+                    batch_id VARCHAR(255),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    reviewed_at TIMESTAMP WITH TIME ZONE,
+                    reviewed_by VARCHAR(255),
+                    FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_interp_tracks_video ON interpolation_tracks(video_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_interp_tracks_status ON interpolation_tracks(status)")
+            logger.info("Interpolation tracks table ready")
 
         logger.info("Migrations completed successfully")
     except Exception as e:

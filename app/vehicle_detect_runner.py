@@ -61,6 +61,13 @@ CLASS_CONF_THRESHOLDS = {
 }
 DEFAULT_CONF_THRESHOLD = 0.15
 
+# Multi-frame video detection settings
+VIDEO_EXTENSIONS = {'.mp4', '.avi', '.mov', '.mkv', '.webm'}
+MULTIFRAME_INTERVAL = 10  # seconds between frame samples
+MULTIFRAME_MAX_FRAMES = 60  # cap for long videos
+MULTIFRAME_START_OFFSET = 10  # skip first 10s (thumbnail covers ~1s)
+DOWNLOAD_DIR = "/opt/groundtruth-studio/downloads"
+
 # All classes for YOLO-World single-pass detection.
 # "person" is included for pre-screening only — person detections are NOT
 # submitted as vehicle-world-v1 predictions. Instead they trigger person-face-v1.
@@ -231,6 +238,58 @@ def _cross_class_nms(predictions: list, iou_threshold: float = 0.5) -> list:
     return keep
 
 
+def _deduplicate_across_frames(all_detections: list) -> list:
+    """Merge detections from different frames that represent the same object.
+
+    Same class + IoU > 0.5 between frames = same object.
+    Keep highest confidence detection, store earliest timestamp.
+    """
+    if len(all_detections) <= 1:
+        return all_detections
+
+    # Sort by confidence descending
+    detections = sorted(all_detections, key=lambda d: d['confidence'], reverse=True)
+    unique = []
+
+    for det in detections:
+        box_a = det['bbox']
+        is_duplicate = False
+
+        for kept in unique:
+            # Only merge same class
+            if det['tags']['class'] != kept['tags']['class']:
+                continue
+
+            box_b = kept['bbox']
+
+            # Compute IoU
+            ax1, ay1 = box_a['x'], box_a['y']
+            ax2, ay2 = ax1 + box_a['width'], ay1 + box_a['height']
+            bx1, by1 = box_b['x'], box_b['y']
+            bx2, by2 = bx1 + box_b['width'], by1 + box_b['height']
+
+            ix1, iy1 = max(ax1, bx1), max(ay1, by1)
+            ix2, iy2 = min(ax2, bx2), min(ay2, by2)
+            inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
+
+            if inter > 0:
+                area_a = box_a['width'] * box_a['height']
+                area_b = box_b['width'] * box_b['height']
+                iou = inter / (area_a + area_b - inter)
+
+                if iou >= 0.5:
+                    # Keep earliest timestamp on the kept (higher confidence) detection
+                    if det['timestamp'] < kept['timestamp']:
+                        kept['timestamp'] = det['timestamp']
+                    is_duplicate = True
+                    break
+
+        if not is_duplicate:
+            unique.append(det)
+
+    return unique
+
+
 # Singleton model instance
 _model = None
 _model_lock = threading.Lock()
@@ -273,15 +332,20 @@ def _get_model():
             return None
 
 
+def _get_db_connection():
+    """Get a database connection."""
+    import psycopg2
+    DATABASE_URL = os.environ.get(
+        'DATABASE_URL',
+        'postgresql://groundtruth:bZv6QbJ8KCAQubJFb+frmbGNKUiPm7lBUg0XgMvEzNQ=@localhost:5432/groundtruth_studio'
+    )
+    return psycopg2.connect(DATABASE_URL)
+
+
 def _has_existing_predictions(video_id: int) -> bool:
-    """Check if video already has predictions from this model."""
+    """Check if video already has predictions from this model (including scan markers)."""
     try:
-        import psycopg2
-        DATABASE_URL = os.environ.get(
-            'DATABASE_URL',
-            'postgresql://groundtruth:bZv6QbJ8KCAQubJFb+frmbGNKUiPm7lBUg0XgMvEzNQ=@localhost:5432/groundtruth_studio'
-        )
-        conn = psycopg2.connect(DATABASE_URL)
+        conn = _get_db_connection()
         try:
             with conn.cursor() as cur:
                 cur.execute(
@@ -293,6 +357,84 @@ def _has_existing_predictions(video_id: int) -> bool:
             conn.close()
     except Exception as e:
         logger.error(f"Failed to check existing predictions for video {video_id}: {e}")
+        return False
+
+
+def _store_scan_marker(video_id: int, person_count: int, inference_time_ms: float):
+    """Store a marker indicating this video was scanned but no vehicles found.
+
+    This prevents re-processing the video on subsequent batch runs.
+    The marker has scenario='prescreen_scan' and review_status='auto_approved'.
+    """
+    try:
+        import json
+        conn = _get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO ai_predictions
+                        (video_id, model_name, model_version, prediction_type, confidence,
+                         timestamp, scenario, predicted_tags, review_status, inference_time_ms, batch_id)
+                    VALUES (%s, %s, %s, 'keyframe', 0, 0, 'prescreen_scan', %s, 'auto_approved', %s, %s)
+                """, (
+                    video_id, MODEL_NAME, MODEL_VERSION,
+                    json.dumps({'scan_result': 'no_vehicles', 'persons_prescreened': person_count}),
+                    int(inference_time_ms),
+                    f"scan-marker-{int(time.time())}"
+                ))
+                conn.commit()
+                logger.debug(f"Stored scan marker for video {video_id} (no vehicles, {person_count} persons)")
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to store scan marker for video {video_id}: {e}")
+
+
+def _store_multiframe_scan_marker(video_id: int, person_count: int, inference_time_ms: float, frames_processed: int):
+    """Store marker indicating multi-frame scan found no vehicles."""
+    try:
+        import json
+        conn = _get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    INSERT INTO ai_predictions
+                        (video_id, model_name, model_version, prediction_type, confidence,
+                         timestamp, scenario, predicted_tags, review_status, inference_time_ms, batch_id)
+                    VALUES (%s, %s, %s, 'keyframe', 0, 0, 'prescreen_scan', %s, 'auto_approved', %s, %s)
+                """, (
+                    video_id, MODEL_NAME, MODEL_VERSION,
+                    json.dumps({
+                        'scan_result': 'no_vehicles_multiframe',
+                        'persons_prescreened': person_count,
+                        'frames_processed': frames_processed
+                    }),
+                    int(inference_time_ms),
+                    f"video-multiframe-{int(time.time())}"
+                ))
+                conn.commit()
+                logger.debug(f"Stored multiframe scan marker for video {video_id} ({frames_processed} frames, no vehicles)")
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to store multiframe scan marker for video {video_id}: {e}")
+
+
+def _has_multiframe_predictions(video_id: int) -> bool:
+    """Check if video already has multi-frame detection results."""
+    try:
+        conn = _get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT COUNT(*) FROM ai_predictions WHERE video_id = %s AND model_name = %s AND batch_id LIKE 'video-multiframe-%%'",
+                    (video_id, MODEL_NAME)
+                )
+                return cur.fetchone()[0] > 0
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to check multiframe predictions for video {video_id}: {e}")
         return False
 
 
@@ -458,8 +600,11 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
                 timeout=30
             )
             response.raise_for_status()
+        else:
+            # No vehicles found — store a scan marker so we don't re-process this video
+            _store_scan_marker(video_id, person_count, inference_time_ms)
 
-        return {
+        result = {
             'video_id': video_id,
             'persons_prescreened': person_count,
             'vehicles': vehicle_count,
@@ -467,9 +612,273 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
             'person_face_triggered': person_count > 0
         }
 
+        # --- Multi-frame detection for video files ---
+        # After thumbnail processing, check if there's a video file to sample
+        _trigger_multiframe_if_video(video_id, force_review)
+
+        return result
+
     except Exception as e:
         logger.error(f"Pre-screen failed for video {video_id}: {e}")
         return None
+
+
+def _trigger_multiframe_if_video(video_id: int, force_review: bool = True):
+    """Check if a video file exists for this video_id and trigger multi-frame detection."""
+    try:
+        conn = _get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT filename FROM videos WHERE id = %s", (video_id,))
+                row = cur.fetchone()
+                if not row or not row[0]:
+                    return
+                filename = row[0]
+        finally:
+            conn.close()
+
+        # Check if it's a video file (not an image or placeholder)
+        ext = os.path.splitext(filename)[1].lower()
+        if ext not in VIDEO_EXTENSIONS:
+            return
+
+        video_path = os.path.join(DOWNLOAD_DIR, filename)
+        if not os.path.exists(video_path):
+            return
+
+        # Fire multiframe detection in a background thread
+        thread = threading.Thread(
+            target=run_video_multiframe_detection,
+            args=(video_id, video_path, force_review),
+            daemon=True,
+            name=f"multiframe-{video_id}"
+        )
+        thread.start()
+        logger.info(f"Multi-frame detection triggered in background for video {video_id}")
+
+    except Exception as e:
+        logger.error(f"Failed to trigger multi-frame detection for video {video_id}: {e}")
+
+
+def run_video_multiframe_detection(video_id: int, video_path: str, force_review: bool = True) -> Optional[Dict]:
+    """
+    Run YOLO-World detection on multiple frames sampled from a video file.
+
+    Samples one frame every 10 seconds (starting at 10s), runs inference on each,
+    deduplicates across frames, and submits unique detections.
+
+    Args:
+        video_id: GT Studio video ID
+        video_path: Full path to the video file
+        force_review: If True, force all predictions to pending review
+
+    Returns:
+        Result dict with counts, or None on failure
+    """
+    import cv2
+    from PIL import Image
+    import numpy as np
+
+    if _has_multiframe_predictions(video_id):
+        logger.debug(f"Multi-frame skipped video {video_id}: already processed")
+        return {'video_id': video_id, 'vehicles': 0, 'persons_prescreened': 0, 'submitted': 0, 'skipped': True}
+
+    model = _get_model()
+    if model is None:
+        return None
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        logger.warning(f"Multi-frame: could not open video {video_path}")
+        return None
+
+    try:
+        fps = cap.get(cv2.CAP_PROP_FPS)
+        frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+        if fps <= 0 or frame_count <= 0:
+            logger.warning(f"Multi-frame: invalid video properties for {video_path} (fps={fps}, frames={frame_count})")
+            return None
+
+        duration = frame_count / fps
+        if duration <= MULTIFRAME_START_OFFSET:
+            logger.debug(f"Multi-frame skipped video {video_id}: too short ({duration:.1f}s)")
+            return {'video_id': video_id, 'vehicles': 0, 'persons_prescreened': 0, 'submitted': 0, 'skipped': True}
+
+        # Build list of timestamps to sample
+        sample_times = []
+        t = float(MULTIFRAME_START_OFFSET)
+        while t < duration and len(sample_times) < MULTIFRAME_MAX_FRAMES:
+            sample_times.append(t)
+            t += MULTIFRAME_INTERVAL
+
+        if not sample_times:
+            return {'video_id': video_id, 'vehicles': 0, 'persons_prescreened': 0, 'submitted': 0, 'skipped': True}
+
+        logger.info(f"Multi-frame video {video_id}: sampling {len(sample_times)} frames from {duration:.1f}s video")
+
+        all_vehicle_detections = []
+        total_person_count = 0
+        total_inference_ms = 0.0
+        frames_processed = 0
+
+        for timestamp in sample_times:
+            # Seek to frame
+            frame_number = int(timestamp * fps)
+            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+            ret, frame_bgr = cap.read()
+            if not ret:
+                continue
+
+            img_height, img_width = frame_bgr.shape[:2]
+
+            # Convert BGR to RGB for PIL/YOLO
+            frame_rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(frame_rgb)
+
+            # Run inference
+            start_time = time.time()
+            results = model.predict(
+                source=pil_img,
+                conf=CONF_THRESHOLD,
+                device=DEVICE,
+                verbose=False
+            )
+            frame_inference_ms = (time.time() - start_time) * 1000
+            total_inference_ms += frame_inference_ms
+            frames_processed += 1
+
+            result = results[0]
+            if result.boxes is None or len(result.boxes) == 0:
+                continue
+
+            for box in result.boxes:
+                x1, y1, x2, y2 = box.xyxy[0].tolist()
+                confidence = float(box.conf[0])
+                class_id = int(box.cls[0])
+
+                bbox = {
+                    'x': int(x1), 'y': int(y1),
+                    'width': int(x2 - x1), 'height': int(y2 - y1)
+                }
+
+                # Skip degenerate/out-of-bounds boxes
+                if (bbox['width'] < 5 or bbox['height'] < 5 or
+                        bbox['x'] < 0 or bbox['y'] < 0 or
+                        bbox['x'] + bbox['width'] > img_width or
+                        bbox['y'] + bbox['height'] > img_height):
+                    continue
+
+                # Person pre-screen
+                if class_id == PERSON_CLASS_ID:
+                    if confidence >= CLASS_CONF_THRESHOLDS.get("person", DEFAULT_CONF_THRESHOLD):
+                        total_person_count += 1
+                    continue
+
+                # Vehicle detection
+                raw_class = ALL_CLASSES[class_id] if class_id < len(ALL_CLASSES) else "unknown vehicle"
+                class_name = VEHICLE_DISPLAY_NAMES.get(raw_class, raw_class)
+
+                min_conf = CLASS_CONF_THRESHOLDS.get(class_name, DEFAULT_CONF_THRESHOLD)
+                if confidence < min_conf:
+                    continue
+
+                all_vehicle_detections.append({
+                    'prediction_type': 'keyframe',
+                    'confidence': round(confidence, 4),
+                    'timestamp': round(timestamp, 2),
+                    'scenario': 'vehicle_detection',
+                    'tags': {
+                        'class': class_name,
+                        'class_id': class_id,
+                        'vehicle_type': class_name,
+                        'yolo_world_prompt': raw_class,
+                        'source': 'multiframe',
+                        'source_frame_time': round(timestamp, 2)
+                    },
+                    'bbox': bbox,
+                    'inference_time_ms': round(frame_inference_ms, 2)
+                })
+
+        logger.info(
+            f"Multi-frame video {video_id}: {frames_processed}/{len(sample_times)} frames processed, "
+            f"{len(all_vehicle_detections)} raw detections, {total_person_count} persons "
+            f"({total_inference_ms:.0f}ms total)"
+        )
+
+        # Deduplicate across frames (same object appearing in multiple frames)
+        vehicle_predictions = _deduplicate_across_frames(all_vehicle_detections)
+
+        # Standard post-processing
+        vehicle_predictions = _cross_class_nms(vehicle_predictions, iou_threshold=0.5)
+        vehicle_predictions = _apply_confusion_rules(vehicle_predictions)
+
+        # Person pre-screen: trigger person-face-v1 if any frame had people
+        if total_person_count > 0:
+            try:
+                from auto_detect_runner import trigger_auto_detect
+                # Look up thumbnail path for person-face-v1
+                conn = _get_db_connection()
+                try:
+                    with conn.cursor() as cur:
+                        cur.execute("SELECT thumbnail_path FROM videos WHERE id = %s", (video_id,))
+                        row = cur.fetchone()
+                        thumb_path = row[0] if row else None
+                finally:
+                    conn.close()
+
+                if thumb_path and os.path.exists(thumb_path):
+                    logger.info(
+                        f"Multi-frame video {video_id}: {total_person_count} person(s) across frames, "
+                        f"triggering person-face-v1"
+                    )
+                    trigger_auto_detect(video_id, thumb_path, force_review=force_review)
+            except Exception as e:
+                logger.error(f"Multi-frame: failed to trigger person-face-v1 for video {video_id}: {e}")
+
+        # Submit vehicle predictions
+        if vehicle_predictions:
+            class_counts = {}
+            for p in vehicle_predictions:
+                cls = p['tags']['class']
+                class_counts[cls] = class_counts.get(cls, 0) + 1
+            logger.info(f"Multi-frame video {video_id}: submitting {len(vehicle_predictions)} vehicles: {class_counts}")
+
+            payload = {
+                'video_id': video_id,
+                'model_name': MODEL_NAME,
+                'model_version': MODEL_VERSION,
+                'model_type': MODEL_TYPE,
+                'batch_id': f"video-multiframe-{int(time.time())}",
+                'predictions': vehicle_predictions,
+                'force_review': force_review
+            }
+
+            response = requests.post(
+                f"{API_BASE_URL}/api/ai/predictions/batch",
+                json=payload,
+                headers={'X-Auth-Role': 'admin'},
+                timeout=30
+            )
+            response.raise_for_status()
+        else:
+            # No vehicles found across any frame - store multiframe scan marker
+            _store_multiframe_scan_marker(video_id, total_person_count, total_inference_ms, frames_processed)
+
+        return {
+            'video_id': video_id,
+            'persons_prescreened': total_person_count,
+            'vehicles': len(vehicle_predictions),
+            'submitted': len(vehicle_predictions),
+            'frames_sampled': len(sample_times),
+            'frames_processed': frames_processed,
+            'person_face_triggered': total_person_count > 0
+        }
+
+    except Exception as e:
+        logger.error(f"Multi-frame detection failed for video {video_id}: {e}")
+        return None
+    finally:
+        cap.release()
 
 
 def trigger_vehicle_detect(video_id: int, thumbnail_path: str, force_review: bool = True):

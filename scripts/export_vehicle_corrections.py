@@ -69,7 +69,7 @@ def crop_bbox_with_padding(image: Image.Image, bbox: dict, padding: float = 0.1)
 
     Args:
         image: PIL Image
-        bbox: Dict with bbox_x, bbox_y, bbox_width, bbox_height (normalized 0-1)
+        bbox: Dict with bbox_x, bbox_y, bbox_width, bbox_height (pixel coordinates)
         padding: Fraction of bbox size to add as padding (default 10%)
 
     Returns:
@@ -77,11 +77,10 @@ def crop_bbox_with_padding(image: Image.Image, bbox: dict, padding: float = 0.1)
     """
     img_width, img_height = image.size
 
-    # Convert normalized coords to pixel coords
-    x = bbox['bbox_x'] * img_width
-    y = bbox['bbox_y'] * img_height
-    w = bbox['bbox_width'] * img_width
-    h = bbox['bbox_height'] * img_height
+    x = bbox['bbox_x']
+    y = bbox['bbox_y']
+    w = bbox['bbox_width']
+    h = bbox['bbox_height']
 
     # Add padding
     pad_w = w * padding
@@ -91,6 +90,12 @@ def crop_bbox_with_padding(image: Image.Image, bbox: dict, padding: float = 0.1)
     y1 = max(0, y - pad_h)
     x2 = min(img_width, x + w + pad_w)
     y2 = min(img_height, y + h + pad_h)
+
+    if x2 <= x1 or y2 <= y1:
+        # Fallback: use raw bbox without padding
+        x1, y1 = max(0, x), max(0, y)
+        x2 = min(img_width, x + w)
+        y2 = min(img_height, y + h)
 
     return image.crop((x1, y1, x2, y2))
 
@@ -291,13 +296,13 @@ def export_detection(predictions: List[dict], output_dir: Path, dry_run: bool) -
 
                 class_id = get_class_id(vehicle_class)
 
-                # YOLO format: class_id center_x center_y width height (all normalized)
-                # Our bbox is: x, y, width, height (normalized)
-                # Convert to center coordinates
-                cx = pred['bbox_x'] + pred['bbox_width'] / 2
-                cy = pred['bbox_y'] + pred['bbox_height'] / 2
-                w = pred['bbox_width']
-                h = pred['bbox_height']
+                # YOLO format: class_id center_x center_y width height (all normalized 0-1)
+                # Our bbox is: x, y, width, height (pixel coordinates)
+                # Convert to normalized center coordinates
+                cx = (pred['bbox_x'] + pred['bbox_width'] / 2) / img_width
+                cy = (pred['bbox_y'] + pred['bbox_height'] / 2) / img_height
+                w = pred['bbox_width'] / img_width
+                h = pred['bbox_height'] / img_height
 
                 label_lines.append(f"{class_id} {cx:.6f} {cy:.6f} {w:.6f} {h:.6f}\n")
                 stats[vehicle_class] += 1

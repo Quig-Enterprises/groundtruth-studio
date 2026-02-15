@@ -2957,3 +2957,145 @@ class VideoDatabase:
                 WHERE visit_id = %s
             ''', (violation_id, visit_id))
             return cursor.rowcount > 0
+
+    # ==================== Interpolation Tracks ====================
+
+    def create_interpolation_track(self, video_id: int, class_name: str,
+                                    start_pred_id: int, end_pred_id: int,
+                                    start_ts: float, end_ts: float,
+                                    batch_id: str = None) -> int:
+        """Create a new interpolation track record. Returns track ID."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                INSERT INTO interpolation_tracks
+                (video_id, class_name, start_prediction_id, end_prediction_id,
+                 start_timestamp, end_timestamp, batch_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                RETURNING id
+            ''', (video_id, class_name, start_pred_id, end_pred_id,
+                  start_ts, end_ts, batch_id))
+            return cursor.fetchone()['id']
+
+    def update_interpolation_track(self, track_id: int, status: str = None,
+                                    frames_generated: int = None,
+                                    frames_detected: int = None,
+                                    reviewed_by: str = None) -> bool:
+        """Update an interpolation track's status and/or counts."""
+        updates = []
+        values = []
+        if status is not None:
+            updates.append('status = %s')
+            values.append(status)
+        if frames_generated is not None:
+            updates.append('frames_generated = %s')
+            values.append(frames_generated)
+        if frames_detected is not None:
+            updates.append('frames_detected = %s')
+            values.append(frames_detected)
+        if reviewed_by is not None:
+            updates.append('reviewed_by = %s')
+            values.append(reviewed_by)
+            updates.append('reviewed_at = NOW()')
+
+        if not updates:
+            return False
+
+        values.append(track_id)
+        with get_cursor() as cursor:
+            cursor.execute(f'''
+                UPDATE interpolation_tracks SET {', '.join(updates)}
+                WHERE id = %s
+            ''', values)
+            return cursor.rowcount > 0
+
+    def get_interpolation_tracks(self, video_id: int = None, status: str = None) -> List[Dict]:
+        """Get interpolation tracks, optionally filtered by video_id and/or status."""
+        with get_cursor(commit=False) as cursor:
+            conditions = []
+            params = []
+            if video_id is not None:
+                conditions.append('t.video_id = %s')
+                params.append(video_id)
+            if status is not None:
+                conditions.append('t.status = %s')
+                params.append(status)
+
+            where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+            cursor.execute(f'''
+                SELECT t.*, v.filename as video_filename, v.title as video_title
+                FROM interpolation_tracks t
+                JOIN videos v ON t.video_id = v.id
+                {where}
+                ORDER BY t.created_at DESC
+            ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_interpolation_track(self, track_id: int) -> Optional[Dict]:
+        """Get a single interpolation track with anchor prediction details."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT t.*,
+                       v.filename as video_filename, v.title as video_title,
+                       v.width as video_width, v.height as video_height,
+                       sp.timestamp as start_pred_timestamp,
+                       sp.bbox_x as start_bbox_x, sp.bbox_y as start_bbox_y,
+                       sp.bbox_width as start_bbox_width, sp.bbox_height as start_bbox_height,
+                       sp.confidence as start_confidence,
+                       sp.predicted_tags as start_predicted_tags,
+                       sp.corrected_tags as start_corrected_tags,
+                       sp.corrected_bbox as start_corrected_bbox,
+                       ep.timestamp as end_pred_timestamp,
+                       ep.bbox_x as end_bbox_x, ep.bbox_y as end_bbox_y,
+                       ep.bbox_width as end_bbox_width, ep.bbox_height as end_bbox_height,
+                       ep.confidence as end_confidence,
+                       ep.predicted_tags as end_predicted_tags,
+                       ep.corrected_tags as end_corrected_tags,
+                       ep.corrected_bbox as end_corrected_bbox
+                FROM interpolation_tracks t
+                JOIN videos v ON t.video_id = v.id
+                LEFT JOIN ai_predictions sp ON t.start_prediction_id = sp.id
+                LEFT JOIN ai_predictions ep ON t.end_prediction_id = ep.id
+                WHERE t.id = %s
+            ''', (track_id,))
+            row = cursor.fetchone()
+            return dict(row) if row else None
+
+    def get_track_predictions(self, batch_id: str) -> List[Dict]:
+        """Get all predictions belonging to an interpolation track batch."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT * FROM ai_predictions
+                WHERE batch_id = %s
+                ORDER BY timestamp ASC
+            ''', (batch_id,))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_approved_predictions_for_class(self, video_id: int, class_name: str,
+                                            model_name: str) -> List[Dict]:
+        """Get approved predictions matching a class for a video."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT * FROM ai_predictions
+                WHERE video_id = %s
+                AND model_name = %s
+                AND review_status IN ('approved', 'auto_approved')
+                AND (
+                    predicted_tags->>'class' = %s
+                    OR corrected_tags->>'class' = %s
+                )
+                ORDER BY timestamp ASC
+            ''', (video_id, model_name, class_name, class_name))
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def interpolation_track_exists(self, pred_id_a: int, pred_id_b: int) -> bool:
+        """Check if an interpolation track already exists for a pair of predictions."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT COUNT(*) as count FROM interpolation_tracks
+                WHERE (start_prediction_id = %s AND end_prediction_id = %s)
+                   OR (start_prediction_id = %s AND end_prediction_id = %s)
+            ''', (pred_id_a, pred_id_b, pred_id_b, pred_id_a))
+            return cursor.fetchone()['count'] > 0

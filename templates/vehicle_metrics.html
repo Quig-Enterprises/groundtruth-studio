@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Vehicle Detection Metrics - Groundtruth Studio</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .metrics-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header-section {
+            margin-bottom: 30px;
+        }
+
+        .header-section h1 {
+            margin: 0 0 5px 0;
+            font-size: 28px;
+            color: #1a1a1a;
+        }
+
+        .header-section .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .summary-cards {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 15px;
+            margin-bottom: 30px;
+        }
+
+        @media (min-width: 768px) {
+            .summary-cards {
+                grid-template-columns: repeat(2, 1fr);
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .summary-cards {
+                grid-template-columns: repeat(4, 1fr);
+            }
+        }
+
+        .summary-card {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .summary-card .card-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
+        .summary-card .card-value {
+            font-size: 32px;
+            font-weight: bold;
+            color: #1a1a1a;
+        }
+
+        .summary-card .card-subtext {
+            font-size: 13px;
+            color: #999;
+            margin-top: 5px;
+        }
+
+        .section-card {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 25px;
+        }
+
+        .section-card h2 {
+            margin: 0 0 20px 0;
+            font-size: 20px;
+            color: #1a1a1a;
+            font-weight: 600;
+        }
+
+        .stats-table {
+            width: 100%;
+            border-collapse: collapse;
+            overflow-x: auto;
+            display: block;
+        }
+
+        @media (min-width: 768px) {
+            .stats-table {
+                display: table;
+            }
+        }
+
+        .stats-table thead {
+            background: #f8f9fa;
+        }
+
+        .stats-table th {
+            padding: 12px 10px;
+            text-align: left;
+            font-size: 12px;
+            font-weight: 600;
+            color: #495057;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            border-bottom: 2px solid #dee2e6;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .stats-table th:hover {
+            background: #e9ecef;
+        }
+
+        .stats-table th.sortable::after {
+            content: ' ↕';
+            color: #adb5bd;
+        }
+
+        .stats-table th.sort-asc::after {
+            content: ' ↑';
+            color: #495057;
+        }
+
+        .stats-table th.sort-desc::after {
+            content: ' ↓';
+            color: #495057;
+        }
+
+        .stats-table td {
+            padding: 12px 10px;
+            border-bottom: 1px solid #dee2e6;
+            font-size: 14px;
+            color: #212529;
+        }
+
+        .stats-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+
+        .class-name {
+            font-weight: 500;
+            text-transform: capitalize;
+        }
+
+        .accuracy-high {
+            color: #28a745;
+            font-weight: 600;
+        }
+
+        .accuracy-medium {
+            color: #ffc107;
+            font-weight: 600;
+        }
+
+        .accuracy-low {
+            color: #dc3545;
+            font-weight: 600;
+        }
+
+        .confusion-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+
+        .confusion-table th,
+        .confusion-table td {
+            padding: 10px;
+            border: 1px solid #dee2e6;
+            text-align: left;
+        }
+
+        .confusion-table thead {
+            background: #f8f9fa;
+        }
+
+        .confusion-table th {
+            font-weight: 600;
+            color: #495057;
+            text-transform: uppercase;
+            font-size: 12px;
+            letter-spacing: 0.5px;
+        }
+
+        .confusion-table tbody tr:hover {
+            background: #f8f9fa;
+        }
+
+        .readiness-item {
+            margin-bottom: 20px;
+        }
+
+        .readiness-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+
+        .readiness-class {
+            font-weight: 500;
+            font-size: 14px;
+            color: #212529;
+            text-transform: capitalize;
+        }
+
+        .readiness-count {
+            font-size: 13px;
+            color: #6c757d;
+        }
+
+        .progress-bar-container {
+            width: 100%;
+            height: 24px;
+            background: #e9ecef;
+            border-radius: 4px;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: #4a90e2;
+            transition: width 0.3s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .progress-bar.ready {
+            background: #28a745;
+        }
+
+        .progress-bar-label {
+            position: absolute;
+            width: 100%;
+            text-align: center;
+            line-height: 24px;
+            font-size: 12px;
+            font-weight: 600;
+            color: #495057;
+            mix-blend-mode: difference;
+        }
+
+        .chart-container {
+            margin-top: 20px;
+        }
+
+        .chart-bars {
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+            height: 200px;
+            margin-top: 10px;
+        }
+
+        .chart-bar-wrapper {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .chart-bar {
+            width: 100%;
+            background: linear-gradient(to top, #4a90e2, #6ba5e7);
+            border-radius: 4px 4px 0 0;
+            position: relative;
+            min-height: 2px;
+            transition: all 0.3s ease;
+        }
+
+        .chart-bar:hover {
+            background: linear-gradient(to top, #3a7bc8, #5b95d7);
+        }
+
+        .chart-bar-value {
+            position: absolute;
+            top: -20px;
+            width: 100%;
+            text-align: center;
+            font-size: 11px;
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .chart-bar-label {
+            font-size: 11px;
+            color: #6c757d;
+            text-align: center;
+            word-break: break-word;
+        }
+
+        .empty-state {
+            background: white;
+            padding: 60px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .empty-state p {
+            font-size: 18px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .empty-state small {
+            font-size: 14px;
+            color: #999;
+        }
+
+        .loading-state {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+            font-size: 16px;
+        }
+
+        .error-state {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 20px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+
+        .recommendation {
+            padding: 15px 20px;
+            border-radius: 6px;
+            margin-bottom: 12px;
+            border-left: 4px solid;
+            font-size: 14px;
+            line-height: 1.5;
+        }
+
+        .recommendation .rec-title {
+            font-weight: 600;
+            margin-bottom: 4px;
+        }
+
+        .recommendation .rec-detail {
+            color: #555;
+            font-size: 13px;
+        }
+
+        .rec-raise-threshold {
+            background: #fff3cd;
+            border-color: #ffc107;
+        }
+
+        .rec-lower-threshold {
+            background: #d4edda;
+            border-color: #28a745;
+        }
+
+        .rec-confusion {
+            background: #f8d7da;
+            border-color: #dc3545;
+        }
+
+        .rec-data-needed {
+            background: #d1ecf1;
+            border-color: #17a2b8;
+        }
+
+        .rec-good {
+            background: #d4edda;
+            border-color: #28a745;
+        }
+
+        .no-recommendations {
+            text-align: center;
+            padding: 30px;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <script src="/static/js/gt-utils.js"></script>
+    <script src="/static/js/responsive-utils.js"></script>
+    <nav class="site-nav" id="site-nav">
+        <div class="nav-brand">
+            <a href="/">Groundtruth Studio</a>
+            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
+                <span class="hamburger-icon"></span>
+            </button>
+        </div>
+        <div class="nav-links" id="nav-links">
+            <a href="/" class="nav-link">Video Library</a>
+            <a href="/add-content" class="nav-link">Add Content</a>
+            <a href="/person-manager" class="nav-link">Person Manager</a>
+            <a href="/camera-topology" class="nav-link">Camera Topology</a>
+            <a href="/model-training" class="nav-link">Model Training</a>
+            <a href="/prediction-review" class="nav-link">AI Review</a>
+            <a href="/vehicle-metrics" class="nav-link">Vehicle Metrics</a>
+            <a href="/review" class="nav-link">Quick Review</a>
+            <a href="/sync-settings" class="nav-link">Sync Settings</a>
+            <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
+            <a href="/vibration-export" class="nav-link">Vibration Export</a>
+            <a href="/location-export" class="nav-link">Location Export</a>
+            <a href="/tag-manager" class="nav-link">Tag Manager</a>
+        </div>
+    </nav>
+    <div class="metrics-container">
+        <div class="header-section">
+            <h1>Vehicle Detection Metrics</h1>
+            <div class="subtitle">Performance analytics and quality metrics for vehicle detection AI</div>
+        </div>
+
+        <div id="error-container"></div>
+
+        <div class="summary-cards" id="summary-cards">
+            <div class="summary-card">
+                <div class="card-label">Total Detections</div>
+                <div class="card-value" id="total-detections">-</div>
+                <div class="card-subtext" id="class-count-text">-</div>
+            </div>
+            <div class="summary-card">
+                <div class="card-label">Approved</div>
+                <div class="card-value" id="approved-count">-</div>
+                <div class="card-subtext" id="auto-approved-text">-</div>
+            </div>
+            <div class="summary-card">
+                <div class="card-label">Pending Review</div>
+                <div class="card-value" id="pending-count">-</div>
+            </div>
+            <div class="summary-card">
+                <div class="card-label">Corrected</div>
+                <div class="card-value" id="corrected-count">-</div>
+                <div class="card-subtext" id="reviewed-today-text">-</div>
+            </div>
+        </div>
+
+        <div class="section-card">
+            <h2>Per-Class Statistics</h2>
+            <div id="class-stats-container" class="loading-state">Loading class statistics...</div>
+        </div>
+
+        <div class="section-card">
+            <h2>Confusion Matrix</h2>
+            <div id="confusion-matrix-container" class="loading-state">Loading confusion matrix...</div>
+        </div>
+
+        <div class="section-card">
+            <h2>Fine-Tuning Readiness</h2>
+            <div class="card-subtext" style="margin-bottom: 20px;">Target: 200 reviewed samples per class for optimal fine-tuning</div>
+            <div id="readiness-container" class="loading-state">Loading readiness data...</div>
+        </div>
+
+        <div class="section-card">
+            <h2>Weekly Trends</h2>
+            <div id="weekly-trends-container" class="loading-state">Loading weekly trends...</div>
+        </div>
+
+        <div class="section-card">
+            <h2>Prompt Tuning Recommendations</h2>
+            <div class="card-subtext" style="margin-bottom: 20px;">Automated analysis of detection patterns to suggest threshold and prompt adjustments</div>
+            <div id="recommendations-container" class="loading-state">Analyzing patterns...</div>
+        </div>
+    </div>
+
+    <script>const canWrite = {{ can_write|tojson }};</script>
+    <script src="{{ url_for('static', filename='js/vehicle_metrics_page.js') }}"></script>
+</body>
+</html>
