@@ -20,6 +20,92 @@ This system enables AI models to submit predictions for human review, creating a
                             └──────────────────┘       └──────────────────┘
 ```
 
+## Detection Pipeline
+
+### Pre-Screening Architecture (YOLO-World)
+
+All thumbnails pass through a single-pass YOLO-World pre-screener that detects both
+people and vehicles simultaneously. This eliminates redundant inference on empty scenes.
+
+```
+Thumbnail arrives (any source)
+        │
+        ▼
+┌───────────────────────────────┐
+│  YOLO-World Pre-Screen        │  vehicle_detect_runner.py
+│  (yolov8x-worldv2 on GPU 1)  │  MODEL: vehicle-world-v1
+│  Classes: person + 22 vehicle │
+│  types in single pass         │
+└───────────┬───────────────────┘
+            │
+    ┌───────┴───────┐
+    │               │
+    ▼               ▼
+ Person?         Vehicle?
+    │               │
+    ▼               ▼
+┌──────────┐  ┌──────────────────┐
+│ Trigger  │  │ Submit vehicle   │
+│ person-  │  │ predictions with │
+│ face-v1  │  │ type suggestion  │
+│ (custom  │  │ (sedan, truck,   │
+│ YOLO)    │  │ boat, ATV, etc.) │
+└────┬─────┘  └────────┬─────────┘
+     │                 │
+     ▼                 ▼
+┌──────────┐  ┌──────────────────┐
+│ Precise  │  │ Pending review   │
+│ person + │  │ for human        │
+│ face     │  │ classification   │
+│ bboxes + │  │ correction       │
+│ person   │  └──────────────────┘
+│ recog.   │
+└────┬─────┘
+     ▼
+┌──────────┐
+│ Pending  │
+│ review   │
+└──────────┘
+
+Empty scene → nothing triggered (saves compute)
+```
+
+### Models
+
+| Model | File | Type | Device | Purpose |
+|-------|------|------|--------|---------|
+| `vehicle-world-v1` | `yolov8x-worldv2.pt` | YOLO-World | GPU 1 | Pre-screen + vehicle detection |
+| `person-face-v1` | `person-face-v1-best.pt` | Custom YOLO | CPU | Precise person/face detection |
+| InsightFace | External API (:5060) | ArcFace | GPU 1 | Face embedding for person recognition |
+
+### Vehicle Classes (YOLO-World)
+
+Land (common): sedan, pickup truck, SUV, minivan, van
+Land (rural): tractor, ATV, UTV, snowmobile, golf cart, motorcycle, trailer
+Land (large): bus, semi truck, dump truck
+Watercraft: rowboat, fishing boat, speed boat, pontoon boat, kayak, canoe, sailboat, jet ski
+
+YOLO-World uses descriptive multi-word prompts (e.g., "ATV four wheeler quad") mapped to
+clean display names (e.g., "ATV") via `VEHICLE_DISPLAY_NAMES`.
+
+### Ingestion Sources
+
+| Source | Module | Trigger | force_review |
+|--------|--------|---------|--------------|
+| Frigate cameras | `frigate_ingester.py` | Polling (5-min interval) | Yes |
+| EcoEye alerts (with video) | `api.py` sync-sample | On import | Default |
+| EcoEye alerts (metadata-only) | `api.py` sync-sample | On import | Default |
+| Manual video upload | `api.py` upload | On upload | Default |
+
+### Key Files
+
+| File | Purpose |
+|------|---------|
+| `vehicle_detect_runner.py` | YOLO-World pre-screener + vehicle detection |
+| `auto_detect_runner.py` | person-face-v1 detection + person recognition |
+| `person_recognizer.py` | Face embedding gallery + cosine similarity matching |
+| `frigate_ingester.py` | Frigate camera snapshot polling |
+
 ## Database Schema
 
 ### New Table: `ai_predictions`

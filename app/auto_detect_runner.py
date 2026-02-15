@@ -99,7 +99,7 @@ def _has_existing_predictions(video_id: int) -> bool:
         return False
 
 
-def run_detection_on_thumbnail(video_id: int, thumbnail_path: str, device: str = "cpu") -> Optional[Dict]:
+def run_detection_on_thumbnail(video_id: int, thumbnail_path: str, device: str = "cpu", force_review: bool = False) -> Optional[Dict]:
     """
     Run person/face detection on a thumbnail and submit predictions.
 
@@ -107,6 +107,7 @@ def run_detection_on_thumbnail(video_id: int, thumbnail_path: str, device: str =
         video_id: GT Studio video ID
         thumbnail_path: Full path to thumbnail image
         device: Inference device (cpu or 0 for GPU)
+        force_review: If True, bypass confidence-based routing and force pending review
 
     Returns:
         Result dict with counts, or None on failure
@@ -118,12 +119,12 @@ def run_detection_on_thumbnail(video_id: int, thumbnail_path: str, device: str =
         return {'video_id': video_id, 'persons': 0, 'faces': 0, 'submitted': 0, 'skipped': True}
 
     try:
-        return _run_detection_locked(video_id, thumbnail_path, device)
+        return _run_detection_locked(video_id, thumbnail_path, device, force_review)
     finally:
         video_lock.release()
 
 
-def _run_detection_locked(video_id: int, thumbnail_path: str, device: str = "cpu") -> Optional[Dict]:
+def _run_detection_locked(video_id: int, thumbnail_path: str, device: str = "cpu", force_review: bool = False) -> Optional[Dict]:
     """Internal: run detection while holding per-video lock."""
     # Skip if already processed
     if _has_existing_predictions(video_id):
@@ -224,7 +225,8 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, device: str = "cpu
             'model_version': MODEL_VERSION,
             'model_type': MODEL_TYPE,
             'batch_id': f"auto-detect-{int(time.time())}",
-            'predictions': predictions
+            'predictions': predictions,
+            'force_review': force_review
         }
 
         response = requests.post(
@@ -288,11 +290,11 @@ def _ensure_person_for_faces(predictions: List[Dict], img_width: int, img_height
     return predictions + new_persons
 
 
-def trigger_auto_detect(video_id: int, thumbnail_path: str, device: str = "cpu"):
+def trigger_auto_detect(video_id: int, thumbnail_path: str, device: str = "cpu", force_review: bool = False):
     """Fire-and-forget: run auto-detect in a background thread."""
     thread = threading.Thread(
         target=run_detection_on_thumbnail,
-        args=(video_id, thumbnail_path, device),
+        args=(video_id, thumbnail_path, device, force_review),
         daemon=True,
         name=f"auto-detect-{video_id}"
     )

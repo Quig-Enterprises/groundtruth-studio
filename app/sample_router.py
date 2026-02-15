@@ -196,3 +196,20 @@ class SampleRouter:
             'routing_counts': routing['counts'],
             **application
         }
+
+    def force_all_to_review(self, prediction_ids: List[int]) -> Dict:
+        """Force all predictions to pending review, bypassing confidence-based routing."""
+        with get_cursor(commit=True) as cursor:
+            if prediction_ids:
+                extras.execute_batch(cursor, '''
+                    UPDATE ai_predictions
+                    SET review_status = 'pending', routed_by = 'manual'
+                    WHERE id = %s AND review_status != 'pending'
+                ''', [(pid,) for pid in prediction_ids])
+
+        return {
+            'auto_approved': [],
+            'review': prediction_ids,
+            'auto_rejected': [],
+            'errors': []
+        }

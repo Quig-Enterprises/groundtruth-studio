@@ -6,6 +6,13 @@
     let currentOffset = 0;
     const PAGE_SIZE = 50;
 
+    const VEHICLE_TYPES = [
+        'sedan', 'pickup truck', 'SUV', 'minivan', 'van',
+        'tractor', 'ATV', 'UTV', 'snowmobile', 'golf cart', 'motorcycle', 'trailer',
+        'bus', 'semi truck', 'dump truck',
+        'rowboat', 'fishing boat', 'speed boat', 'pontoon boat', 'kayak', 'canoe', 'sailboat', 'jet ski'
+    ];
+
     async function fetchJSON(url, options) {
         const resp = await fetch(url, options);
         return resp.json();
@@ -41,11 +48,13 @@
 
     async function loadPredictions() {
         const modelFilter = document.getElementById('model-filter')?.value || '';
+        const scenarioFilter = document.getElementById('scenario-filter')?.value || '';
         const minConf = document.getElementById('min-confidence')?.value || '';
         const maxConf = document.getElementById('max-confidence')?.value || '';
 
         let url = '/api/ai/predictions/all-pending?limit=' + PAGE_SIZE + '&offset=' + currentOffset;
         if (modelFilter) url += '&model=' + encodeURIComponent(modelFilter);
+        if (scenarioFilter) url += '&scenario=' + encodeURIComponent(scenarioFilter);
         if (minConf) url += '&min_confidence=' + minConf;
         if (maxConf) url += '&max_confidence=' + maxConf;
 
@@ -115,11 +124,28 @@
                 '</div>';
 
             if (canWrite) {
+                const tags = pred.predicted_tags || {};
+                const isVehicle = tags.vehicle_type || (pred.scenario === 'vehicle_detection');
+
                 html += '<div class="pred-card-actions">' +
                     '<button class="btn-approve" onclick="predReview.review(' + pred.id + ', \'approve\')">Approve</button>' +
-                    '<button class="btn-reject" onclick="predReview.review(' + pred.id + ', \'reject\')">Reject</button>' +
-                    '<button class="btn-correct" onclick="predReview.review(' + pred.id + ', \'correct\')">Correct</button>' +
-                    '</div>';
+                    '<button class="btn-reject" onclick="predReview.review(' + pred.id + ', \'reject\')">Reject</button>';
+
+                if (isVehicle) {
+                    const currentType = tags.vehicle_type || tags.class || '';
+                    html += '<select id="reclassify-' + pred.id + '" style="flex:1;padding:8px;border:1px solid #ddd;border-radius:4px;font-size:13px;">';
+                    html += '<option value="">Reclassify as...</option>';
+                    for (const vt of VEHICLE_TYPES) {
+                        const selected = (vt === currentType) ? ' selected' : '';
+                        html += '<option value="' + escapeHtml(vt) + '"' + selected + '>' + escapeHtml(vt) + '</option>';
+                    }
+                    html += '</select>' +
+                        '<button class="btn-correct" onclick="predReview.reclassifyVehicle(' + pred.id + ')">Reclassify</button>';
+                } else {
+                    html += '<button class="btn-correct" onclick="predReview.review(' + pred.id + ', \'correct\')">Correct</button>';
+                }
+
+                html += '</div>';
             }
             html += '</div>';
         }
@@ -206,7 +232,54 @@
         loadPredictions();
     }
 
-    window.predReview = { loadPredictions, review, approveAllHighConfidence, applyFilters, prevPage, nextPage };
+    async function reclassifyVehicle(predictionId) {
+        const select = document.getElementById('reclassify-' + predictionId);
+        if (!select || !select.value) {
+            alert('Please select a vehicle type');
+            return;
+        }
+
+        const newType = select.value;
+
+        try {
+            const data = await fetchJSON('/api/ai/predictions/' + predictionId + '/review', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    action: 'correct',
+                    corrections: {
+                        tags: {
+                            class: newType,
+                            vehicle_type: newType,
+                            corrected: true
+                        },
+                        correction_type: 'vehicle_reclass'
+                    },
+                    notes: 'Reclassified vehicle type to: ' + newType
+                })
+            });
+
+            if (data.success) {
+                const card = document.getElementById('pred-' + predictionId);
+                if (card) {
+                    card.style.opacity = '0';
+                    card.style.transform = 'scale(0.95)';
+                    setTimeout(function() {
+                        card.remove();
+                        total--;
+                        var countEl = document.getElementById('total-count');
+                        if (countEl) countEl.textContent = total;
+                    }, 300);
+                }
+            } else {
+                alert('Error: ' + (data.error || 'Reclassification failed'));
+            }
+        } catch (e) {
+            alert('Error: ' + e.message);
+        }
+    }
+
+    window.predReview = { loadPredictions, review, reclassifyVehicle, approveAllHighConfidence, applyFilters, prevPage, nextPage };
 
     loadModels();
     loadPredictions();
