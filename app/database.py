@@ -55,10 +55,16 @@ class VideoDatabase:
                 INSERT INTO videos (filename, original_url, title, duration, width, height,
                                   file_size, thumbnail_path, notes, camera_id)
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (filename) DO NOTHING
                 RETURNING id
             ''', (filename, original_url, title, duration, width, height, file_size, thumbnail_path, notes, camera_id))
             result = cursor.fetchone()
-            return result['id']
+            if result:
+                return result['id']
+            # Row already existed — look it up
+            cursor.execute('SELECT id FROM videos WHERE filename = %s', (filename,))
+            existing = cursor.fetchone()
+            return existing['id']
 
     def get_video(self, video_id: int) -> Optional[Dict]:
         with get_cursor(commit=False) as cursor:

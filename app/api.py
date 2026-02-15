@@ -7,7 +7,7 @@ import logging
 import atexit
 from pathlib import Path
 from database import VideoDatabase
-from db_connection import init_connection_pool, close_connection_pool, get_connection
+from db_connection import init_connection_pool, close_connection_pool, get_connection, get_cursor
 from psycopg2 import extras
 from downloader import VideoDownloader
 from video_utils import VideoProcessor
@@ -23,6 +23,8 @@ from location_exporter import LocationExporter
 from sample_router import SampleRouter
 from face_clustering import FaceClusterer
 from auto_detect_runner import trigger_auto_detect, run_detection_on_thumbnail
+from person_recognizer import get_recognizer
+import time
 
 app = Flask(__name__,
             template_folder='../templates',
@@ -387,6 +389,21 @@ def sync_ecoeye_sample():
             dl_result = downloader.download_video(video_url)
 
             if dl_result.get('success'):
+                # Check if a video with this filename already exists
+                with get_connection() as conn:
+                    dup_cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+                    dup_cursor.execute("SELECT id FROM videos WHERE filename = %s", (dl_result['filename'],))
+                    dup_existing = dup_cursor.fetchone()
+
+                if dup_existing:
+                    print(f"[EcoEye Sync] Video file already in DB: {dl_result['filename']} -> record {dup_existing['id']}")
+                    return jsonify({
+                        'success': True,
+                        'record_id': dup_existing['id'],
+                        'message': 'Video already imported (matched by filename)',
+                        'already_imported': True
+                    })
+
                 video_id = db.add_video(
                     filename=dl_result['filename'],
                     title=f"{event.get('camera_name', 'Unknown')} - {event.get('event_type', 'event')}",
@@ -3850,6 +3867,186 @@ def merge_face_clusters(source_id, target_id):
 # Support for reverse proxy
 from werkzeug.middleware.proxy_fix import ProxyFix
 app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1, x_prefix=1)
+
+
+# ==================== Person Recognition Endpoints ====================
+
+@app.route('/api/person-recognition/build-gallery', methods=['POST'])
+def build_person_gallery():
+    """Build/rebuild reference gallery from tagged person identities."""
+    try:
+        recognizer = get_recognizer()
+        result = recognizer.build_reference_gallery()
+        return jsonify({"success": True, **result})
+    except Exception as e:
+        logger.error(f"Failed to build gallery: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/person-recognition/gallery-stats', methods=['GET'])
+def person_gallery_stats():
+    """Return gallery statistics."""
+    try:
+        recognizer = get_recognizer()
+        stats = recognizer.gallery_stats()
+        return jsonify({"success": True, **stats})
+    except Exception as e:
+        logger.error(f"Failed to get gallery stats: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/person-recognition/recognize', methods=['POST'])
+def recognize_person_in_video():
+    """Run recognition on a specific video's thumbnail."""
+    data = request.get_json()
+    if not data or 'video_id' not in data:
+        return jsonify({"success": False, "error": "video_id required"}), 400
+
+    video_id = data['video_id']
+
+    try:
+        # Get video thumbnail
+        video = db.get_video(video_id)
+        if not video:
+            return jsonify({"success": False, "error": "Video not found"}), 404
+
+        thumbnail_path = video.get('thumbnail_path', '')
+        if not thumbnail_path or not os.path.exists(thumbnail_path):
+            # Try fallback path
+            basename = os.path.basename(thumbnail_path) if thumbnail_path else ''
+            thumbnail_path = f"/opt/groundtruth-studio/thumbnails/{basename}"
+            if not os.path.exists(thumbnail_path):
+                return jsonify({"success": False, "error": "Thumbnail not found"}), 404
+
+        recognizer = get_recognizer()
+
+        # Get existing face detections for this video
+        predictions = db.get_predictions_for_video(video_id)
+        face_dets = [
+            {'x': p['bbox_x'], 'y': p['bbox_y'], 'width': p['bbox_width'], 'height': p['bbox_height']}
+            for p in predictions
+            if p.get('scenario') in ('face_detection',) and p.get('bbox_x') is not None
+        ]
+
+        if not face_dets:
+            # No existing face detections - send full image to InsightFace
+            result = recognizer._get_embedding(thumbnail_path)
+            if result and result.get('face_detected'):
+                bbox = result['bbox']
+                face_dets = [{'x': int(bbox[0]), 'y': int(bbox[1]),
+                              'width': int(bbox[2] - bbox[0]), 'height': int(bbox[3] - bbox[1])}]
+            else:
+                return jsonify({"success": True, "predictions_created": 0, "matches": [],
+                                "message": "No faces detected"})
+
+        id_predictions = recognizer.recognize_faces_in_thumbnail(thumbnail_path, face_dets)
+
+        # Submit predictions to the review queue
+        created = 0
+        matches = []
+        if id_predictions:
+            pred_ids = db.insert_predictions_batch(
+                video_id, 'person-recognition', '1.0',
+                f"recognition-{int(time.time())}", id_predictions
+            )
+            created = len(pred_ids)
+
+            # Force all to review status (never auto-approve person identification)
+            for pid in pred_ids:
+                db.update_prediction_routing(pid, 'pending', 'person_recognition', {})
+
+            matches = [
+                {"person_name": p['tags']['person_name'], "confidence": p['confidence']}
+                for p in id_predictions
+            ]
+
+        return jsonify({
+            "success": True,
+            "predictions_created": created,
+            "matches": matches
+        })
+    except Exception as e:
+        logger.error(f"Recognition failed for video {video_id}: {e}")
+        return jsonify({"success": False, "error": str(e)}), 500
+
+
+@app.route('/api/person-recognition/backfill', methods=['POST'])
+def backfill_person_recognition():
+    """Process all existing thumbnails for person recognition in background."""
+    import threading
+
+    def _backfill():
+        recognizer = get_recognizer()
+        gallery = recognizer.get_reference_gallery()
+        if not gallery:
+            logger.warning("Backfill skipped: no reference gallery")
+            return
+
+        with get_cursor(commit=False) as cur:
+            cur.execute("""
+                SELECT v.id, v.thumbnail_path FROM videos v
+                WHERE v.thumbnail_path IS NOT NULL
+                AND NOT EXISTS (
+                    SELECT 1 FROM ai_predictions ap
+                    WHERE ap.video_id = v.id AND ap.scenario = 'person_identification'
+                )
+                ORDER BY v.id
+            """)
+            videos = cur.fetchall()
+
+        logger.info(f"Backfill: processing {len(videos)} videos")
+        processed = 0
+        identified = 0
+
+        for video in videos:
+            vid_id = video['id']
+            thumb = video['thumbnail_path']
+            if not os.path.exists(thumb):
+                basename = os.path.basename(thumb)
+                thumb = f"/opt/groundtruth-studio/thumbnails/{basename}"
+                if not os.path.exists(thumb):
+                    continue
+
+            try:
+                # Get face detections
+                preds = db.get_predictions_for_video(vid_id)
+                face_dets = [
+                    {'x': p['bbox_x'], 'y': p['bbox_y'],
+                     'width': p['bbox_width'], 'height': p['bbox_height']}
+                    for p in preds
+                    if p.get('scenario') in ('face_detection',) and p.get('bbox_x') is not None
+                ]
+
+                if not face_dets:
+                    result = recognizer._get_embedding(thumb)
+                    if result and result.get('face_detected'):
+                        bbox = result['bbox']
+                        face_dets = [{'x': int(bbox[0]), 'y': int(bbox[1]),
+                                      'width': int(bbox[2] - bbox[0]), 'height': int(bbox[3] - bbox[1])}]
+
+                if face_dets:
+                    id_preds = recognizer.recognize_faces_in_thumbnail(thumb, face_dets)
+                    if id_preds:
+                        db.insert_predictions_batch(
+                            vid_id, 'person-recognition', '1.0',
+                            f"backfill-{int(time.time())}", id_preds
+                        )
+                        identified += len(id_preds)
+
+                processed += 1
+            except Exception as e:
+                logger.error(f"Backfill error for video {vid_id}: {e}")
+
+        logger.info(f"Backfill complete: {processed} videos, {identified} identifications")
+
+    thread = threading.Thread(target=_backfill, daemon=True, name="person-recognition-backfill")
+    thread.start()
+
+    return jsonify({
+        "success": True,
+        "message": "Backfill started in background"
+    })
+
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5050, threaded=True)
