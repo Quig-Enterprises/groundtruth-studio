@@ -137,34 +137,87 @@ function renderDetections(detections) {
         return;
     }
 
-    let html = '';
+    container.textContent = '';
     detections.forEach(detection => {
         const isSelected = selectedDetections.has(detection.id);
         const personName = detection.person_name || 'Unknown';
 
-        html += `
-            <div class="detection-card ${isSelected ? 'selected' : ''}" data-id="${detection.id}">
-                <input type="checkbox" class="detection-checkbox"
-                       ${isSelected ? 'checked' : ''}
-                       onchange="toggleDetectionSelect(${detection.id})">
-                <div class="detection-thumbnail" onclick="viewDetection(${detection.video_id}, ${detection.timestamp})">
-                    <img src="${detection.thumbnail_path}" alt="Video thumbnail">
-                    <!-- Bbox overlay would go here if we render it -->
-                </div>
-                <div class="detection-info">
-                    <div class="video-title">${escapeHtml(detection.video_title)}</div>
-                    <div class="timestamp">@ ${formatTimestamp(detection.timestamp)}</div>
-                    <div class="tags">
-                        <span class="tag">👤 ${escapeHtml(personName)}</span>
-                        ${detection.pose ? `<span class="tag">${detection.pose}</span>` : ''}
-                        ${detection.distance_category ? `<span class="tag">${detection.distance_category}</span>` : ''}
-                    </div>
-                </div>
-            </div>
-        `;
-    });
+        const card = document.createElement('div');
+        card.className = 'detection-card' + (isSelected ? ' selected' : '');
+        card.setAttribute('data-id', detection.id);
 
-    container.innerHTML = html;
+        const checkbox = document.createElement('input');
+        checkbox.type = 'checkbox';
+        checkbox.className = 'detection-checkbox';
+        checkbox.checked = isSelected;
+        checkbox.onchange = () => toggleDetectionSelect(detection.id);
+
+        const thumbDiv = document.createElement('div');
+        thumbDiv.className = 'detection-thumbnail';
+        thumbDiv.setAttribute('data-mode', 'crop');
+
+        const img = document.createElement('img');
+        img.alt = 'Detection';
+
+        thumbDiv.onclick = (e) => {
+            e.stopPropagation();
+            toggleThumbnailView(thumbDiv, img, detection);
+        };
+        thumbDiv.ondblclick = (e) => {
+            e.stopPropagation();
+            viewDetection(detection.video_id, detection.timestamp);
+        };
+
+        thumbDiv.appendChild(img);
+
+        // Set src, then crop once fully decoded
+        img.src = detection.thumbnail_path;
+        if (detection.bbox_x != null && detection.bbox_width > 0) {
+            img.decode().then(() => {
+                applyCropView(thumbDiv, img, detection);
+            }).catch(() => {});
+        }
+
+        const info = document.createElement('div');
+        info.className = 'detection-info';
+
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'video-title';
+        titleDiv.textContent = detection.video_title;
+
+        const tsDiv = document.createElement('div');
+        tsDiv.className = 'timestamp';
+        tsDiv.textContent = '@ ' + formatTimestamp(detection.timestamp);
+
+        const tagsDiv = document.createElement('div');
+        tagsDiv.className = 'tags';
+        const nameTag = document.createElement('span');
+        nameTag.className = 'tag';
+        nameTag.textContent = personName;
+        tagsDiv.appendChild(nameTag);
+
+        if (detection.pose) {
+            const poseTag = document.createElement('span');
+            poseTag.className = 'tag';
+            poseTag.textContent = detection.pose;
+            tagsDiv.appendChild(poseTag);
+        }
+        if (detection.distance_category) {
+            const distTag = document.createElement('span');
+            distTag.className = 'tag';
+            distTag.textContent = detection.distance_category;
+            tagsDiv.appendChild(distTag);
+        }
+
+        info.appendChild(titleDiv);
+        info.appendChild(tsDiv);
+        info.appendChild(tagsDiv);
+
+        card.appendChild(checkbox);
+        card.appendChild(thumbDiv);
+        card.appendChild(info);
+        container.appendChild(card);
+    });
     updateBulkActionButtons();
 }
 
@@ -356,9 +409,120 @@ async function bulkUnassign() {
     }
 }
 
+function applyCropView(thumbDiv, img, detection) {
+    // Remove any existing bbox overlay
+    const existing = thumbDiv.querySelector('.bbox-overlay');
+    if (existing) existing.remove();
+
+    if (!img.naturalWidth || detection.bbox_x == null) return;
+
+    const natW = img.naturalWidth;
+    const natH = img.naturalHeight;
+    const bx = detection.bbox_x;
+    const by = detection.bbox_y;
+    const bw = detection.bbox_width;
+    const bh = detection.bbox_height;
+
+    // Padded crop region (1% padding)
+    const padX = bw * 0.01;
+    const padY = bh * 0.01;
+    const cropX = Math.max(0, bx - padX);
+    const cropY = Math.max(0, by - padY);
+    const cropR = Math.min(natW, bx + bw + padX);
+    const cropB = Math.min(natH, by + bh + padY);
+    const cropW = cropR - cropX;
+    const cropH = cropB - cropY;
+
+    // Draw cropped region to canvas and replace img src with data URL
+    try {
+        const canvas = document.createElement('canvas');
+        // Output at 2x for retina sharpness, capped at reasonable size
+        const outW = Math.min(cropW * 2, 600);
+        const outH = Math.min(cropH * 2, 600);
+        const scale = Math.min(outW / cropW, outH / cropH);
+        canvas.width = Math.round(cropW * scale);
+        canvas.height = Math.round(cropH * scale);
+
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, cropX, cropY, cropW, cropH, 0, 0, canvas.width, canvas.height);
+
+        // Store original src for full view toggle
+        if (!img.dataset.originalSrc) {
+            img.dataset.originalSrc = img.src;
+        }
+        img.src = canvas.toDataURL('image/jpeg', 0.9);
+    } catch (e) {
+        console.error('Crop failed:', e);
+        return;
+    }
+
+    // Reset all styles to default
+    img.style.cssText = 'width:100%;height:100%;object-fit:cover;';
+
+    thumbDiv.setAttribute('data-mode', 'crop');
+}
+
+function applyFullView(thumbDiv, img, detection) {
+    // Restore original image src
+    if (img.dataset.originalSrc) {
+        img.src = img.dataset.originalSrc;
+    }
+    img.style.cssText = 'width:100%;height:100%;object-fit:contain;';
+
+    // Add bbox overlay
+    const existing = thumbDiv.querySelector('.bbox-overlay');
+    if (existing) existing.remove();
+
+    if (detection.bbox_x != null && detection.bbox_width > 0 && img.naturalWidth) {
+        const containerW = thumbDiv.offsetWidth;
+        const containerH = thumbDiv.offsetHeight;
+        const natW = img.naturalWidth;
+        const natH = img.naturalHeight;
+
+        // Calculate how object-fit:contain positions the image
+        const imgRatio = natW / natH;
+        const contRatio = containerW / containerH;
+        let dispW, dispH, offX, offY;
+        if (imgRatio > contRatio) {
+            dispW = containerW;
+            dispH = containerW / imgRatio;
+            offX = 0;
+            offY = (containerH - dispH) / 2;
+        } else {
+            dispH = containerH;
+            dispW = containerH * imgRatio;
+            offX = (containerW - dispW) / 2;
+            offY = 0;
+        }
+
+        const scaleX = dispW / natW;
+        const scaleY = dispH / natH;
+
+        const bbox = document.createElement('div');
+        bbox.className = 'bbox-overlay';
+        bbox.style.left = (offX + detection.bbox_x * scaleX) + 'px';
+        bbox.style.top = (offY + detection.bbox_y * scaleY) + 'px';
+        bbox.style.width = (detection.bbox_width * scaleX) + 'px';
+        bbox.style.height = (detection.bbox_height * scaleY) + 'px';
+        thumbDiv.appendChild(bbox);
+    }
+
+    thumbDiv.setAttribute('data-mode', 'full');
+}
+
+function toggleThumbnailView(thumbDiv, img, detection) {
+    const mode = thumbDiv.getAttribute('data-mode');
+    if (mode === 'crop') {
+        applyFullView(thumbDiv, img, detection);
+    } else {
+        // Return to crop view; double-click full view navigates
+        applyCropView(thumbDiv, img, detection);
+    }
+}
+
 function viewDetection(videoId, timestamp) {
     // Open annotation page at specific timestamp
-    window.open(`/annotate?id=${videoId}&t=${timestamp}`, '_blank');
+    window.open('/annotate?id=' + videoId + '&t=' + timestamp, '_blank');
 }
 
 function filterDetections(query) {

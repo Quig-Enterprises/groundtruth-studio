@@ -1,30 +1,33 @@
 """
 EcoEye Alerts Integration Module
 
-Provides synchronization with alert.ecoeyetech.com for:
-1. Syncing alert data from EcoEye Alert Relay
-2. Downloading videos already retrieved from UniFi Protect
+Provides synchronization with alert.ecoeyetech.com (EcoEye Alert Relay) for:
+1. Syncing alert data from EcoEye Alert Relay API v1
+2. Downloading videos via authenticated API
 
-EcoEye Alert Relay API Integration:
-- Base URL: https://alert.ecoeyetech.com (no /api/v1 prefix)
-- Authentication: Currently no auth required (IP whitelist will be added later)
+EcoEye Alert Relay API:
+- Base URL: https://alert.ecoeyetech.com
+- Authentication: HMAC-SHA256 request signing (X-API-Key, X-Signature, X-Timestamp)
 - Endpoints:
-  - GET /health - Health check
-  - GET /events?limit=N&status=completed - List events
-  - GET /events/{event_id} - Get single event with video_path
-  - GET /videos/{path} - Download video file
+  - GET /api/health - Health/status check
+  - GET /api/events - List events with filtering
+  - GET /api/events/{event_id} - Get event details and video info
+  - POST /api/events/{event_id}/retry - Trigger video download from UniFi
+  - GET /videos/{path} - Download video file (served via relay)
 
-Field Mapping:
+Field Mapping (API → local):
 - event_id → alert_id
 - event_type → alert_type
-- status == 'completed' → video_available
-- video_path → used to construct download_url
-- confidence: not available, defaults to 1.0
+- confidence → confidence
+- event_id → video_id
+- status (completed) → video_available
+- video_path → local download path construction
 
 Security features:
+- HMAC-SHA256 request signing
 - HTTPS-only connections
-- Rate limiting
-- Error handling and retry logic
+- Rate limiting (100 req/min, 10 req/sec burst)
+- 5-minute timestamp window for replay protection
 """
 
 import requests
@@ -34,6 +37,8 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from datetime import datetime, timedelta
 import logging
+import hmac
+import hashlib
 from db_connection import get_connection, get_cursor
 
 logger = logging.getLogger(__name__)
@@ -42,23 +47,21 @@ logger = logging.getLogger(__name__)
 class EcoEyeSyncClient:
     """Client for syncing with alert.ecoeyetech.com (EcoEye Alert Relay)"""
 
-    def __init__(self, db_path: str, download_dir: Path, api_key: str = None, api_secret: str = None):
+    def __init__(self, download_dir: Path, api_key: str = None, api_secret: str = None, base_url: str = None):
         """
         Initialize EcoEye sync client
 
         Args:
-            db_path: Path to video database (kept for backwards compatibility, ignored)
             download_dir: Directory for downloaded videos
-            api_key: API key for authentication (optional, reserved for future use)
-            api_secret: API secret for request signing (optional, reserved for future use)
+            api_key: API key for HMAC authentication
+            api_secret: API secret for HMAC-SHA256 request signing
+            base_url: Base URL for EcoEye Alert Relay API
 
-        Note: Authentication is currently not required (no auth on Alert Relay API).
-              IP whitelist will be added later.
-              Database connection now uses PostgreSQL via db_connection module.
+        Note: API uses HMAC-SHA256 signing for authentication.
+              Database connection uses PostgreSQL via db_connection module.
         """
-        # db_path kept for backwards compatibility but not used
         self.download_dir = Path(download_dir)
-        self.base_url = "https://alert.ecoeyetech.com"  # No /api/v1 prefix
+        self.base_url = base_url or "https://alert.ecoeyetech.com"
         self.api_key = api_key
         self.api_secret = api_secret
         self.session = requests.Session()
@@ -76,9 +79,11 @@ class EcoEyeSyncClient:
 
     def set_credentials(self, api_key: str, api_secret: str):
         """
-        Set API credentials (reserved for future use)
+        Set API credentials for HMAC-SHA256 request signing
 
-        Note: Currently not required as API doesn't use authentication yet
+        Args:
+            api_key: API key (sent in X-API-Key header)
+            api_secret: API secret for generating HMAC signatures
         """
         self.api_key = api_key
         self.api_secret = api_secret
@@ -93,7 +98,7 @@ class EcoEyeSyncClient:
     def _make_request(self, method: str, endpoint: str, params: Dict = None,
                      json_data: Dict = None, stream: bool = False) -> requests.Response:
         """
-        Make request to EcoEye Alert Relay API
+        Make request to EcoEye Alert Relay API with HMAC-SHA256 signing
 
         Args:
             method: HTTP method
@@ -112,8 +117,33 @@ class EcoEyeSyncClient:
 
         url = f"{self.base_url}{endpoint}"
 
-        # Note: No authentication headers needed currently
-        # Future enhancement: Add X-API-Key when IP whitelist is not sufficient
+        # Build authentication headers
+        auth_headers = {
+            'X-API-Key': self.api_key or '',
+            'X-Timestamp': str(int(time.time()))
+        }
+
+        # HMAC-SHA256 signing if secret is available
+        if self.api_secret:
+            canonical = f"{method.upper()}\n{endpoint}\n"
+            if params:
+                param_str = "&".join(f"{k}={v}" for k, v in sorted(params.items()))
+                canonical += param_str + "\n"
+            else:
+                canonical += "\n"
+            if json_data:
+                body_json = json.dumps(json_data, sort_keys=True)
+                body_hash = hashlib.sha256(body_json.encode()).hexdigest()
+                canonical += body_hash
+
+            signature = hmac.new(
+                self.api_secret.encode(),
+                canonical.encode(),
+                hashlib.sha256
+            ).hexdigest()
+            auth_headers['X-Signature'] = signature
+
+        self.session.headers.update(auth_headers)
 
         # Make request with retries
         max_retries = 3
@@ -149,7 +179,7 @@ class EcoEyeSyncClient:
             Dict with connection status and server info
         """
         try:
-            response = self._make_request('GET', '/health')
+            response = self._make_request('GET', '/api/health')
             data = response.json()
 
             return {
@@ -171,33 +201,30 @@ class EcoEyeSyncClient:
     def get_alerts(self, start_time: datetime = None, end_time: datetime = None,
                    limit: int = 100, offset: int = 0) -> Dict:
         """
-        Get alerts (events) from EcoEye Alert Relay API
+        Get alerts from EcoEye Alert Relay API
 
         Args:
             start_time: Filter alerts from this time (client-side filter)
             end_time: Filter alerts until this time (client-side filter)
             limit: Maximum number of alerts to return
-            offset: Pagination offset (not supported by API yet, client-side)
+            offset: Pagination offset (client-side)
 
         Returns:
             Dict with alerts list and metadata
-
-        Note: API doesn't support time filtering yet, so we fetch completed events
-              and filter client-side. Offset is also implemented client-side.
         """
         params = {
             'limit': limit,
-            'status': 'completed'  # Only fetch events with completed video processing
+            'offset': offset
         }
 
         try:
-            response = self._make_request('GET', '/events', params=params)
+            response = self._make_request('GET', '/api/events', params=params)
             data = response.json()
 
             # Extract events array from response
             events = data.get('events', [])
 
-            # Convert events to alerts format (field mapping)
+            # Convert events to alerts format (field mapping for deployed API)
             alerts = []
             for event in events:
                 # Parse timestamp for filtering
@@ -208,22 +235,28 @@ class EcoEyeSyncClient:
                     except Exception:
                         pass
 
-                # Apply time filtering (client-side since API doesn't support it)
-                if start_time and event_timestamp and event_timestamp < start_time:
-                    continue
-                if end_time and event_timestamp and event_timestamp > end_time:
-                    continue
+                # Apply time filtering (client-side)
+                # Ensure both sides are timezone-aware or both naive for comparison
+                if start_time and event_timestamp:
+                    st = start_time.replace(tzinfo=event_timestamp.tzinfo) if start_time.tzinfo is None and event_timestamp.tzinfo else start_time
+                    if event_timestamp < st:
+                        continue
+                if end_time and event_timestamp:
+                    et = end_time.replace(tzinfo=event_timestamp.tzinfo) if end_time.tzinfo is None and event_timestamp.tzinfo else end_time
+                    if event_timestamp > et:
+                        continue
 
-                # Map fields from event to alert format
+                # Map fields from API response (with fallbacks for old/new field names)
                 alert = {
-                    'id': event.get('event_id'),  # event_id → alert_id
+                    'id': event.get('event_id', event.get('id')),
                     'camera_id': event.get('camera_id'),
                     'timestamp': event.get('timestamp'),
-                    'type': event.get('event_type'),  # event_type → alert_type
-                    'confidence': 1.0,  # Not available in API, default to 1.0
-                    'video_available': event.get('status') == 'completed',  # completed = video available
-                    'video_id': event.get('event_id'),  # Use event_id as video_id
-                    'video_path': event.get('video_path')  # Store for download URL construction
+                    'type': event.get('event_type', event.get('type')),
+                    'confidence': event.get('confidence', 1.0),
+                    'video_available': event.get('status') == 'completed' or event.get('video_available', False),
+                    'video_id': event.get('event_id', event.get('id')),
+                    'video_path': event.get('video_path'),
+                    'metadata': event.get('metadata')
                 }
                 alerts.append(alert)
 
@@ -254,42 +287,32 @@ class EcoEyeSyncClient:
 
     def get_alert_video(self, alert_id: str) -> Optional[Dict]:
         """
-        Get video information for a specific alert (event)
+        Get video information for a specific alert from API
 
         Args:
-            alert_id: Alert ID (event_id)
+            alert_id: Alert ID
 
         Returns:
             Dict with video metadata or None if not available
         """
         try:
-            response = self._make_request('GET', f'/events/{alert_id}')
+            response = self._make_request('GET', f'/api/events/{alert_id}')
             data = response.json()
 
-            # Check if video is available (status == completed and has video_path)
-            video_available = data.get('status') == 'completed' and data.get('video_path')
+            video_available = data.get('status') == 'completed' or data.get('video_available', False)
 
             if video_available:
-                video_path = data.get('video_path')
-
-                # Construct download URL from video_path
-                # video_path format: /home/brandon/web/alert.ecoeyetech.com/videos/Front_Door/2025-01-29/14-30-45_person.mp4
-                # Extract everything after /videos/
-                download_url = None
-                if video_path and '/videos/' in video_path:
-                    relative_path = video_path.split('/videos/')[-1]
-                    download_url = f"{self.base_url}/videos/{relative_path}"
-
+                video_path = data.get('video_path', '')
                 return {
                     'success': True,
                     'alert_id': alert_id,
-                    'video_id': alert_id,
+                    'video_id': data.get('event_id', alert_id),
                     'camera_id': data.get('camera_id'),
                     'timestamp': data.get('timestamp'),
-                    'duration': data.get('duration'),  # May not be available
-                    'file_size': data.get('file_size'),  # May not be available
-                    'download_url': download_url,
-                    'video_path': video_path
+                    'duration': data.get('duration'),
+                    'file_size': data.get('file_size'),
+                    'video_path': video_path,
+                    'download_url': f"{self.base_url}{data.get('download_url')}" if data.get('download_url') else None
                 }
             else:
                 return {
@@ -304,10 +327,10 @@ class EcoEyeSyncClient:
 
     def download_alert_video(self, alert_id: str, video_info: Dict = None) -> Tuple[bool, str]:
         """
-        Download video for an alert from EcoEye Alert Relay
+        Download video for an alert from EcoEye Alert Relay API
 
         Args:
-            alert_id: Alert ID (event_id)
+            alert_id: Alert ID
             video_info: Optional video info (if already fetched)
 
         Returns:
@@ -320,30 +343,36 @@ class EcoEyeSyncClient:
                 if not video_info or not video_info.get('success'):
                     return False, "Video not available for this alert"
 
-            download_url = video_info.get('download_url')
-            if not download_url:
-                return False, "No download URL provided"
-
-            # Generate filename from video path or construct from metadata
-            video_path = video_info.get('video_path', '')
-            if video_path:
-                # Use original filename from path
-                filename = Path(video_path).name
-            else:
-                # Fallback: construct filename
-                camera_id = video_info.get('camera_id', 'unknown')
-                timestamp = video_info.get('timestamp', datetime.now().isoformat())
-                filename = f"ecoeye_{alert_id}_{camera_id}_{timestamp.replace(':', '-')}.mp4"
+            # Generate filename from metadata
+            camera_id = video_info.get('camera_id', 'unknown')
+            timestamp = video_info.get('timestamp', datetime.now().isoformat())
+            filename = f"ecoeye_{alert_id}_{camera_id}_{timestamp.replace(':', '-')}.mp4"
 
             filepath = self.download_dir / filename
 
-            # Download video with streaming
-            logger.info(f"Downloading video for alert {alert_id} from {download_url}")
+            # First, trigger download from UniFi via retry endpoint
+            logger.info(f"Requesting video download for alert {alert_id}")
+            try:
+                self._make_request('POST', f'/api/events/{alert_id}/retry')
+            except Exception as e:
+                logger.warning(f"Retry request failed (may already be downloaded): {e}")
 
-            # Note: For video downloads, we use a direct HTTP request to the video URL
-            # The download_url is already a full URL: https://alert.ecoeyetech.com/videos/...
-            response = self.session.get(download_url, stream=True, timeout=300)
-            response.raise_for_status()
+            # Construct download URL from video_path
+            video_path = video_info.get('video_path')
+            if not video_path:
+                return False, "No video path available"
+
+            # Extract relative path from video_path
+            if '/videos/' in video_path:
+                relative_path = video_path.split('/videos/')[-1]
+                download_url = f"{self.base_url}/videos/{relative_path}"
+            else:
+                return False, f"Invalid video path format: {video_path}"
+
+            # Download video with streaming
+            logger.info(f"Downloading video from {download_url}")
+
+            response = self._make_request('GET', f'/videos/{relative_path}', stream=True)
 
             # Stream to file
             total_size = int(response.headers.get('content-length', 0))
@@ -366,6 +395,25 @@ class EcoEyeSyncClient:
         except Exception as e:
             logger.error(f"Failed to download video for alert {alert_id}: {e}")
             return False, str(e)
+
+    def acknowledge_download(self, alert_id: str) -> bool:
+        """
+        Acknowledge successful video download to relay for retention management
+
+        Args:
+            alert_id: The alert/event ID to acknowledge
+
+        Returns:
+            True if acknowledged successfully, False otherwise
+        """
+        try:
+            resp = self._make_request('POST', f'/api/events/{alert_id}/acknowledge')
+            logger.info(f"Acknowledged download for {alert_id}: {resp.json()}")
+            return True
+        except Exception as e:
+            # Non-fatal - log warning but don't fail the download
+            logger.warning(f"Failed to acknowledge download for {alert_id}: {e}")
+            return False
 
     def sync_alerts_to_database(self, start_time: datetime = None,
                                 end_time: datetime = None) -> Dict:
@@ -405,15 +453,15 @@ class EcoEyeSyncClient:
                         break
 
                     for alert in alerts:
-                        # Extract fields with new mapping
-                        alert_id = alert.get('id')  # event_id
+                        # Extract fields from API response
+                        alert_id = alert.get('id')
                         camera_id = alert.get('camera_id')
                         timestamp = alert.get('timestamp')
-                        alert_type = alert.get('type')  # event_type
-                        confidence = alert.get('confidence', 1.0)  # Default 1.0 since not in API
-                        video_available = alert.get('video_available', False)  # status == completed
-                        video_id = alert.get('video_id')  # event_id
-                        video_path = alert.get('video_path')  # Store for download URL
+                        alert_type = alert.get('type')
+                        confidence = alert.get('confidence', 1.0)
+                        video_available = alert.get('video_available', False)
+                        video_id = alert.get('video_id')
+                        video_path = alert.get('video_path')
                         metadata = json.dumps(alert)
 
                         # Check if alert exists
@@ -449,6 +497,54 @@ class EcoEyeSyncClient:
                         break
 
                     offset += limit
+
+                # Second pass: sync completed events with video (may not be in recent pages)
+                logger.info("Syncing completed events with video...")
+                try:
+                    response = self._make_request('GET', '/api/events', params={
+                        'status': 'completed',
+                        'limit': 100,
+                        'sort': 'desc'
+                    })
+                    data = response.json()
+                    completed_events = data.get('events', [])
+
+                    for event in completed_events:
+                        alert_id = event.get('event_id', event.get('id'))
+                        video_path = event.get('video_path')
+                        video_available = bool(video_path)
+                        camera_id = event.get('camera_id')
+                        timestamp = event.get('timestamp')
+                        alert_type = event.get('event_type', event.get('type'))
+                        confidence = event.get('confidence', 1.0)
+                        video_id = event.get('event_id', event.get('id'))
+                        metadata = json.dumps(event)
+
+                        cursor.execute('SELECT id, video_available FROM ecoeye_alerts WHERE alert_id = %s', (alert_id,))
+                        existing = cursor.fetchone()
+
+                        if existing:
+                            cursor.execute('''
+                                UPDATE ecoeye_alerts
+                                SET video_available = %s, video_path = %s, video_id = %s,
+                                    metadata = %s, synced_at = CURRENT_TIMESTAMP
+                                WHERE alert_id = %s
+                            ''', (video_available, video_path, video_id, metadata, alert_id))
+                            updated_alerts += 1
+                        else:
+                            cursor.execute('''
+                                INSERT INTO ecoeye_alerts
+                                (alert_id, camera_id, timestamp, alert_type, confidence,
+                                 video_available, video_id, video_path, metadata)
+                                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+                            ''', (alert_id, camera_id, timestamp, alert_type, confidence,
+                                 video_available, video_id, video_path, metadata))
+                            new_alerts += 1
+                        total_synced += 1
+
+                    logger.info(f"Synced {len(completed_events)} completed events")
+                except Exception as e:
+                    logger.warning(f"Failed to sync completed events: {e}")
 
                 conn.commit()
 
@@ -513,6 +609,10 @@ class EcoEyeSyncClient:
                         conn.commit()
 
                         downloaded += 1
+
+                        # Acknowledge download to relay for retention management
+                        self.acknowledge_download(alert_id)
+
                         results.append({
                             'alert_id': alert_id,
                             'status': 'success',

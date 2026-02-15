@@ -57,6 +57,7 @@ DEFAULT_TRAINING_COMMANDS = {
     'bearing-fault': 'python3 train_bearing_fault.py --train {train_file} --val {val_file} --model {model_type} --epochs {epochs} --labels "{labels}"',
     'bearing-fault-training': 'python3 train_bearing_fault.py --train {train_file} --val {val_file} --model {model_type} --epochs {epochs} --labels "{labels}"',
     'vibration': 'python3 train_bearing_fault.py --train {train_file} --val {val_file} --model {model_type} --epochs {epochs} --labels "{labels}"',
+    'location': 'python3 -m torchvision.models --data {data_dir} --model {model_type} --epochs {epochs}',
     'custom': 'echo "Custom job {job_id}: data at {data_dir}"',
 }
 
@@ -161,10 +162,13 @@ class TrainingWorker:
             job_dir = self._sync_from_s3(job_id, data_uri)
 
             # Run training command
-            self._run_training(job_id, job_type, job_dir, config)
+            stdout, stderr = self._run_training(job_id, job_type, job_dir, config)
 
-            # Report success
-            self._report_complete(job_id, callback_url)
+            # Parse training metrics from output
+            metrics = self._parse_training_metrics(job_type, job_dir, stdout, stderr)
+
+            # Report success with metrics
+            self._report_complete(job_id, callback_url, config=config, metrics=metrics)
             self._delete_message(receipt_handle)
             logger.info(f'Job {job_id} completed successfully')
 
@@ -324,13 +328,96 @@ class TrainingWorker:
                 f'{result.stderr[-500:] if result.stderr else "no output"}'
             )
 
-    def _report_complete(self, job_id, callback_url=None):
-        """Report job completion to Studio."""
+        return result.stdout or '', result.stderr or ''
+
+    def _parse_training_metrics(self, job_type, job_dir, stdout, stderr):
+        """Parse training metrics from output files and stdout."""
+        metrics = {}
+        job_dir = Path(job_dir)
+
+        try:
+            if job_type in ('yolo-training', 'yolo'):
+                # Parse YOLO results.csv from ultralytics output
+                # Look for results.csv in common locations
+                for results_path in [
+                    job_dir / 'runs' / 'detect' / 'train' / 'results.csv',
+                    job_dir / 'train' / 'results.csv',
+                    *job_dir.rglob('results.csv')
+                ]:
+                    if results_path.exists():
+                        import csv
+                        with open(results_path) as f:
+                            reader = csv.DictReader(f)
+                            rows = list(reader)
+                        if rows:
+                            last = rows[-1]
+                            # Column names vary by ultralytics version, try common ones
+                            metrics['epochs'] = len(rows)
+                            for key_map in [
+                                ('metrics/mAP50(B)', 'accuracy'),
+                                ('metrics/mAP50-95(B)', 'val_accuracy'),
+                                ('train/box_loss', 'loss'),
+                                ('val/box_loss', 'val_loss'),
+                                ('      metrics/mAP50(B)', 'accuracy'),
+                                ('      metrics/mAP50-95(B)', 'val_accuracy'),
+                            ]:
+                                src, dst = key_map
+                                val = last.get(src.strip())
+                                if val is not None:
+                                    try:
+                                        metrics[dst] = float(val.strip())
+                                    except (ValueError, AttributeError):
+                                        pass
+                        break
+
+            elif job_type in ('bearing-fault', 'bearing-fault-training', 'vibration'):
+                # Parse scikit-learn / custom classifier output from stdout
+                if stdout:
+                    import re
+                    # Look for accuracy
+                    acc_match = re.search(r'(?:accuracy|Accuracy)[:\s]+([0-9.]+)', stdout)
+                    if acc_match:
+                        metrics['accuracy'] = float(acc_match.group(1))
+
+                    # Look for F1
+                    f1_match = re.search(r'(?:f1[_-]?score|F1)[:\s]+([0-9.]+)', stdout)
+                    if f1_match:
+                        metrics['val_accuracy'] = float(f1_match.group(1))
+
+                    # Look for loss
+                    loss_match = re.search(r'(?:loss|Loss)[:\s]+([0-9.]+)', stdout)
+                    if loss_match:
+                        metrics['loss'] = float(loss_match.group(1))
+
+            elif job_type == 'location':
+                # Parse image classification output
+                if stdout:
+                    import re
+                    acc_match = re.search(r'(?:accuracy|val_acc|test_acc)[:\s]+([0-9.]+)', stdout)
+                    if acc_match:
+                        metrics['accuracy'] = float(acc_match.group(1))
+                    loss_match = re.search(r'(?:val_loss|test_loss)[:\s]+([0-9.]+)', stdout)
+                    if loss_match:
+                        metrics['val_loss'] = float(loss_match.group(1))
+
+        except Exception as e:
+            logger.warning(f'Failed to parse training metrics: {e}')
+
+        return metrics if metrics else None
+
+    def _report_complete(self, job_id, callback_url=None, config=None, metrics=None):
+        """Report job completion to Studio, including optional training metrics."""
         url = callback_url or f'/api/training/jobs/{job_id}/complete'
         if url.startswith('/'):
             url = self.studio_url + url
         try:
-            requests.post(url, json={'result': {'status': 'completed'}}, timeout=10)
+            payload = {'result': {'status': 'completed'}}
+            if metrics:
+                payload['metrics'] = metrics
+            if config:
+                payload['model_name'] = config.get('model_name', config.get('model_type', ''))
+                payload['model_version'] = config.get('model_version', '1.0.0')
+            requests.post(url, json=payload, timeout=30)
         except Exception as e:
             logger.warning(f'Could not report completion for {job_id}: {e}')
 

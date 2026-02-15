@@ -7,47 +7,51 @@
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="stylesheet" href="/static/css/style.css">
     <style>
+        /* Person Manager - Mobile-First */
+
+        /* Base (Mobile) Styles */
         .person-manager-container {
             max-width: 1400px;
             margin: 20px auto;
-            padding: 20px;
+            padding: 8px;
         }
 
         .manager-header {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 15px;
+            margin-bottom: 20px;
         }
 
         .manager-header h1 {
             margin: 0;
-            font-size: 28px;
+            font-size: 20px;
         }
 
         .stats-panel {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin-bottom: 30px;
+            grid-template-columns: 1fr;
+            gap: 8px;
+            margin-bottom: 20px;
         }
 
         .stat-card {
             background: #2a2a2a;
-            padding: 20px;
+            padding: 12px;
             border-radius: 8px;
             text-align: center;
         }
 
         .stat-card .number {
-            font-size: 36px;
+            font-size: 24px;
             font-weight: bold;
             color: #4CAF50;
             margin-bottom: 5px;
         }
 
         .stat-card .label {
-            font-size: 14px;
+            font-size: 12px;
             color: #aaa;
         }
 
@@ -57,21 +61,16 @@
             border-radius: 8px;
             margin-bottom: 20px;
             display: flex;
-            gap: 15px;
-            align-items: center;
+            flex-direction: column;
+            gap: 10px;
+            align-items: stretch;
         }
 
-        .filter-bar input[type="text"] {
-            flex: 1;
-            padding: 8px 12px;
-            background: #1a1a1a;
-            border: 1px solid #444;
-            color: #fff;
-            border-radius: 4px;
-        }
-
-        .filter-bar select {
-            padding: 8px 12px;
+        .filter-bar input[type="text"],
+        .filter-bar select,
+        .filter-bar button {
+            width: 100%;
+            padding: 10px 12px;
             background: #1a1a1a;
             border: 1px solid #444;
             color: #fff;
@@ -80,27 +79,29 @@
 
         .person-list {
             display: flex;
-            gap: 20px;
+            flex-direction: column;
+            gap: 15px;
         }
 
         .person-names-panel {
-            width: 300px;
+            width: 100%;
             background: #2a2a2a;
             border-radius: 8px;
-            padding: 15px;
-            max-height: 700px;
+            padding: 10px;
+            max-height: 200px;
             overflow-y: auto;
+            margin-bottom: 15px;
         }
 
         .person-names-panel h3 {
             margin-top: 0;
-            font-size: 18px;
+            font-size: 16px;
             padding-bottom: 10px;
             border-bottom: 1px solid #444;
         }
 
         .person-name-item {
-            padding: 10px;
+            padding: 12px;
             margin: 5px 0;
             background: #1a1a1a;
             border-radius: 4px;
@@ -109,6 +110,7 @@
             justify-content: space-between;
             align-items: center;
             transition: background 0.2s;
+            font-size: 15px;
         }
 
         .person-name-item:hover {
@@ -126,35 +128,47 @@
 
         .person-name-item .count {
             background: #444;
-            padding: 2px 8px;
+            padding: 3px 10px;
             border-radius: 10px;
-            font-size: 12px;
+            font-size: 13px;
         }
 
         .detections-panel {
             flex: 1;
             background: #2a2a2a;
             border-radius: 8px;
-            padding: 20px;
+            padding: 10px;
         }
 
         .detections-header {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 10px;
             margin-bottom: 20px;
             padding-bottom: 15px;
             border-bottom: 1px solid #444;
         }
 
+        .detections-header h3 {
+            margin-bottom: 10px;
+        }
+
         .bulk-actions {
             display: flex;
-            gap: 10px;
+            flex-direction: column;
+            width: 100%;
+            gap: 8px;
+        }
+
+        .bulk-actions button {
+            width: 100%;
+            padding: 10px;
         }
 
         .detection-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            grid-template-columns: 1fr;
             gap: 15px;
         }
 
@@ -164,6 +178,7 @@
             overflow: hidden;
             position: relative;
             transition: transform 0.2s, box-shadow 0.2s;
+            max-width: 100%;
         }
 
         .detection-card:hover {
@@ -180,29 +195,62 @@
             top: 10px;
             left: 10px;
             z-index: 10;
-            width: 20px;
-            height: 20px;
+            width: 24px;
+            height: 24px;
             cursor: pointer;
         }
 
         .detection-thumbnail {
             width: 100%;
-            height: 150px;
             background: #000;
             position: relative;
             overflow: hidden;
+            cursor: pointer;
         }
 
         .detection-thumbnail img {
             width: 100%;
-            height: 100%;
-            object-fit: cover;
+            height: auto;
+            display: block;
+        }
+
+        .detection-thumbnail[data-mode="crop"]::after {
+            content: '';
+            position: absolute;
+            bottom: 4px;
+            right: 4px;
+            width: 20px;
+            height: 20px;
+            background: rgba(255,255,255,0.7);
+            border-radius: 3px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23333' stroke-width='2'%3E%3Cpath d='M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: 14px;
+            pointer-events: none;
+        }
+
+        .detection-thumbnail[data-mode="full"]::after {
+            content: '';
+            position: absolute;
+            bottom: 4px;
+            right: 4px;
+            width: 20px;
+            height: 20px;
+            background: rgba(255,255,255,0.7);
+            border-radius: 3px;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23333' stroke-width='2'%3E%3Cpath d='M4 14h6v6M14 4h6v6M10 14L3 21M21 3l-7 7'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: center;
+            background-size: 14px;
+            pointer-events: none;
         }
 
         .bbox-overlay {
             position: absolute;
             border: 2px solid #4CAF50;
             pointer-events: none;
+            border-radius: 2px;
         }
 
         .detection-info {
@@ -257,10 +305,11 @@
 
         .modal-content {
             background: #2a2a2a;
-            padding: 30px;
+            padding: 20px;
             border-radius: 8px;
-            max-width: 500px;
+            max-width: calc(100% - 20px);
             width: 90%;
+            margin: 10px;
         }
 
         .modal-content h3 {
@@ -281,9 +330,14 @@
 
         .modal-actions {
             display: flex;
-            gap: 10px;
+            flex-direction: column;
+            gap: 8px;
             justify-content: flex-end;
             margin-top: 20px;
+        }
+
+        .modal-actions button {
+            width: 100%;
         }
 
         .btn {
@@ -382,41 +436,14 @@
             font-size: 11px;
         }
 
-        /* Mobile Responsive Styles */
-        @media (max-width: 1024px) {
-            .person-list {
-                flex-direction: column;
-            }
-
-            .person-names-panel {
-                width: 100%;
-                max-height: 300px;
-                margin-bottom: 20px;
-            }
-
-            .detection-grid {
-                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
-            }
-        }
-
-        @media (max-width: 768px) {
+        /* Tablet and Desktop (480px+) */
+        @media (min-width: 480px) {
             .person-manager-container {
                 padding: 10px;
             }
 
-            .manager-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 15px;
-            }
-
             .manager-header h1 {
                 font-size: 22px;
-            }
-
-            .manager-header a {
-                padding: 8px 16px;
-                font-size: 14px;
             }
 
             .stats-panel {
@@ -432,135 +459,136 @@
                 font-size: 28px;
             }
 
-            .stat-card .label {
-                font-size: 12px;
-            }
-
-            .filter-bar {
-                flex-direction: column;
-                gap: 10px;
-            }
-
-            .filter-bar input[type="text"],
-            .filter-bar select,
-            .filter-bar button {
-                width: 100%;
-            }
-
-            .person-list {
-                flex-direction: column;
-            }
-
             .person-names-panel {
-                width: 100%;
                 max-height: 250px;
-                margin-bottom: 15px;
             }
 
-            .detections-panel {
-                padding: 15px;
-            }
+        }
 
-            .detections-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 10px;
-            }
-
-            .detections-header h3 {
-                margin-bottom: 10px;
-            }
-
-            .bulk-actions {
-                flex-direction: column;
-                width: 100%;
-                gap: 8px;
-            }
-
-            .bulk-actions button {
-                width: 100%;
+        @media (min-width: 768px) {
+            .person-manager-container {
                 padding: 10px;
             }
 
-            .detection-grid {
-                grid-template-columns: 1fr;
-            }
-
-            .detection-card {
-                max-width: 100%;
-            }
-
-            .detection-thumbnail {
-                height: 200px;
-            }
-
-            .person-name-item {
-                padding: 12px;
-                font-size: 15px;
-            }
-
-            .person-name-item .count {
-                font-size: 13px;
-                padding: 3px 10px;
-            }
-
-            .modal-dialog {
-                margin: 10px;
-                max-width: calc(100% - 20px);
-            }
-
-            .modal-body {
-                padding: 15px;
-            }
-
-            .modal-footer {
-                flex-direction: column;
-                gap: 8px;
-            }
-
-            .modal-footer button {
-                width: 100%;
-            }
-
-            .detection-checkbox {
-                width: 24px;
-                height: 24px;
-            }
-        }
-
-        @media (max-width: 480px) {
-            .person-manager-container {
-                padding: 8px;
+            .manager-header {
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
             }
 
             .manager-header h1 {
-                font-size: 20px;
+                font-size: 28px;
             }
 
             .stats-panel {
-                grid-template-columns: 1fr;
-                gap: 8px;
+                grid-template-columns: repeat(4, 1fr);
+                gap: 15px;
+                margin-bottom: 30px;
             }
 
             .stat-card {
-                padding: 12px;
+                padding: 20px;
             }
 
             .stat-card .number {
-                font-size: 24px;
+                font-size: 36px;
             }
 
-            .person-names-panel {
-                max-height: 200px;
-                padding: 10px;
+            .stat-card .label {
+                font-size: 14px;
+            }
+
+            .filter-bar {
+                flex-direction: row;
+                align-items: center;
+            }
+
+            .filter-bar input[type="text"] {
+                flex: 1;
+            }
+
+            .filter-bar select,
+            .filter-bar button {
+                width: auto;
             }
 
             .detections-panel {
-                padding: 10px;
+                padding: 20px;
             }
 
-            .detection-thumbnail {
-                height: 180px;
+            .detections-header {
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+            }
+
+            .bulk-actions {
+                flex-direction: row;
+                width: auto;
+                gap: 10px;
+            }
+
+            .bulk-actions button {
+                width: auto;
+                padding: 8px 16px;
+            }
+
+            .detection-grid {
+                grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            }
+
+            .person-name-item {
+                padding: 10px;
+                font-size: 14px;
+            }
+
+            .person-name-item .count {
+                font-size: 12px;
+                padding: 2px 8px;
+            }
+
+            .modal-actions {
+                flex-direction: row;
+                gap: 10px;
+            }
+
+            .modal-actions button {
+                width: auto;
+            }
+
+            .detection-checkbox {
+                width: 20px;
+                height: 20px;
+            }
+        }
+
+        @media (min-width: 1024px) {
+            .person-manager-container {
+                padding: 20px;
+            }
+
+            .person-list {
+                flex-direction: row;
+                gap: 20px;
+            }
+
+            .person-names-panel {
+                width: 300px;
+                max-height: 700px;
+                margin-bottom: 0;
+            }
+
+            .person-names-panel h3 {
+                font-size: 18px;
+            }
+
+            .detection-grid {
+                grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            }
+
+            .modal-content {
+                max-width: 500px;
+                padding: 30px;
             }
         }
 
@@ -585,14 +613,34 @@
     </style>
 </head>
 <body>
+    <script src="/static/js/gt-utils.js"></script>
+    <script src="/static/js/responsive-utils.js"></script>
+    <nav class="site-nav" id="site-nav">
+        <div class="nav-brand">
+            <a href="/">Groundtruth Studio</a>
+            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
+                <span class="hamburger-icon"></span>
+            </button>
+        </div>
+        <div class="nav-links" id="nav-links">
+            <a href="/" class="nav-link">Video Library</a>
+            <a href="/add-content" class="nav-link">Add Content</a>
+            <a href="/person-manager" class="nav-link">Person Manager</a>
+            <a href="/camera-topology" class="nav-link">Camera Topology</a>
+            <a href="/model-training" class="nav-link">Model Training</a>
+            <a href="/prediction-review" class="nav-link">AI Review</a>
+            <a href="/sync-settings" class="nav-link">Sync Settings</a>
+            <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
+            <a href="/vibration-export" class="nav-link">Vibration Export</a>
+            <a href="/location-export" class="nav-link">Location Export</a>
+            <a href="/tag-manager" class="nav-link">Tag Manager</a>
+        </div>
+    </nav>
     <div class="person-manager-container">
         <div class="manager-header">
             <div>
-                <h1>👤 Person Name Manager</h1>
+                <h1>Person Name Manager</h1>
                 <p style="color: #666; margin-top: 5px;">Manage person identifications across all annotations</p>
-            </div>
-            <div>
-                <a href="/" class="btn btn-secondary">← Back to Library</a>
             </div>
         </div>
 
@@ -639,11 +687,13 @@
                         <h3 id="detections-title">All Detections</h3>
                         <p id="detections-subtitle" style="color: #666; font-size: 13px; margin: 5px 0 0 0;"></p>
                     </div>
+                    {% if can_write %}
                     <div class="bulk-actions">
                         <button id="select-all-btn" class="btn btn-secondary btn-small">Select All</button>
                         <button id="bulk-assign-btn" class="btn btn-primary btn-small" disabled>Assign Name</button>
                         <button id="bulk-unassign-btn" class="btn btn-secondary btn-small" disabled>Unassign</button>
                     </div>
+                    {% endif %}
                 </div>
                 <div id="detections-grid" class="detection-grid">
                     <div class="loading">Loading detections...</div>
@@ -652,6 +702,7 @@
         </div>
     </div>
 
+    {% if can_write %}
     <!-- Assign Name Modal -->
     <div id="assign-modal" class="modal">
         <div class="modal-content">
@@ -667,7 +718,9 @@
             </div>
         </div>
     </div>
+    {% endif %}
 
-    <script src="/static/js/person-manager.js"></script>
+    <script>const canWrite = {{ can_write|tojson }};</script>
+    <script src="{{ static_v('js/person-manager.js') }}"></script>
 </body>
 </html>

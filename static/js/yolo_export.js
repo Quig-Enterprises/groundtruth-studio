@@ -1,5 +1,4 @@
 let activityTags = [];
-let classCounter = 0;
 
 // Load configurations on page load
 async function loadConfigs() {
@@ -42,6 +41,7 @@ function displayConfigs(configs) {
                 <div class="config-actions">
                     <button onclick="previewExport(${config.id})" class="btn-secondary">Preview</button>
                     <button onclick="exportDataset(${config.id})" class="btn-primary">Export</button>
+                    <button onclick="exportAndTrainConfig(${config.id})" class="btn-primary" style="background-color: #27ae60;">Export &amp; Train</button>
                 </div>
             </div>
 
@@ -101,12 +101,11 @@ async function loadActivityTags() {
 }
 
 function initializeClassMapping() {
-    classCounter = 0;
     const editor = document.getElementById('class-mapping-editor');
     editor.innerHTML = `
         <div style="display: flex; gap: 10px; margin-bottom: 10px; font-weight: 600; font-size: 13px; color: #2c3e50;">
             <div style="flex: 2;">Activity Tag</div>
-            <div style="flex: 1;">Class ID</div>
+            <div style="flex: 1;">Class ID (auto)</div>
             <div style="width: 32px;"></div>
         </div>
     `;
@@ -119,6 +118,18 @@ function initializeClassMapping() {
 
 function addClassMapping() {
     const editor = document.getElementById('class-mapping-editor');
+
+    // Calculate next available class ID by finding max of existing IDs + 1
+    const existingRows = document.querySelectorAll('.class-row');
+    let nextId = 0;
+
+    existingRows.forEach(row => {
+        const classId = parseInt(row.querySelector('.class-id').value);
+        if (!isNaN(classId) && classId >= nextId) {
+            nextId = classId + 1;
+        }
+    });
+
     const row = document.createElement('div');
     row.className = 'class-row';
     row.innerHTML = `
@@ -128,11 +139,10 @@ function addClassMapping() {
                 `<option value="${escapeHtml(tag.name)}">${escapeHtml(tag.name)} (${tag.count})</option>`
             ).join('')}
         </select>
-        <input type="number" class="class-id" placeholder="Class ID" value="${classCounter}" min="0" style="flex: 1;" />
+        <input type="number" class="class-id" placeholder="Class ID" value="${nextId}" min="0" style="flex: 1; background-color: #ecf0f1; cursor: not-allowed;" readonly />
         <button type="button" onclick="this.parentElement.remove()" class="btn-danger btn-small">✕</button>
     `;
     editor.appendChild(row);
-    classCounter++;
 }
 
 // Form submission
@@ -164,9 +174,9 @@ document.getElementById('new-config-form').addEventListener('submit', async (e) 
         config_name: configName,
         description: description,
         class_mapping: classMapping,
-        include_reviewed_only: document.getElementById('include-reviewed-only').checked ? 1 : 0,
-        include_ai_generated: document.getElementById('include-ai-generated').checked ? 1 : 0,
-        include_negative_examples: document.getElementById('include-negative').checked ? 1 : 0
+        include_reviewed_only: document.getElementById('include-reviewed-only').checked,
+        include_ai_generated: document.getElementById('include-ai-generated').checked,
+        include_negative_examples: document.getElementById('include-negative').checked
     };
 
     try {
@@ -241,6 +251,41 @@ async function previewExport(configId) {
 
 function closePreviewModal() {
     document.getElementById('preview-modal').style.display = 'none';
+}
+
+// Export and train dataset
+async function exportAndTrainConfig(configId) {
+    const statusDiv = document.createElement('div');
+    statusDiv.className = 'status-message';
+    statusDiv.textContent = 'Exporting & submitting training job...';
+    document.getElementById('configs-list').prepend(statusDiv);
+
+    try {
+        const response = await fetch('/api/training/export-and-train', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                job_type: 'yolo',
+                export_config_id: configId,
+                model_type: 'yolov8n',
+                epochs: 100
+            })
+        });
+        const data = await response.json();
+
+        if (data.success) {
+            const jobId = data.job?.job_id || '';
+            statusDiv.className = 'status-message success';
+            statusDiv.textContent = 'Training job submitted: ' + jobId.substring(0, 8) + '...';
+            setTimeout(function() { statusDiv.remove(); }, 5000);
+        } else {
+            statusDiv.className = 'status-message error';
+            statusDiv.textContent = 'Error: ' + (data.error || 'Failed');
+        }
+    } catch (e) {
+        statusDiv.className = 'status-message error';
+        statusDiv.textContent = 'Error: ' + e.message;
+    }
 }
 
 // Export dataset

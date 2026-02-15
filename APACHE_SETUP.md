@@ -196,7 +196,7 @@ curl http://localhost/groundtruth-studio/
 
 The system is currently installed at:
 - **Installation Path**: `/var/www/html/groundtruth-studio/`
-- **Database**: `video_archive.db` (SQLite)
+- **Database**: PostgreSQL
 - **Videos**: `downloads/` directory
 - **Thumbnails**: `thumbnails/` directory
 

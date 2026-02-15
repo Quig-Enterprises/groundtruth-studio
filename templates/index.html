@@ -5,52 +5,100 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Groundtruth Studio</title>
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
-    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="{{ static_v('css/style.css') }}">
+    <style>
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* Mobile filter toggle */
+        .filter-toggle-btn {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            background: var(--color-white, white);
+            border: 1px solid var(--color-border, #ddd);
+            border-radius: var(--card-radius, 8px);
+            font-size: 15px;
+            font-weight: 500;
+            color: var(--color-dark, #2c3e50);
+            cursor: pointer;
+            text-align: left;
+            margin-bottom: 10px;
+        }
+
+        .filter-toggle-btn.active {
+            border-color: var(--color-primary, #3498db);
+            color: var(--color-primary, #3498db);
+        }
+
+        .filter-toggle-arrow {
+            float: right;
+            transition: transform 0.2s;
+        }
+
+        .filter-toggle-btn.active .filter-toggle-arrow {
+            transform: rotate(180deg);
+        }
+
+        .ecoeye-filter-bar {
+            display: none;
+        }
+
+        .ecoeye-filter-bar.filters-visible {
+            display: block;
+        }
+
+        @media (min-width: 768px) {
+            .filter-toggle-btn {
+                display: none;
+            }
+            .ecoeye-filter-bar {
+                display: block !important;
+            }
+        }
+    </style>
 </head>
 <body>
+    <script src="/static/js/gt-utils.js"></script>
+    <script src="/static/js/responsive-utils.js"></script>
+    <nav class="site-nav" id="site-nav">
+        <div class="nav-brand">
+            <a href="/">Groundtruth Studio</a>
+            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
+                <span class="hamburger-icon"></span>
+            </button>
+        </div>
+        <div class="nav-links" id="nav-links">
+            <a href="/" class="nav-link">Video Library</a>
+            <a href="/add-content" class="nav-link">Add Content</a>
+            <a href="/person-manager" class="nav-link">Person Manager</a>
+            <a href="/camera-topology" class="nav-link">Camera Topology</a>
+            <a href="/model-training" class="nav-link">Model Training</a>
+            <a href="/prediction-review" class="nav-link">AI Review</a>
+            <a href="/sync-settings" class="nav-link">Sync Settings</a>
+            <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
+            <a href="/vibration-export" class="nav-link">Vibration Export</a>
+            <a href="/location-export" class="nav-link">Location Export</a>
+            <a href="/tag-manager" class="nav-link">Tag Manager</a>
+        </div>
+    </nav>
     <div class="container">
         <header>
-            <div>
-                <h1>Groundtruth Studio</h1>
-                <div style="margin-top: 8px;">
-                    <a href="/person-manager" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none; margin-right: 8px;">👤 Person Manager</a>
-                    <a href="/camera-topology" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none; margin-right: 8px;">📹 Camera Topology</a>
-                    <a href="/sync-settings" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none; margin-right: 8px;">🔄 Sync Settings</a>
-                    <a href="/yolo-export" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none; margin-right: 8px;">🎯 YOLO Export</a>
-                    <a href="/training-queue" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none; margin-right: 8px;">🚀 Training Queue</a>
-                    <a href="/ecoeye-preview" class="btn-secondary" style="font-size: 13px; padding: 6px 12px; text-decoration: none;">👁️ EcoEye Preview</a>
-                </div>
-            </div>
+            <h1>Groundtruth Studio</h1>
             <div class="system-status">
                 <span id="status-indicator" class="status-loading">Checking system...</span>
             </div>
         </header>
 
-        <div class="actions-panel">
-            <div class="action-section">
-                <h2>Download Video</h2>
-                <div class="input-group">
-                    <input type="text" id="video-url" placeholder="Paste video URL (YouTube, Vimeo, etc.)" />
-                    <button onclick="previewVideo()" class="btn-secondary">Preview Info</button>
-                    <button onclick="downloadVideo()" class="btn-primary">Download & Add</button>
-                </div>
-                <div id="preview-info" class="preview-info" style="display: none;"></div>
-                <div id="download-status" class="status-message"></div>
-            </div>
-
-            <div class="action-section">
-                <h2>Download Queue</h2>
-                <div id="download-queue-status">
-                    <div class="loading">Loading queue status...</div>
-                </div>
-            </div>
-
-            <div class="action-section" style="display: flex; align-items: center; justify-content: center;">
-                <button onclick="openUploadModal()" class="btn-primary" style="font-size: 16px; padding: 12px 24px;">
-                    📤 Upload Videos
-                </button>
-            </div>
+        {% if can_write %}
+        <div style="margin-bottom: 20px;">
+            <a href="/add-content" class="btn-primary" style="display: inline-flex; align-items: center; gap: 8px; text-decoration: none; font-size: 15px; padding: 12px 20px;">
+                ➕ Add Content
+            </a>
         </div>
+        {% endif %}
 
         <div class="search-panel">
             <input type="text" id="search-input" placeholder="Search videos by title, annotations, or notes..." />
@@ -58,8 +106,133 @@
             <button onclick="loadVideos()" class="btn-secondary">Show All</button>
         </div>
 
+        <div class="library-filter-bar">
+            <label for="library-select">Library:</label>
+            <select id="library-select" onchange="filterByLibrary(this.value)">
+                <option value="">All Libraries</option>
+            </select>
+            <button class="btn-secondary library-manage-btn" onclick="openLibraryManager()" title="Manage Libraries">Manage</button>
+            <button class="btn-secondary library-manage-btn" id="multi-select-toggle" onclick="toggleMultiSelect()">Select</button>
+            <label class="toggle-switch" title="Show only unannotated videos">
+                <input type="checkbox" id="unannotated-toggle" onchange="toggleUnannotatedFilter(this.checked)">
+                <span class="toggle-slider"></span>
+                <span class="toggle-label">Unannotated only</span>
+            </label>
+        </div>
+
+        <div class="bulk-action-bar" id="bulk-action-bar" style="display: none;">
+            <span class="bulk-count"><span id="bulk-selected-count">0</span> selected</span>
+            <button onclick="selectAllVideos()" class="btn-secondary" style="font-size: 12px; padding: 5px 10px;">All</button>
+            <button onclick="deselectAllVideos()" class="btn-secondary" style="font-size: 12px; padding: 5px 10px;">None</button>
+            <select id="bulk-library-select" style="font-size: 13px; padding: 5px 8px; border-radius: 6px; border: 1px solid #ddd;">
+                <option value="">Choose library...</option>
+            </select>
+            <button onclick="bulkAssignLibrary()" class="btn-primary" style="font-size: 12px; padding: 5px 12px; background: #27ae60;">Add to Library</button>
+            <button onclick="bulkRemoveLibrary()" class="btn-secondary" style="font-size: 12px; padding: 5px 12px; color: #e74c3c;" id="bulk-remove-btn">Remove from Library</button>
+        </div>
+
+        <div class="source-tabs" id="source-tabs">
+            <button class="source-tab active" data-source="all" onclick="filterBySource('all')">All</button>
+            <button class="source-tab" data-source="manual" onclick="filterBySource('manual')">Manual Uploads</button>
+            <button class="source-tab" data-source="ecoeye" onclick="filterBySource('ecoeye')">EcoEye Events</button>
+            <span class="source-tab-count" id="source-tab-count"></span>
+        </div>
+
+        <!-- EcoEye Filter Bar (shown only on EcoEye tab) -->
+        <div class="ecoeye-controls" id="ecoeye-controls" style="display: none;">
+            <button class="filter-toggle-btn" id="ee-filter-toggle" onclick="document.getElementById('ecoeye-filter-bar').classList.toggle('filters-visible'); this.classList.toggle('active')">
+                Filters <span class="filter-toggle-arrow">▼</span>
+            </button>
+            <div class="ecoeye-filter-bar" id="ecoeye-filter-bar">
+                <div class="ecoeye-filter-controls">
+                    <div class="ecoeye-filter-group">
+                        <label for="ee-camera-filter">Camera</label>
+                        <select id="ee-camera-filter">
+                            <option value="">All Cameras</option>
+                        </select>
+                    </div>
+                    <div class="ecoeye-filter-group">
+                        <label for="ee-type-filter">Event Type</label>
+                        <select id="ee-type-filter">
+                            <option value="">All Types</option>
+                            <option value="motion">Motion</option>
+                            <option value="person">Person</option>
+                            <option value="vehicle">Vehicle</option>
+                            <option value="animal">Animal</option>
+                            <option value="package">Package</option>
+                        </select>
+                    </div>
+                    <div class="ecoeye-filter-group">
+                        <label for="ee-site-filter">Site</label>
+                        <select id="ee-site-filter">
+                            <option value="">All Sites</option>
+                        </select>
+                    </div>
+                    <div class="ecoeye-filter-group">
+                        <label for="ee-date-filter">Since Date</label>
+                        <input type="date" id="ee-date-filter">
+                    </div>
+                    <div class="ecoeye-filter-group">
+                        <label for="ee-sort-filter">Sort By</label>
+                        <select id="ee-sort-filter">
+                            <option value="desc">Newest First</option>
+                            <option value="asc">Oldest First</option>
+                        </select>
+                    </div>
+                    <div class="ecoeye-filter-group">
+                        <label for="ee-tag-filter">Tag Filter</label>
+                        <select id="ee-tag-filter">
+                            <option value="">All Events</option>
+                            <option value="untagged">Untagged Only</option>
+                        </select>
+                    </div>
+                    <div class="ecoeye-filter-group" style="display: flex; gap: 8px; align-items: end;">
+                        <button onclick="eeSearchEvents()" class="btn-primary">Search</button>
+                        <button onclick="eeResetFilters()" class="btn-secondary">Reset</button>
+                    </div>
+                </div>
+            </div>
+
+            <div class="ecoeye-tag-bar">
+                <span class="ecoeye-tag-bar-label">Quick Tags:</span>
+                <div class="ecoeye-tag-pills" id="ee-tag-pills"></div>
+                <div class="ecoeye-tag-actions">
+                    {% if can_write %}
+                    <button onclick="eeApplySelectedTags()" class="btn-primary" id="ee-apply-tags-btn" disabled>
+                        Apply to Selected (<span id="ee-tag-apply-count">0</span>)
+                    </button>
+                    <button onclick="eeRemoveSelectedTags()" class="btn-secondary" id="ee-remove-tags-btn" disabled>
+                        Remove Tags
+                    </button>
+                    {% endif %}
+                    <button onclick="eeClearAllSelections()" class="btn-secondary">Clear</button>
+                    {% if can_write %}
+                    <button onclick="eeOpenTagManager()" class="btn-secondary">Manage Tags</button>
+                    {% endif %}
+                </div>
+            </div>
+        </div>
+
         <div class="videos-grid" id="videos-grid">
             <div class="loading">Loading videos...</div>
+        </div>
+
+        <!-- EcoEye Bottom Toolbar (shown only on EcoEye tab) -->
+        <div class="ecoeye-toolbar" id="ecoeye-toolbar" style="display: none;">
+            <div class="ecoeye-toolbar-left">
+                <button onclick="eeSelectAll()" class="btn-secondary">Select All</button>
+                <button onclick="eeDeselectAll()" class="btn-secondary">Deselect All</button>
+                {% if can_write %}
+                <button onclick="eeImportSelected()" class="btn-primary">Import Selected (<span id="ee-selected-count">0</span>)</button>
+                {% endif %}
+            </div>
+            <div class="ecoeye-toolbar-right">
+                <button onclick="eeFirstPage()" class="btn-secondary" id="ee-first-btn" title="First Page">⏮</button>
+                <button onclick="eePreviousPage()" class="btn-secondary" id="ee-prev-btn">Previous</button>
+                <span class="ecoeye-page-info" id="ee-page-info">Page 1</span>
+                <button onclick="eeNextPage()" class="btn-secondary" id="ee-next-btn">Next</button>
+                <button onclick="eeLastPage()" class="btn-secondary" id="ee-last-btn" title="Last Page">⏭</button>
+            </div>
         </div>
     </div>
 
@@ -70,30 +243,57 @@
         </div>
     </div>
 
-    <div id="upload-modal" class="modal" style="display: none;">
+    {% if can_write %}
+    <!-- EcoEye Tag Manager Modal -->
+    <div id="ee-tag-manager-modal" class="modal" style="display: none;">
         <div class="modal-content">
-            <span class="close" onclick="closeUploadModal()">&times;</span>
-            <h2>Upload Videos</h2>
-            <form id="upload-form" enctype="multipart/form-data">
-                <div class="form-group">
-                    <label>Select Video Files (multiple allowed):</label>
-                    <input type="file" id="video-files" accept=".mp4,.avi,.mov,.mkv,.webm" multiple />
-                    <div id="file-list" style="margin-top: 10px; font-size: 13px; color: #7f8c8d;"></div>
-                </div>
-                <div class="form-group">
-                    <label>Notes (optional, applies to all files):</label>
-                    <textarea id="upload-notes" placeholder="Add notes about these videos..." rows="3"></textarea>
-                </div>
-                <div style="display: flex; gap: 10px; margin-top: 20px;">
-                    <button type="submit" class="btn-primary" style="flex: 1;">Upload Files</button>
-                    <button type="button" onclick="closeUploadModal()" class="btn-secondary">Cancel</button>
-                </div>
-            </form>
-            <div id="upload-status" class="status-message" style="margin-top: 15px;"></div>
-            <div id="upload-progress" style="margin-top: 15px;"></div>
+            <span class="close" onclick="eeCloseTagManager()">&times;</span>
+            <h2>Manage Tags</h2>
+            <div id="ee-tag-manager-list" style="display: flex; flex-direction: column; gap: 8px; margin-bottom: 20px;"></div>
+            <div style="display: flex; gap: 10px; padding-top: 15px; border-top: 1px solid #eee;">
+                <input type="text" id="ee-new-tag-name" placeholder="New tag name...">
+                <input type="color" id="ee-new-tag-color" value="#6c757d" style="width: 50px; height: 40px; border: none; cursor: pointer;">
+                <button onclick="eeCreateTag()" class="btn-primary">Add Tag</button>
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- EcoEye Video Player Modal -->
+    <div id="ee-video-modal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 1000px; background: #000; padding: 15px;">
+            <span class="close" onclick="eeCloseVideoPlayer()" style="color: white;">&times;</span>
+            <video id="ee-video-player" controls style="width: 100%; max-height: 80vh; border-radius: 4px;">
+                <source id="ee-video-source" src="" type="video/mp4">
+            </video>
+            <div id="ee-video-title" style="color: white; text-align: center; margin-top: 10px; font-size: 14px;"></div>
         </div>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <!-- EcoEye Loading Overlay -->
+    <div id="ee-loading-overlay" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 9999; align-items: center; justify-content: center;">
+        <div style="background: white; padding: 30px 50px; border-radius: 8px; text-align: center;">
+            <div style="width: 50px; height: 50px; border: 4px solid #f3f3f3; border-top: 4px solid #3498db; border-radius: 50%; animation: spin 1s linear infinite; margin: 0 auto 15px;"></div>
+            <div id="ee-loading-message">Loading...</div>
+        </div>
+    </div>
+
+    <!-- Library Manager Modal -->
+    <div id="library-manager-modal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 500px;">
+            <span class="close" onclick="closeLibraryManager()">&times;</span>
+            <h2>Manage Libraries</h2>
+            <div id="library-manager-list"></div>
+            <div class="library-create-form">
+                <input type="text" id="new-library-name" placeholder="New library name..." />
+                <button onclick="createLibrary()" class="btn-primary">Create</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const canWrite = {{ can_write|tojson }};
+    </script>
+    <script src="{{ static_v('js/app.js') }}"></script>
 </body>
 </html>

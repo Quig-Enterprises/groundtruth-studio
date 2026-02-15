@@ -227,7 +227,7 @@ For a 10-second sequence with 5 distinct events:
 
 ## Data Export
 
-All annotations are stored in SQLite database tables:
+All annotations are stored in PostgreSQL database tables:
 
 ### Time Range Tags Table
 ```sql

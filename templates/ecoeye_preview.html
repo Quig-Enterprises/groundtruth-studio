@@ -1944,7 +1944,20 @@
         function importMetadataOnly(eventId) {
             console.log('[Button] importMetadataOnly clicked for:', eventId);
 
-            // Fire and forget - don't block the UI
+            // Update card UI immediately to show importing state
+            const card = document.querySelector('.event-card[data-event-id="' + eventId + '"]');
+            if (card) {
+                const statusBar = card.querySelector('.event-status-bar');
+                if (statusBar) {
+                    statusBar.textContent = '';
+                    const icon = document.createElement('span');
+                    icon.className = 'status-icon';
+                    icon.textContent = '\u23F3';
+                    statusBar.appendChild(icon);
+                    statusBar.appendChild(document.createTextNode(' Importing...'));
+                }
+            }
+
             fetch('/api/ecoeye/sync-sample', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
@@ -1952,13 +1965,76 @@
             }).then(response => response.json()).then(data => {
                 if (data.success) {
                     console.log('[Success] Metadata imported, record_id:', data.record_id);
-                    loadEvents();
+                    updateCardAfterImport(card, eventId, data.record_id);
                 } else {
                     console.error('[Error] Import failed:', data.error);
+                    revertCardStatus(card);
                 }
             }).catch(error => {
                 console.error('[Error] Metadata import failed:', error);
+                revertCardStatus(card);
             });
+        }
+
+        function updateCardAfterImport(card, eventId, recordId) {
+            if (!card) return;
+            // Update status bar
+            const statusBar = card.querySelector('.event-status-bar');
+            if (statusBar) {
+                statusBar.className = 'event-status-bar status-imported';
+                statusBar.textContent = '';
+                const icon = document.createElement('span');
+                icon.className = 'status-icon';
+                icon.textContent = '\uD83D\uDCCB';
+                statusBar.appendChild(icon);
+                statusBar.appendChild(document.createTextNode(' Metadata Imported'));
+            }
+            // Add imported badge
+            const thumb = card.querySelector('.event-thumbnail');
+            if (thumb && !thumb.querySelector('.imported-badge')) {
+                const badge = document.createElement('div');
+                badge.className = 'imported-badge metadata-only';
+                badge.textContent = 'Imported';
+                thumb.appendChild(badge);
+            }
+            // Update action buttons (keep checkbox, replace buttons)
+            const btnContainer = card.querySelector('.event-actions');
+            if (btnContainer) {
+                btnContainer.querySelectorAll('button').forEach(function(b) { b.remove(); });
+                const reqBtn = document.createElement('button');
+                reqBtn.className = 'btn-warning';
+                reqBtn.textContent = 'Request Video';
+                reqBtn.onclick = function() { requestVideoDownload(eventId); };
+                btnContainer.appendChild(reqBtn);
+                if (recordId) {
+                    const annBtn = document.createElement('button');
+                    annBtn.className = 'btn-primary';
+                    annBtn.style.fontSize = '12px';
+                    annBtn.textContent = 'Annotate';
+                    annBtn.onclick = function() { openThumbnailAnnotator(recordId); };
+                    btnContainer.appendChild(annBtn);
+                }
+            }
+            // Update allEvents cache
+            const evt = allEvents.find(function(e) { return String(e.event_id || e.id) === String(eventId); });
+            if (evt) {
+                evt.imported_to_studio = true;
+                evt.local_video_id = recordId;
+            }
+        }
+
+        function revertCardStatus(card) {
+            if (!card) return;
+            const statusBar = card.querySelector('.event-status-bar');
+            if (statusBar) {
+                statusBar.className = 'event-status-bar status-pending';
+                statusBar.textContent = '';
+                const icon = document.createElement('span');
+                icon.className = 'status-icon';
+                icon.textContent = '\u23F3';
+                statusBar.appendChild(icon);
+                statusBar.appendChild(document.createTextNode(' Not Imported'));
+            }
         }
 
         // Request video download from EcoEye relay

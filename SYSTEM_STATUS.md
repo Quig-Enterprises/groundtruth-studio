@@ -181,7 +181,6 @@ sudo journalctl -u groundtruth-studio -f
 │       └── tag-form-generator.js # Dynamic form generator (360 lines)
 ├── downloads/                    # Video storage
 ├── thumbnails/                   # Generated thumbnails
-├── video_archive.db              # SQLite database
 ├── seed_taxonomy.py              # Database seeding script
 ├── start_server.sh               # Development server startup
 ├── requirements.txt              # Python dependencies

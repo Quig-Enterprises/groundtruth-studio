@@ -121,7 +121,7 @@ const predictionReview = {
 
         const scenario = document.createElement('span');
         scenario.className = 'prediction-scenario';
-        scenario.textContent = p.scenario;
+        scenario.textContent = p.scenario === 'person_identification' ? 'Person ID' : p.scenario;
 
         const confClass = p.confidence >= 0.9 ? 'conf-high' : p.confidence >= 0.7 ? 'conf-medium' : 'conf-low';
         const confPill = document.createElement('span');
@@ -130,6 +130,30 @@ const predictionReview = {
 
         header.appendChild(scenario);
         header.appendChild(confPill);
+
+        // Person identification info
+        if (p.scenario === 'person_identification' && p.predicted_tags) {
+            const tags = typeof p.predicted_tags === 'string' ? JSON.parse(p.predicted_tags) : p.predicted_tags;
+            if (tags.person_name) {
+                const personInfo = document.createElement('div');
+                personInfo.style.cssText = 'padding:4px 8px;background:#2c3e50;border-radius:4px;margin-top:4px;color:#ecf0f1;font-size:13px;';
+
+                const label = document.createElement('strong');
+                label.textContent = 'Identified: ';
+                personInfo.appendChild(label);
+
+                const name = document.createElement('span');
+                name.textContent = tags.person_name;
+                personInfo.appendChild(name);
+
+                const match = document.createElement('span');
+                match.style.color = '#95a5a6';
+                match.textContent = ' (' + (tags.match_similarity * 100).toFixed(0) + '% match)';
+                personInfo.appendChild(match);
+
+                header.appendChild(personInfo);
+            }
+        }
 
         // Show status badge for non-pending predictions
         if (p.review_status && p.review_status !== 'pending') {
@@ -323,17 +347,96 @@ const predictionReview = {
         }
     },
 
-    async reviewPrediction(id, action, quickApprove) {
+    showRejectReasonPicker(predId, anchorEl) {
+        // Remove any existing picker
+        const existing = document.getElementById('reject-reason-picker');
+        if (existing) existing.remove();
+
+        const reasons = [
+            { value: 'false_positive', label: 'False positive' },
+            { value: 'bbox_too_large', label: 'BBox too large' },
+            { value: 'bbox_too_small', label: 'BBox too small' },
+            { value: 'wrong_class', label: 'Wrong class' },
+            { value: 'duplicate', label: 'Duplicate' },
+            { value: 'poor_localization', label: 'Poor localization' },
+            { value: 'other', label: 'Other' }
+        ];
+
+        const picker = document.createElement('div');
+        picker.id = 'reject-reason-picker';
+        picker.style.cssText = 'position:absolute;z-index:100;background:#fff;border:1px solid #ddd;border-radius:6px;box-shadow:0 4px 12px rgba(0,0,0,0.15);padding:4px 0;min-width:160px;';
+
+        const title = document.createElement('div');
+        title.style.cssText = 'padding:6px 12px;font-size:11px;color:#95a5a6;font-weight:600;border-bottom:1px solid #eee;';
+        title.textContent = 'Rejection reason:';
+        picker.appendChild(title);
+
+        reasons.forEach(r => {
+            const item = document.createElement('div');
+            item.style.cssText = 'padding:6px 12px;font-size:13px;cursor:pointer;color:#2c3e50;';
+            item.textContent = r.label;
+            item.onmouseenter = () => item.style.background = '#f0f0f0';
+            item.onmouseleave = () => item.style.background = '';
+            item.onclick = (e) => {
+                e.stopPropagation();
+                picker.remove();
+                this.reviewPrediction(predId, 'reject', false, r.value + ': ' + r.label);
+            };
+            picker.appendChild(item);
+        });
+
+        // Position relative to button, clamped to viewport
+        const rect = anchorEl.getBoundingClientRect();
+        picker.style.position = 'fixed';
+        picker.style.visibility = 'hidden';
+        document.body.appendChild(picker);
+
+        const pickerRect = picker.getBoundingClientRect();
+        const vw = window.innerWidth;
+        const vh = window.innerHeight;
+
+        // Vertical: prefer below button, flip above if no room
+        let top = rect.bottom + 2;
+        if (top + pickerRect.height > vh) {
+            top = rect.top - pickerRect.height - 2;
+        }
+        top = Math.max(4, Math.min(top, vh - pickerRect.height - 4));
+
+        // Horizontal: prefer left-aligned with button, clamp to viewport
+        let left = rect.left;
+        if (left + pickerRect.width > vw) {
+            left = vw - pickerRect.width - 4;
+        }
+        left = Math.max(4, left);
+
+        picker.style.top = top + 'px';
+        picker.style.left = left + 'px';
+        picker.style.visibility = '';
+
+        // Close on outside click
+        const closeHandler = (e) => {
+            if (!picker.contains(e.target)) {
+                picker.remove();
+                document.removeEventListener('click', closeHandler, true);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', closeHandler, true), 0);
+    },
+
+    async reviewPrediction(id, action, quickApprove, rejectReason) {
         // Grab prediction before removing from list (need scenario/bbox for person identify)
         const pred = this.predictions.find(p => p.id === id);
         try {
+            const body = {
+                action: action,
+                reviewer: 'studio_user'
+            };
+            if (rejectReason) body.notes = rejectReason;
+
             const resp = await fetch(`/api/ai/predictions/${id}/review`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    action: action,
-                    reviewer: 'studio_user'
-                })
+                body: JSON.stringify(body)
             });
             const data = await resp.json();
             if (data.success) {
@@ -486,7 +589,14 @@ document.addEventListener('keydown', function(e) {
         predictionReview.reviewPrediction(predictionReview.selectedId, 'approve');
     } else if (e.key === 'r' || e.key === 'R') {
         e.preventDefault();
-        predictionReview.reviewPrediction(predictionReview.selectedId, 'reject');
+        if (e.shiftKey) {
+            predictionReview.reviewPrediction(predictionReview.selectedId, 'reject', false, 'unspecified');
+        } else {
+            // Find the reject button on the selected card and show picker
+            const card = document.querySelector('.prediction-card.selected');
+            const btn = card && card.querySelector('.btn-reject');
+            if (btn) predictionReview.showRejectReasonPicker(predictionReview.selectedId, btn);
+        }
     } else if (e.key === 'n' || e.key === 'N') {
         e.preventDefault();
         // Select next prediction

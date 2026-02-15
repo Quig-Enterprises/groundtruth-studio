@@ -1,20 +1,23 @@
-/* Scenario Selection UI */
+/* Scenario Selection UI - Mobile-First */
+
+/* ===== Base (Mobile) Styles ===== */
+
 .scenario-selection {
-    padding: 10px 0;
+    padding: 8px 0;
 }
 
 .scenario-grid {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 12px;
-    margin-top: 15px;
+    gap: 10px;
+    margin-top: 12px;
 }
 
 .scenario-card {
     background: #f8f9fa;
     border: 2px solid #dee2e6;
     border-radius: 8px;
-    padding: 16px;
+    padding: 14px;
     text-align: left;
     cursor: pointer;
     transition: all 0.2s;
@@ -23,32 +26,32 @@
 
 .scenario-card:hover {
     background: #e9ecef;
-    border-color: #3498db;
+    border-color: var(--color-primary, #3498db);
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0,0,0,0.1);
 }
 
 .scenario-title {
-    font-size: 16px;
+    font-size: 15px;
     font-weight: 600;
-    color: #2c3e50;
+    color: var(--color-dark, #2c3e50);
     margin-bottom: 6px;
 }
 
 .scenario-description {
-    font-size: 13px;
-    color: #6c757d;
+    font-size: 12px;
+    color: var(--color-text-secondary, #6c757d);
     line-height: 1.4;
 }
 
 /* Workflow Progress */
 .workflow-progress {
-    margin: 20px 0;
+    margin: 15px 0;
 }
 
 .progress-bar {
     width: 100%;
-    height: 8px;
+    height: 6px;
     background: #e9ecef;
     border-radius: 4px;
     overflow: hidden;
@@ -56,14 +59,14 @@
 
 .progress-fill {
     height: 100%;
-    background: linear-gradient(90deg, #3498db 0%, #2980b9 100%);
+    background: linear-gradient(90deg, var(--color-primary, #3498db) 0%, #2980b9 100%);
     transition: width 0.3s ease;
 }
 
 .progress-text {
     text-align: center;
-    font-size: 13px;
-    color: #6c757d;
+    font-size: 12px;
+    color: var(--color-text-secondary, #6c757d);
     margin-top: 8px;
     font-weight: 500;
 }
@@ -72,18 +75,18 @@
 .bbox-step-content {
     background: #f8f9fa;
     border-radius: 8px;
-    padding: 20px;
-    margin: 20px 0;
+    padding: 15px;
+    margin: 15px 0;
 }
 
 .bbox-step-content h3 {
-    font-size: 18px;
-    color: #2c3e50;
+    font-size: 16px;
+    color: var(--color-dark, #2c3e50);
     margin: 0 0 12px 0;
 }
 
 .step-prompt {
-    font-size: 15px;
+    font-size: 14px;
     color: #495057;
     margin-bottom: 16px;
     font-weight: 500;
@@ -91,23 +94,28 @@
 
 .step-instructions {
     background: #fff3cd;
-    border: 1px solid #ffc107;
+    border: 1px solid var(--color-warning, #ffc107);
     border-radius: 4px;
-    padding: 12px;
+    padding: 10px;
     margin-bottom: 16px;
 }
 
 .step-instructions p {
     margin: 4px 0;
-    font-size: 14px;
+    font-size: 13px;
     color: #856404;
 }
 
 .step-actions {
     display: flex;
-    gap: 10px;
+    gap: 8px;
     margin-top: 16px;
-    flex-wrap: wrap;
+    flex-direction: column;
+}
+
+.step-actions button {
+    width: 100%;
+    padding: 12px;
 }
 
 /* BBox Status Messages */
@@ -115,10 +123,10 @@
     background: #d4edda;
     border: 1px solid #c3e6cb;
     border-radius: 4px;
-    padding: 12px 16px;
+    padding: 10px 12px;
     margin: 12px 0;
     color: #155724;
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 500;
 }
 
@@ -130,47 +138,49 @@
 
 /* Tag Form Content */
 .tag-form-content {
-    margin: 20px 0;
+    margin: 15px 0;
 }
 
 .required {
-    color: #e74c3c;
+    color: var(--color-danger, #e74c3c);
     font-weight: bold;
 }
 
 /* Form styling enhancements */
 select {
     width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #ddd;
+    padding: 10px;
+    border: 1px solid var(--color-border, #ddd);
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 15px;
     background: white;
 }
 
 select:focus {
     outline: none;
-    border-color: #3498db;
+    border-color: var(--color-primary, #3498db);
     box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.1);
 }
 
 textarea {
     resize: vertical;
     min-height: 60px;
+    font-size: 15px;
+    padding: 10px;
 }
 
 /* Scenario Categories */
 .scenario-category {
-    margin-bottom: 30px;
+    margin-bottom: 25px;
 }
 
 .category-title {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
-    color: #6c757d;
+    color: var(--color-text-secondary, #6c757d);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    margin-bottom: 12px;
+    margin-bottom: 10px;
     padding-bottom: 6px;
     border-bottom: 1px solid #dee2e6;
 }
@@ -199,15 +209,15 @@ textarea {
 .boundary-options {
     display: grid;
     grid-template-columns: 1fr;
-    gap: 12px;
-    margin-top: 15px;
+    gap: 10px;
+    margin-top: 12px;
 }
 
 .boundary-option-card {
     background: #f8f9fa;
     border: 2px solid #dee2e6;
     border-radius: 8px;
-    padding: 16px;
+    padding: 14px;
     text-align: left;
     cursor: pointer;
     transition: all 0.2s;
@@ -216,21 +226,21 @@ textarea {
 
 .boundary-option-card:hover {
     background: #e9ecef;
-    border-color: #3498db;
+    border-color: var(--color-primary, #3498db);
     transform: translateY(-2px);
     box-shadow: 0 4px 8px rgba(0,0,0,0.1);
 }
 
 .option-title {
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 600;
-    color: #2c3e50;
+    color: var(--color-dark, #2c3e50);
     margin-bottom: 4px;
 }
 
 .option-description {
-    font-size: 13px;
-    color: #6c757d;
+    font-size: 12px;
+    color: var(--color-text-secondary, #6c757d);
     line-height: 1.4;
 }
 
@@ -245,12 +255,12 @@ textarea {
 }
 
 .bbox-list, .not-visible-list {
-    margin: 20px 0;
+    margin: 15px 0;
 }
 
 .bbox-list h3, .not-visible-list h3 {
-    font-size: 16px;
-    color: #2c3e50;
+    font-size: 15px;
+    color: var(--color-dark, #2c3e50);
     margin-bottom: 12px;
 }
 
@@ -258,31 +268,32 @@ textarea {
     background: #f8f9fa;
     border: 1px solid #dee2e6;
     border-radius: 6px;
-    padding: 12px;
+    padding: 10px;
     margin-bottom: 10px;
 }
 
 .bbox-item.not-visible {
     background: #fff3cd;
-    border-color: #ffc107;
+    border-color: var(--color-warning, #ffc107);
 }
 
 .bbox-item-header {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 8px;
     margin-bottom: 8px;
 }
 
 .bbox-label {
     font-weight: 600;
-    color: #2c3e50;
-    font-size: 14px;
+    color: var(--color-dark, #2c3e50);
+    font-size: 13px;
 }
 
 .bbox-coords {
-    font-size: 12px;
-    color: #6c757d;
+    font-size: 11px;
+    color: var(--color-text-secondary, #6c757d);
     font-family: monospace;
 }
 
@@ -297,26 +308,21 @@ textarea {
 
 .bbox-item-actions {
     display: flex;
-    gap: 8px;
+    flex-direction: column;
+    gap: 6px;
+    width: 100%;
 }
 
-/* Responsive */
-@media (min-width: 768px) {
-    .scenario-grid {
-        grid-template-columns: repeat(2, 1fr);
-    }
-
-    .boundary-options {
-        grid-template-columns: repeat(3, 1fr);
-    }
+.bbox-item-actions button {
+    width: 100%;
 }
 
 /* Checklist Interface */
 .bbox-checklist {
     background: #f8f9fa;
     border-radius: 6px;
-    padding: 10px;
-    margin-bottom: 15px;
+    padding: 8px;
+    margin-bottom: 12px;
 }
 
 .bbox-checklist h3 {
@@ -332,8 +338,8 @@ textarea {
     display: flex;
     align-items: center;
     gap: 8px;
-    padding: 4px 6px;
-    margin-bottom: 2px;
+    padding: 8px;
+    margin-bottom: 4px;
     transition: all 0.2s;
     border-radius: 3px;
 }
@@ -351,7 +357,7 @@ textarea {
 }
 
 .checklist-item.completed {
-    color: #28a745;
+    color: var(--color-success, #28a745);
 }
 
 .checklist-item.not-visible,
@@ -368,12 +374,12 @@ textarea {
 .checklist-label {
     flex: 1;
     font-weight: 500;
-    font-size: 13px;
+    font-size: 14px;
 }
 
 .checklist-status {
     font-size: 11px;
-    color: #6c757d;
+    color: var(--color-text-secondary, #6c757d);
 }
 
 .btn-tiny {
@@ -388,45 +394,50 @@ textarea {
 
 .btn-tiny:hover {
     background: #e9ecef;
-    border-color: #3498db;
+    border-color: var(--color-primary, #3498db);
 }
 
 .btn-tiny.btn-delete-tag {
-    color: #dc3545;
-    border-color: #dc3545;
+    color: var(--color-danger, #dc3545);
+    border-color: var(--color-danger, #dc3545);
 }
 
 .btn-tiny.btn-delete-tag:hover {
-    background: #dc3545;
+    background: var(--color-danger, #dc3545);
     color: white;
 }
 
 /* Current Step Display */
 .bbox-current-step {
     background: white;
-    border: 2px solid #3498db;
+    border: 2px solid var(--color-primary, #3498db);
     border-radius: 8px;
-    padding: 20px;
-    margin-bottom: 20px;
+    padding: 15px;
+    margin-bottom: 15px;
 }
 
 .bbox-current-step h3 {
-    font-size: 18px;
-    color: #2c3e50;
+    font-size: 16px;
+    color: var(--color-dark, #2c3e50);
     margin: 0 0 8px 0;
 }
 
 .bbox-current-step .step-prompt {
-    font-size: 14px;
+    font-size: 13px;
     color: #495057;
     margin-bottom: 15px;
 }
 
 .bbox-current-step .step-actions {
     display: flex;
-    gap: 8px;
-    flex-wrap: wrap;
+    gap: 6px;
+    flex-direction: column;
     margin-top: 15px;
+}
+
+.bbox-current-step .step-actions button {
+    width: 100%;
+    padding: 12px;
 }
 
 /* Disabled button state */
@@ -436,241 +447,169 @@ button:disabled {
 }
 
 button.btn-primary:disabled {
-    background: #6c757d;
-    border-color: #6c757d;
+    background: var(--color-text-secondary, #6c757d);
+    border-color: var(--color-text-secondary, #6c757d);
 }
 
-/* Additional Mobile Responsive Styles */
-@media (max-width: 768px) {
+/* ===== Tablet and Desktop (768px+) ===== */
+@media (min-width: 768px) {
     .scenario-selection {
-        padding: 8px 0;
+        padding: 10px 0;
     }
 
     .scenario-grid {
-        gap: 10px;
-        margin-top: 12px;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+        margin-top: 15px;
     }
 
     .scenario-card {
-        padding: 14px;
+        padding: 16px;
     }
 
     .scenario-title {
-        font-size: 15px;
-    }
-
-    .scenario-description {
-        font-size: 12px;
-    }
-
-    .workflow-progress {
-        margin: 15px 0;
-    }
-
-    .progress-bar {
-        height: 6px;
-    }
-
-    .progress-text {
-        font-size: 12px;
-    }
-
-    .bbox-step-content {
-        padding: 15px;
-        margin: 15px 0;
-    }
-
-    .bbox-step-content h3 {
         font-size: 16px;
     }
 
+    .scenario-description {
+        font-size: 13px;
+    }
+
+    .workflow-progress {
+        margin: 20px 0;
+    }
+
+    .progress-bar {
+        height: 8px;
+    }
+
+    .progress-text {
+        font-size: 13px;
+    }
+
+    .bbox-step-content {
+        padding: 20px;
+        margin: 20px 0;
+    }
+
+    .bbox-step-content h3 {
+        font-size: 18px;
+    }
+
     .step-prompt {
-        font-size: 14px;
+        font-size: 15px;
     }
 
     .step-instructions {
-        padding: 10px;
-    }
-
-    .step-instructions p {
-        font-size: 13px;
-    }
-
-    .step-actions {
-        gap: 8px;
-        flex-direction: column;
-    }
-
-    .step-actions button {
-        width: 100%;
         padding: 12px;
     }
 
-    .bbox-status-message {
-        padding: 10px 12px;
-        font-size: 13px;
-    }
-
-    .tag-form-content {
-        margin: 15px 0;
-    }
-
-    select {
-        padding: 10px;
-        font-size: 15px;
-    }
-
-    textarea {
-        font-size: 15px;
-        padding: 10px;
-    }
-
-    .scenario-category {
-        margin-bottom: 25px;
-    }
-
-    .category-title {
-        font-size: 13px;
-        margin-bottom: 10px;
-    }
-
-    .boundary-options {
-        gap: 10px;
-        margin-top: 12px;
-    }
-
-    .boundary-option-card {
-        padding: 14px;
-    }
-
-    .option-title {
+    .step-instructions p {
         font-size: 14px;
     }
 
+    .step-actions {
+        gap: 10px;
+        flex-direction: row;
+    }
+
+    .step-actions button {
+        width: auto;
+        padding: 8px 16px;
+    }
+
+    .bbox-status-message {
+        padding: 12px 16px;
+        font-size: 14px;
+    }
+
+    .tag-form-content {
+        margin: 20px 0;
+    }
+
+    select {
+        padding: 8px 12px;
+        font-size: 14px;
+    }
+
+    textarea {
+        font-size: 14px;
+        padding: 8px 12px;
+    }
+
+    .scenario-category {
+        margin-bottom: 30px;
+    }
+
+    .category-title {
+        font-size: 14px;
+        margin-bottom: 12px;
+    }
+
+    .boundary-options {
+        grid-template-columns: repeat(3, 1fr);
+        gap: 12px;
+        margin-top: 15px;
+    }
+
+    .boundary-option-card {
+        padding: 16px;
+    }
+
+    .option-title {
+        font-size: 15px;
+    }
+
     .option-description {
-        font-size: 12px;
+        font-size: 13px;
     }
 
     .bbox-list,
     .not-visible-list {
-        margin: 15px 0;
+        margin: 20px 0;
     }
 
     .bbox-list h3,
     .not-visible-list h3 {
-        font-size: 15px;
-    }
-
-    .bbox-item {
-        padding: 10px;
-    }
-
-    .bbox-item-header {
-        flex-direction: column;
-        align-items: flex-start;
-        gap: 8px;
-    }
-
-    .bbox-label {
-        font-size: 13px;
-    }
-
-    .bbox-coords {
-        font-size: 11px;
-    }
-
-    .bbox-item-actions {
-        width: 100%;
-        flex-direction: column;
-        gap: 6px;
-    }
-
-    .bbox-item-actions button {
-        width: 100%;
-    }
-
-    .bbox-checklist {
-        padding: 8px;
-        margin-bottom: 12px;
-    }
-
-    .checklist-item {
-        padding: 8px;
-        margin-bottom: 4px;
-    }
-
-    .checklist-label {
-        font-size: 14px;
-    }
-
-    .bbox-current-step {
-        padding: 15px;
-        margin-bottom: 15px;
-    }
-
-    .bbox-current-step h3 {
         font-size: 16px;
     }
 
-    .bbox-current-step .step-prompt {
-        font-size: 13px;
-    }
-
-    .bbox-current-step .step-actions {
-        flex-direction: column;
-        gap: 6px;
-    }
-
-    .bbox-current-step .step-actions button {
-        width: 100%;
-        padding: 12px;
-    }
-}
-
-@media (max-width: 480px) {
-    .scenario-card {
+    .bbox-item {
         padding: 12px;
     }
 
-    .scenario-title {
+    .bbox-item-header {
+        flex-direction: row;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .bbox-label {
         font-size: 14px;
     }
 
-    .scenario-description {
-        font-size: 11px;
-    }
-
-    .bbox-step-content {
-        padding: 12px;
-        margin: 12px 0;
-    }
-
-    .bbox-step-content h3 {
-        font-size: 15px;
-    }
-
-    .step-prompt {
-        font-size: 13px;
-    }
-
-    .step-instructions {
-        padding: 8px;
-    }
-
-    .step-instructions p {
+    .bbox-coords {
         font-size: 12px;
     }
 
-    .bbox-item {
-        padding: 8px;
+    .bbox-item-actions {
+        flex-direction: row;
+        width: auto;
+        gap: 8px;
+    }
+
+    .bbox-item-actions button {
+        width: auto;
     }
 
     .bbox-checklist {
-        padding: 6px;
+        padding: 10px;
+        margin-bottom: 15px;
     }
 
     .checklist-item {
-        padding: 6px;
+        padding: 4px 6px;
+        margin-bottom: 2px;
     }
 
     .checklist-label {
@@ -678,11 +617,26 @@ button.btn-primary:disabled {
     }
 
     .bbox-current-step {
-        padding: 12px;
+        padding: 20px;
+        margin-bottom: 20px;
     }
 
     .bbox-current-step h3 {
-        font-size: 15px;
+        font-size: 18px;
+    }
+
+    .bbox-current-step .step-prompt {
+        font-size: 14px;
+    }
+
+    .bbox-current-step .step-actions {
+        flex-direction: row;
+        gap: 8px;
+    }
+
+    .bbox-current-step .step-actions button {
+        width: auto;
+        padding: 8px 16px;
     }
 }
 

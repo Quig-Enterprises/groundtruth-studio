@@ -7,39 +7,49 @@
     <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
     <link rel="stylesheet" href="/static/css/style.css">
     <style>
+        /* ===== Mobile-First Sync Settings Styles ===== */
+
+        /* Base (Mobile) Styles */
         .sync-container {
             max-width: 1200px;
-            margin: 20px auto;
-            padding: 20px;
+            margin: 15px auto;
+            padding: 15px;
         }
 
         .sync-header {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 30px;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .sync-header h1 {
+            margin: 0;
+            font-size: 22px;
         }
 
         .sync-section {
-            background: white;
+            background: var(--color-white, white);
             border-radius: 8px;
-            padding: 25px;
-            margin-bottom: 25px;
+            padding: 18px;
+            margin-bottom: 20px;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
 
         .sync-section h2 {
             margin-top: 0;
-            color: #2c3e50;
-            border-bottom: 2px solid #3498db;
+            margin-bottom: 15px;
+            color: var(--color-dark, #2c3e50);
+            border-bottom: 2px solid var(--color-primary, #3498db);
             padding-bottom: 10px;
+            font-size: 18px;
         }
 
         .status-indicator {
             display: inline-block;
-            padding: 6px 16px;
+            padding: 8px 18px;
             border-radius: 20px;
-            font-size: 13px;
+            font-size: 14px;
             font-weight: 600;
         }
 
@@ -54,37 +64,44 @@
         }
 
         .form-group {
-            margin-bottom: 20px;
+            margin-bottom: 18px;
         }
 
         .form-group label {
             display: block;
-            margin-bottom: 5px;
+            margin-bottom: 8px;
             font-weight: 500;
-            color: #2c3e50;
+            color: var(--color-dark, #2c3e50);
+            font-size: 15px;
         }
 
         .form-group input[type="text"],
         .form-group input[type="password"],
         .form-group input[type="number"] {
             width: 100%;
-            padding: 10px;
-            border: 1px solid #ddd;
+            padding: 12px;
+            border: 1px solid var(--color-border, #ddd);
             border-radius: 4px;
-            font-size: 14px;
+            font-size: 15px;
         }
 
         .button-group {
             display: flex;
+            flex-direction: column;
             gap: 10px;
-            margin-top: 20px;
+            margin-top: 18px;
+        }
+
+        .button-group button {
+            width: 100%;
+            min-height: 44px;
         }
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
-            margin: 20px 0;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 12px;
+            margin: 18px 0;
         }
 
         .stat-card {
@@ -95,9 +112,9 @@
         }
 
         .stat-number {
-            font-size: 28px;
+            font-size: 26px;
             font-weight: bold;
-            color: #3498db;
+            color: var(--color-primary, #3498db);
         }
 
         .stat-label {
@@ -110,64 +127,227 @@
             width: 100%;
             border-collapse: collapse;
             margin-top: 15px;
-        }
-
-        .history-table th,
-        .history-table td {
-            padding: 10px;
-            text-align: left;
-            border-bottom: 1px solid #dee2e6;
+            font-size: 13px;
         }
 
         .history-table th {
-            background: #f8f9fa;
+            display: none;
+        }
+
+        .history-table tr {
+            display: block;
+            margin-bottom: 12px;
+            border: 1px solid #dee2e6;
+            border-radius: 6px;
+            padding: 12px;
+        }
+
+        .history-table td {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #f0f0f0;
+        }
+
+        .history-table td:last-child {
+            border-bottom: none;
+        }
+
+        .history-table td:before {
+            content: attr(data-label);
             font-weight: 600;
-            color: #2c3e50;
+            color: var(--color-text-secondary, #7f8c8d);
+            font-size: 12px;
+            text-transform: uppercase;
         }
 
         .sync-status-running {
             color: #ffc107;
+            font-weight: 600;
         }
 
         .sync-status-completed {
             color: #28a745;
+            font-weight: 600;
         }
 
         .sync-status-failed {
             color: #dc3545;
+            font-weight: 600;
         }
 
-        @media (max-width: 768px) {
+        .status-message {
+            padding: 12px;
+            border-radius: 4px;
+            margin-top: 12px;
+        }
+
+        .status-message.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status-message.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status-message.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        /* ===== Tablet and Desktop (768px+) ===== */
+        @media (min-width: 768px) {
             .sync-container {
-                padding: 10px;
+                margin: 20px auto;
+                padding: 20px;
+            }
+
+            .sync-header {
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
+                margin-bottom: 30px;
+            }
+
+            .sync-header h1 {
+                font-size: inherit;
             }
 
             .sync-section {
-                padding: 15px;
+                padding: 25px;
+                margin-bottom: 25px;
+            }
+
+            .sync-section h2 {
+                font-size: inherit;
+            }
+
+            .status-indicator {
+                padding: 6px 16px;
+                font-size: 13px;
+            }
+
+            .form-group {
+                margin-bottom: 20px;
+            }
+
+            .form-group label {
+                margin-bottom: 5px;
+                font-size: inherit;
+            }
+
+            .form-group input[type="text"],
+            .form-group input[type="password"],
+            .form-group input[type="number"] {
+                padding: 10px;
+                font-size: 14px;
             }
 
             .button-group {
-                flex-direction: column;
+                flex-direction: row;
+                flex-wrap: wrap;
+                margin-top: 20px;
             }
 
             .button-group button {
-                width: 100%;
+                width: auto;
+                min-height: auto;
             }
 
             .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
+                grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+                gap: 15px;
+                margin: 20px 0;
+            }
+
+            .stat-card {
+                padding: 15px;
+            }
+
+            .stat-number {
+                font-size: 28px;
+            }
+
+            .stat-label {
+                font-size: 13px;
+            }
+
+            .history-table {
+                font-size: inherit;
+            }
+
+            .history-table th {
+                display: table-cell;
+                padding: 10px;
+                text-align: left;
+                border-bottom: 1px solid #dee2e6;
+                background: #f8f9fa;
+                font-weight: 600;
+                color: var(--color-dark, #2c3e50);
+            }
+
+            .history-table tr {
+                display: table-row;
+                margin-bottom: 0;
+                border: none;
+                border-radius: 0;
+                padding: 0;
+            }
+
+            .history-table td {
+                display: table-cell;
+                padding: 10px;
+                border-bottom: 1px solid #dee2e6;
+            }
+
+            .history-table td:before {
+                content: none;
+            }
+        }
+
+        /* Touch device optimization */
+        @media (hover: none) and (pointer: coarse) {
+            .button-group button {
+                min-height: 44px;
             }
         }
     </style>
 </head>
 <body>
+    <script src="/static/js/gt-utils.js"></script>
+    <script src="/static/js/responsive-utils.js"></script>
+    <nav class="site-nav" id="site-nav">
+        <div class="nav-brand">
+            <a href="/">Groundtruth Studio</a>
+            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
+                <span class="hamburger-icon"></span>
+            </button>
+        </div>
+        <div class="nav-links" id="nav-links">
+            <a href="/" class="nav-link">Video Library</a>
+            <a href="/add-content" class="nav-link">Add Content</a>
+            <a href="/person-manager" class="nav-link">Person Manager</a>
+            <a href="/camera-topology" class="nav-link">Camera Topology</a>
+            <a href="/model-training" class="nav-link">Model Training</a>
+            <a href="/prediction-review" class="nav-link">AI Review</a>
+            <a href="/sync-settings" class="nav-link">Sync Settings</a>
+            <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
+            <a href="/vibration-export" class="nav-link">Vibration Export</a>
+            <a href="/location-export" class="nav-link">Location Export</a>
+            <a href="/tag-manager" class="nav-link">Tag Manager</a>
+        </div>
+    </nav>
     <div class="sync-container">
         <div class="sync-header">
             <div>
                 <h1>Sync Settings</h1>
                 <p style="color: #6c757d;">Configure external data sources</p>
             </div>
-            <a href="/" class="btn-secondary">← Back to Library</a>
         </div>
 
         <!-- EcoEye Section -->
@@ -178,6 +358,7 @@
                 <span id="ecoeye-status" class="status-indicator">Checking...</span>
             </div>
 
+            {% if can_write %}
             <div class="form-group">
                 <label>API Key</label>
                 <input type="text" id="ecoeye-api-key" placeholder="Enter API key">
@@ -194,6 +375,7 @@
                 <button onclick="syncEcoEyeAlerts()" class="btn-secondary">Sync Alerts</button>
                 <button onclick="downloadEcoEyeVideos()" class="btn-secondary">Download Videos</button>
             </div>
+            {% endif %}
 
             <div id="ecoeye-stats" class="stats-grid" style="display: none;">
                 <div class="stat-card">
@@ -228,6 +410,7 @@
                 </p>
             </div>
 
+            {% if can_write %}
             <div class="form-group">
                 <label>UniFi Protect Host</label>
                 <input type="text" id="unifi-host" placeholder="e.g., unifi.local or 192.168.1.1">
@@ -252,6 +435,7 @@
                 <button onclick="saveUniFiCredentials()" class="btn-primary">Save Credentials</button>
                 <button onclick="testUniFiConnection()" class="btn-secondary">Test Connection</button>
             </div>
+            {% endif %}
 
             <div id="unifi-message" style="margin-top: 15px;"></div>
         </div>

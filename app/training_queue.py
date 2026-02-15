@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import boto3
-from botocore.exceptions import ClientError
+from botocore.exceptions import ClientError, NoCredentialsError
 
 from db_connection import get_connection
 
@@ -178,24 +178,33 @@ class TrainingQueueClient:
                 'queue_in_flight': int(main_attrs.get('ApproximateNumberOfMessagesNotVisible', 0)),
                 'dlq_messages': int(dlq_attrs.get('ApproximateNumberOfMessages', 0)),
             }
-        except ClientError as e:
+        except (ClientError, NoCredentialsError) as e:
             logger.error(f'Failed to get queue status: {e}')
+            error_msg = e.response["Error"]["Message"] if hasattr(e, 'response') else str(e)
             return {
-                'error': f'AWS error: {e.response["Error"]["Message"]}',
+                'error': f'AWS error: {error_msg}',
                 'queue_messages': None,
                 'queue_in_flight': None,
                 'dlq_messages': None,
             }
 
-    def get_jobs(self, limit: int = 50, offset: int = 0) -> List[Dict]:
+    def get_jobs(self, limit: int = 50, offset: int = 0, export_config_id: int = None) -> List[Dict]:
         """Get all training jobs ordered by submission time."""
         with get_connection() as conn:
             cursor = conn.cursor()
-            cursor.execute('''
-                SELECT * FROM training_jobs
-                ORDER BY submitted_at DESC
-                LIMIT %s OFFSET %s
-            ''', (limit, offset))
+            if export_config_id is not None:
+                cursor.execute('''
+                    SELECT * FROM training_jobs
+                    WHERE export_config_id = %s
+                    ORDER BY submitted_at DESC
+                    LIMIT %s OFFSET %s
+                ''', (export_config_id, limit, offset))
+            else:
+                cursor.execute('''
+                    SELECT * FROM training_jobs
+                    ORDER BY submitted_at DESC
+                    LIMIT %s OFFSET %s
+                ''', (limit, offset))
             rows = cursor.fetchall()
 
         jobs = []

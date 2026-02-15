@@ -490,6 +490,26 @@ window.displayKeyframeAnnotations = async function(annotations) {
                 return;
             }
 
+            if (window.isImageMode) {
+                // In image mode, use the thumbnail image directly
+                const imgEl = document.getElementById('thumbnail-image');
+                if (imgEl && imgEl.src) {
+                    const canvas = document.createElement('canvas');
+                    canvas.width = 160;
+                    canvas.height = 90;
+                    const ctx = canvas.getContext('2d');
+                    ctx.drawImage(imgEl, 0, 0, canvas.width, canvas.height);
+                    const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                    const img = document.createElement('img');
+                    img.src = dataUrl;
+                    img.alt = 'Thumbnail';
+                    img.style.cssText = 'width: 100%; height: auto; border-radius: 4px;';
+                    thumbnailContainer.appendChild(img);
+                }
+                resolve();
+                return;
+            }
+
             const videoPlayer = document.getElementById('video-player');
             const originalTime = videoPlayer.currentTime;
 
@@ -503,7 +523,11 @@ window.displayKeyframeAnnotations = async function(annotations) {
             const captureFrame = () => {
                 ctx.drawImage(videoPlayer, 0, 0, canvas.width, canvas.height);
                 const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-                thumbnailContainer.innerHTML = `<img src="${dataUrl}" alt="Thumbnail" style="width: 100%; height: auto; border-radius: 4px;">`;
+                const img = document.createElement('img');
+                img.src = dataUrl;
+                img.alt = 'Thumbnail';
+                img.style.cssText = 'width: 100%; height: auto; border-radius: 4px;';
+                thumbnailContainer.appendChild(img);
                 videoPlayer.currentTime = originalTime;
                 resolve();
             };

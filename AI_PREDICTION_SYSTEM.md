@@ -26,7 +26,7 @@ This system enables AI models to submit predictions for human review, creating a
 
 ```sql
 CREATE TABLE ai_predictions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     video_id INTEGER NOT NULL,
     model_name TEXT NOT NULL,           -- e.g., "yolov8-boat-detector-v1.2"
     model_version TEXT NOT NULL,        -- e.g., "1.2.0"

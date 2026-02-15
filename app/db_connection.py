@@ -2,7 +2,7 @@
 Shared PostgreSQL Database Connection Module
 
 Provides centralized connection management for all database operations.
-Replaces all direct sqlite3 usage throughout the application.
+Centralized PostgreSQL connection management for the application.
 """
 
 import os

@@ -1,20 +1,25 @@
-/* Dynamic Tag Form Styles */
+/* Dynamic Tag Form Styles - Mobile-First */
+
+/* ===== Base (Mobile) Styles ===== */
 
 .tag-form-section {
-    margin-bottom: 15px;
-    border: 1px solid #ddd;
+    margin-bottom: 12px;
+    border: 1px solid var(--color-border, #ddd);
     border-radius: 4px;
     overflow: hidden;
 }
 
 .tag-form-section-header {
-    background: #34495e;
-    color: white;
-    padding: 10px 15px;
+    background: var(--color-dark-alt, #34495e);
+    color: var(--color-white, white);
+    padding: 12px 15px;
     cursor: pointer;
     user-select: none;
     font-weight: 600;
     position: relative;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
 }
 
 .tag-form-section-header::after {
@@ -29,12 +34,12 @@
 }
 
 .tag-form-section-header:hover {
-    background: #2c3e50;
+    background: var(--color-dark, #2c3e50);
 }
 
 .tag-form-section-content {
-    padding: 15px;
-    background: white;
+    padding: 12px;
+    background: var(--color-white, white);
     max-height: 1000px;
     overflow: hidden;
     transition: max-height 0.3s ease-out, padding 0.3s ease-out;
@@ -48,44 +53,44 @@
 
 /* Form Groups */
 .form-group .required {
-    color: #e74c3c;
+    color: var(--color-danger, #e74c3c);
     font-weight: bold;
 }
 
 .tag-form-dropdown {
     width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #ddd;
+    padding: 10px;
+    border: 1px solid var(--color-border, #ddd);
     border-radius: 4px;
-    font-size: 14px;
-    background: white;
+    font-size: 15px;
+    background: var(--color-white, white);
 }
 
 .tag-form-dropdown:focus {
     outline: none;
-    border-color: #3498db;
+    border-color: var(--color-primary, #3498db);
     box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
 }
 
 .tag-form-text,
 .tag-form-textarea {
     width: 100%;
-    padding: 8px 12px;
-    border: 1px solid #ddd;
+    padding: 10px;
+    border: 1px solid var(--color-border, #ddd);
     border-radius: 4px;
-    font-size: 14px;
+    font-size: 15px;
     font-family: inherit;
 }
 
 .tag-form-textarea {
     resize: vertical;
-    min-height: 80px;
+    min-height: 100px;
 }
 
 .tag-form-text:focus,
 .tag-form-textarea:focus {
     outline: none;
-    border-color: #3498db;
+    border-color: var(--color-primary, #3498db);
     box-shadow: 0 0 0 2px rgba(52, 152, 219, 0.2);
 }
 
@@ -93,7 +98,7 @@
 .checkbox-group {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 10px;
     margin-top: 8px;
 }
 
@@ -101,11 +106,12 @@
     display: flex;
     align-items: center;
     gap: 8px;
+    padding: 4px 0;
 }
 
 .tag-form-checkbox {
-    width: 18px;
-    height: 18px;
+    width: 22px;
+    height: 22px;
     cursor: pointer;
 }
 
@@ -113,92 +119,71 @@
     cursor: pointer;
     margin: 0;
     font-weight: normal;
-    font-size: 14px;
+    font-size: 15px;
 }
 
 .checkbox-item label:hover {
-    color: #3498db;
+    color: var(--color-primary, #3498db);
 }
 
 /* Help Text */
 .help-text-small {
-    font-size: 12px;
-    color: #7f8c8d;
+    font-size: 13px;
+    color: var(--color-text-secondary, #7f8c8d);
     margin-top: 5px;
     margin-bottom: 5px;
     font-style: italic;
 }
 
-/* Responsive Design */
-@media (max-width: 768px) {
+.form-group {
+    margin-bottom: 12px;
+}
+
+/* ===== Tablet and Desktop (768px+) ===== */
+@media (min-width: 768px) {
     .tag-form-section {
-        margin-bottom: 12px;
+        margin-bottom: 15px;
     }
 
     .tag-form-section-header {
-        padding: 12px 15px;
-        font-size: 15px;
+        padding: 10px 15px;
+        font-size: inherit;
     }
 
     .tag-form-section-content {
-        padding: 12px;
+        padding: 15px;
     }
 
     .tag-form-dropdown,
     .tag-form-text,
     .tag-form-textarea {
-        padding: 10px;
-        font-size: 15px;
+        padding: 8px 12px;
+        font-size: 14px;
     }
 
     .tag-form-textarea {
-        min-height: 100px;
+        min-height: 80px;
     }
 
     .checkbox-group {
-        gap: 10px;
+        gap: 8px;
     }
 
     .checkbox-item {
-        padding: 4px 0;
+        padding: 0;
     }
 
     .tag-form-checkbox {
-        width: 22px;
-        height: 22px;
+        width: 18px;
+        height: 18px;
     }
 
     .checkbox-item label {
-        font-size: 15px;
+        font-size: 14px;
     }
 
     .help-text-small {
-        font-size: 13px;
-    }
-
-    .form-group {
-        margin-bottom: 12px;
-    }
-}
-
-@media (max-width: 480px) {
-    .tag-form-section-header {
-        padding: 10px 12px;
-        font-size: 14px;
-    }
-
-    .tag-form-section-content {
-        padding: 10px;
-    }
-
-    .tag-form-dropdown,
-    .tag-form-text,
-    .tag-form-textarea {
-        font-size: 14px;
-    }
-
-    .checkbox-item label {
-        font-size: 14px;
+        font-size: 12px;
     }
 }
 
@@ -228,7 +213,7 @@
 
     /* Remove hover effects */
     .tag-form-section-header:hover {
-        background: #34495e;
+        background: var(--color-dark-alt, #34495e);
     }
 
     .checkbox-item label:hover {

@@ -161,14 +161,317 @@
             color: #95a5a6;
             margin-left: 12px;
         }
+
+        /* Model Performance Section */
+        .model-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(380px, 1fr));
+            gap: 16px;
+        }
+
+        .model-card {
+            background: white;
+            border: 1px solid #e8e8e8;
+            border-radius: 8px;
+            padding: 16px;
+            transition: box-shadow 0.2s;
+        }
+
+        .model-card:hover { box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+
+        .model-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 12px;
+        }
+
+        .model-name { font-weight: 700; font-size: 15px; color: #2c3e50; }
+        .model-version { font-size: 12px; color: #7f8c8d; margin-top: 2px; }
+        .model-type-badge {
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+        }
+        .type-yolo { background: #dbeafe; color: #1e40af; }
+        .type-vibration { background: #fef3c7; color: #92400e; }
+        .type-location { background: #d1fae5; color: #065f46; }
+
+        .model-stats-row {
+            display: flex;
+            gap: 16px;
+            margin-bottom: 12px;
+        }
+
+        .model-stat {
+            flex: 1;
+            text-align: center;
+        }
+
+        .model-stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2c3e50;
+        }
+
+        .model-stat-label {
+            font-size: 11px;
+            color: #95a5a6;
+            margin-top: 2px;
+        }
+
+        .approval-bar {
+            height: 6px;
+            background: #ecf0f1;
+            border-radius: 3px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+
+        .approval-bar-fill {
+            height: 100%;
+            border-radius: 3px;
+            transition: width 0.3s;
+        }
+
+        .bar-good { background: #27ae60; }
+        .bar-ok { background: #f39c12; }
+        .bar-poor { background: #e74c3c; }
+
+        .threshold-controls {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 8px;
+            padding-top: 12px;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        .threshold-group { text-align: center; }
+        .threshold-group label {
+            display: block;
+            font-size: 10px;
+            color: #95a5a6;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .threshold-group input {
+            width: 60px;
+            padding: 4px;
+            text-align: center;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+        .threshold-save {
+            grid-column: 1 / -1;
+            text-align: center;
+            margin-top: 4px;
+        }
+        .threshold-save button {
+            padding: 4px 12px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 12px;
+            cursor: pointer;
+        }
+        .threshold-save button:hover { background: #2980b9; }
+
+        .model-metrics {
+            margin-top: 10px;
+            padding-top: 10px;
+            border-top: 1px solid #f0f0f0;
+        }
+
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            font-size: 12px;
+            padding: 2px 0;
+        }
+
+        .metric-label { color: #7f8c8d; }
+        .metric-value { font-weight: 600; color: #2c3e50; }
+
+        .empty-models {
+            text-align: center;
+            padding: 30px;
+            color: #95a5a6;
+        }
+
+        /* Job Detail Modal */
+        .job-detail-modal { display:none; position:fixed; top:0; left:0; right:0; bottom:0; background:rgba(0,0,0,0.5); z-index:1000; align-items:center; justify-content:center; }
+        .job-detail-modal.active { display:flex; }
+        .job-detail-content { background:white; border-radius:8px; padding:24px; max-width:700px; width:90%; max-height:80vh; overflow-y:auto; position:relative; }
+        .tq-modal-content { background:white; border-radius:8px; padding:24px; max-width:700px; width:90%; max-height:80vh; overflow-y:auto; position:relative; }
+        .job-detail-close { position:absolute; top:12px; right:16px; font-size:24px; cursor:pointer; background:none; border:none; color:#7f8c8d; }
+        .job-detail-close:hover { color:#2c3e50; }
+        .job-detail-row { display:flex; justify-content:space-between; padding:8px 0; border-bottom:1px solid #f0f0f0; font-size:14px; }
+        .job-detail-label { font-weight:600; color:#555; min-width:120px; }
+        .job-detail-value { color:#2c3e50; word-break:break-all; }
+        .job-detail-json { background:#f8f9fa; padding:12px; border-radius:4px; font-family:monospace; font-size:12px; white-space:pre-wrap; max-height:200px; overflow-y:auto; margin:8px 0; }
+        .job-detail-error { background:#fff5f5; border:1px solid #fed7d7; color:#c53030; padding:10px; border-radius:4px; margin:8px 0; font-size:13px; }
+        .job-detail-actions { display:flex; gap:8px; margin-top:16px; padding-top:12px; border-top:1px solid #eee; }
+
+        /* Filter bar */
+        .job-filters { display:flex; gap:12px; align-items:center; margin-bottom:16px; padding:12px; background:#f8f9fa; border-radius:6px; }
+        .job-filters select { padding:6px 10px; border:1px solid #ddd; border-radius:4px; font-size:13px; }
+        .job-filters label { font-size:12px; color:#555; font-weight:600; }
+
+        /* Toggle switch */
+        .toggle-switch { position:relative; display:inline-block; width:40px; height:22px; }
+        .toggle-switch input { opacity:0; width:0; height:0; }
+        .toggle-slider { position:absolute; cursor:pointer; top:0; left:0; right:0; bottom:0; background:#ccc; border-radius:22px; transition:.3s; }
+        .toggle-slider:before { position:absolute; content:""; height:16px; width:16px; left:3px; bottom:3px; background:white; border-radius:50%; transition:.3s; }
+        .toggle-switch input:checked + .toggle-slider { background:#27ae60; }
+        .toggle-switch input:checked + .toggle-slider:before { transform:translateX(18px); }
+
+        /* Worker status */
+        .worker-badge { display:inline-block; padding:4px 10px; border-radius:12px; font-size:12px; font-weight:600; margin-left:12px; }
+        .worker-idle { background:#d4edda; color:#155724; }
+        .worker-busy { background:#fff3cd; color:#856404; }
+
+        /* Metrics history */
+        .metrics-history { margin-top:10px; max-height:0; overflow:hidden; transition:max-height 0.3s; }
+        .metrics-history.expanded { max-height:300px; overflow-y:auto; }
+        .metrics-entry { display:flex; justify-content:space-between; font-size:11px; padding:3px 0; border-bottom:1px solid #f8f8f8; }
+        .mini-bar { display:inline-block; height:8px; background:#3498db; border-radius:4px; margin-left:4px; vertical-align:middle; }
+
+        .btn-retry { background:#f39c12; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:12px; }
+        .btn-retry:hover { background:#d68910; }
+        .btn-delete { background:#95a5a6; color:white; border:none; padding:4px 10px; border-radius:4px; cursor:pointer; font-size:12px; }
+        .btn-delete:hover { background:#7f8c8d; }
+
+        .jobs-table tr { cursor:pointer; }
+
+        /* Responsive table - card layout on mobile */
+        .responsive-table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .responsive-table thead {
+            display: none;
+        }
+
+        .responsive-table tr {
+            display: block;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 12px;
+            padding: 12px;
+        }
+
+        .responsive-table td {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 6px 0;
+            border: none;
+            font-size: 14px;
+        }
+
+        .responsive-table td::before {
+            content: attr(data-label);
+            font-weight: 600;
+            color: #2c3e50;
+            margin-right: 12px;
+            flex-shrink: 0;
+        }
+
+        .responsive-table td:first-child {
+            font-weight: 600;
+            padding-top: 0;
+        }
+
+        .responsive-table td:last-child {
+            padding-bottom: 0;
+        }
+
+        @media (min-width: 768px) {
+            .responsive-table thead {
+                display: table-header-group;
+            }
+            .responsive-table tr {
+                display: table-row;
+                box-shadow: none;
+                margin-bottom: 0;
+                padding: 0;
+                border-radius: 0;
+            }
+            .responsive-table td {
+                display: table-cell;
+                padding: 12px 15px;
+                border-bottom: 1px solid #eee;
+            }
+            .responsive-table td::before {
+                display: none;
+            }
+        }
+
+        /* Full-screen modals on mobile */
+        .modal-content, .tq-modal-content {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            max-width: none;
+            max-height: none;
+            border-radius: 0;
+            overflow-y: auto;
+            margin: 0;
+        }
+
+        @media (min-width: 768px) {
+            .modal-content, .tq-modal-content {
+                position: relative;
+                top: auto;
+                left: auto;
+                width: auto;
+                height: auto;
+                max-width: 600px;
+                max-height: 90vh;
+                border-radius: 8px;
+                margin: auto;
+            }
+        }
     </style>
 </head>
 <body>
+    <script src="/static/js/gt-utils.js"></script>
+    <script src="/static/js/responsive-utils.js"></script>
+    <nav class="site-nav" id="site-nav">
+        <div class="nav-brand">
+            <a href="/">Groundtruth Studio</a>
+            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
+                <span class="hamburger-icon"></span>
+            </button>
+        </div>
+        <div class="nav-links" id="nav-links">
+            <a href="/" class="nav-link">Video Library</a>
+            <a href="/add-content" class="nav-link">Add Content</a>
+            <a href="/person-manager" class="nav-link">Person Manager</a>
+            <a href="/camera-topology" class="nav-link">Camera Topology</a>
+            <a href="/model-training" class="nav-link">Model Training</a>
+            <a href="/prediction-review" class="nav-link">AI Review</a>
+            <a href="/sync-settings" class="nav-link">Sync Settings</a>
+            <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
+            <a href="/vibration-export" class="nav-link">Vibration Export</a>
+            <a href="/location-export" class="nav-link">Location Export</a>
+            <a href="/tag-manager" class="nav-link">Tag Manager</a>
+        </div>
+    </nav>
     <div class="tq-container">
         <div class="tq-header">
             <div>
                 <h1>Training Queue</h1>
-                <a href="/">Back to Studio</a>
+                <span id="worker-status-badge"></span>
             </div>
             <div>
                 <button class="btn-secondary" onclick="refreshAll()">Refresh</button>
@@ -195,6 +498,7 @@
             </div>
         </div>
 
+        {% if can_write %}
         <div class="tq-section">
             <h2>Submit Training Job</h2>
             <div class="submit-form">
@@ -247,17 +551,53 @@
                 </div>
             </div>
         </div>
+        {% endif %}
+
+        <div class="tq-section">
+            <h2>Model Performance</h2>
+            <div id="models-container">
+                <div class="empty-models"><p>Loading models...</p></div>
+            </div>
+        </div>
 
         <div class="tq-section">
             <h2>Job History</h2>
+            <div class="job-filters">
+                <label>Status:</label>
+                <select id="filter-status" onchange="applyJobFilters()">
+                    <option value="">All</option>
+                    <option value="pending">Pending</option>
+                    <option value="uploading">Uploading</option>
+                    <option value="queued">Queued</option>
+                    <option value="processing">Processing</option>
+                    <option value="completed">Completed</option>
+                    <option value="failed">Failed</option>
+                    <option value="cancelled">Cancelled</option>
+                </select>
+                <label>Type:</label>
+                <select id="filter-type" onchange="applyJobFilters()">
+                    <option value="">All</option>
+                </select>
+            </div>
             <div id="jobs-container">
                 <div class="empty-state"><p>Loading...</p></div>
             </div>
         </div>
     </div>
 
+    <div class="job-detail-modal" id="job-detail-modal">
+        <div class="job-detail-content">
+            <button class="job-detail-close" onclick="closeJobDetail()">&times;</button>
+            <h2 style="margin-bottom:16px;">Job Details</h2>
+            <div id="job-detail-body"></div>
+        </div>
+    </div>
+
     <script>
+        const canWrite = {{ can_write|tojson }};
         let refreshInterval;
+        let allJobs = [];
+        let currentJob = null;
 
         async function fetchJSON(url, options) {
             const resp = await fetch(url, options);
@@ -280,50 +620,118 @@
             }
         }
 
+        async function loadWorkerStatus() {
+            try {
+                const data = await fetchJSON('/api/worker/status');
+                const badge = document.getElementById('worker-status-badge');
+                if (!badge) return;
+
+                if (data.success) {
+                    const w = data.worker || data;
+                    const isIdle = w.status === 'idle' || w.active_jobs === 0;
+                    const jobCount = w.active_jobs || 0;
+
+                    if (isIdle) {
+                        badge.innerHTML = '<span class="worker-badge worker-idle">Worker: Idle</span>';
+                    } else {
+                        badge.innerHTML = '<span class="worker-badge worker-busy">Worker: Busy (' + jobCount + ' jobs)</span>';
+                    }
+                } else {
+                    badge.innerHTML = '<span class="worker-badge" style="background:#e2e3e5;color:#383d41;">Worker: Unknown</span>';
+                }
+            } catch (e) {
+                console.error('Failed to load worker status', e);
+                const badge = document.getElementById('worker-status-badge');
+                if (badge) {
+                    badge.innerHTML = '<span class="worker-badge" style="background:#f8d7da;color:#721c24;">Worker: Error</span>';
+                }
+            }
+        }
+
         async function loadJobs() {
             try {
                 const data = await fetchJSON('/api/training/jobs?limit=100');
                 if (!data.success) return;
 
-                document.getElementById('local-total').textContent = data.jobs.length;
-                const container = document.getElementById('jobs-container');
+                allJobs = data.jobs;
+                document.getElementById('local-total').textContent = allJobs.length;
 
-                if (data.jobs.length === 0) {
-                    container.innerHTML = '<div class="empty-state"><p>No training jobs yet</p><small>Submit a job above to get started</small></div>';
-                    return;
-                }
+                // Populate type filter
+                const typeFilter = document.getElementById('filter-type');
+                const uniqueTypes = [...new Set(allJobs.map(j => j.job_type))];
+                const currentTypeValue = typeFilter.value;
+                typeFilter.innerHTML = '<option value="">All</option>';
+                uniqueTypes.forEach(type => {
+                    const opt = document.createElement('option');
+                    opt.value = type;
+                    opt.textContent = type;
+                    typeFilter.appendChild(opt);
+                });
+                typeFilter.value = currentTypeValue;
 
-                let html = '<table class="jobs-table"><thead><tr>' +
-                    '<th>Job ID</th><th>Type</th><th>Status</th><th>Submitted</th><th>Completed</th><th>Actions</th>' +
-                    '</tr></thead><tbody>';
-
-                for (const job of data.jobs) {
-                    const submitted = job.submitted_at ? new Date(job.submitted_at + 'Z').toLocaleString() : '-';
-                    const completed = job.completed_at ? new Date(job.completed_at + 'Z').toLocaleString() : '-';
-                    const shortId = job.job_id.substring(0, 8);
-                    const errorHtml = job.error_message
-                        ? '<br><small style="color:#e74c3c;">' + escapeHtml(job.error_message) + '</small>'
-                        : '';
-
-                    const cancelBtn = (job.status === 'queued' || job.status === 'processing' || job.status === 'uploading')
-                        ? '<button class="btn-danger" onclick="cancelJob(\'' + job.job_id + '\')">Cancel</button>'
-                        : '';
-
-                    html += '<tr>' +
-                        '<td><span class="job-id" title="' + escapeHtml(job.job_id) + '">' + shortId + '...</span></td>' +
-                        '<td>' + escapeHtml(job.job_type) + '</td>' +
-                        '<td><span class="status-badge status-' + job.status + '">' + job.status + '</span>' + errorHtml + '</td>' +
-                        '<td>' + submitted + '</td>' +
-                        '<td>' + completed + '</td>' +
-                        '<td>' + cancelBtn + '</td>' +
-                        '</tr>';
-                }
-
-                html += '</tbody></table>';
-                container.innerHTML = html;
+                applyJobFilters();
             } catch (e) {
                 console.error('Failed to load jobs', e);
             }
+        }
+
+        function applyJobFilters() {
+            const statusFilter = document.getElementById('filter-status').value;
+            const typeFilter = document.getElementById('filter-type').value;
+
+            let filtered = allJobs.filter(job => {
+                if (statusFilter && job.status !== statusFilter) return false;
+                if (typeFilter && job.job_type !== typeFilter) return false;
+                return true;
+            });
+
+            renderJobsTable(filtered);
+        }
+
+        function renderJobsTable(jobs) {
+            const container = document.getElementById('jobs-container');
+
+            if (jobs.length === 0) {
+                container.innerHTML = '<div class="empty-state"><p>No training jobs match filters</p><small>Try changing filters or submit a new job</small></div>';
+                return;
+            }
+
+            let html = '<table class="jobs-table responsive-table"><thead><tr>' +
+                '<th>Job ID</th><th>Type</th><th>Status</th><th>Submitted</th><th>Completed</th><th>Actions</th>' +
+                '</tr></thead><tbody>';
+
+            for (const job of jobs) {
+                const submitted = job.submitted_at ? new Date(job.submitted_at + 'Z').toLocaleString() : '-';
+                const completed = job.completed_at ? new Date(job.completed_at + 'Z').toLocaleString() : '-';
+                const shortId = job.job_id.substring(0, 8);
+                const errorHtml = job.error_message
+                    ? '<br><small style="color:#e74c3c;">' + escapeHtml(job.error_message) + '</small>'
+                    : '';
+
+                const cancelBtn = (canWrite && (job.status === 'queued' || job.status === 'processing' || job.status === 'uploading'))
+                    ? '<button class="btn-danger" onclick="event.stopPropagation(); cancelJob(\'' + job.job_id + '\')">Cancel</button>'
+                    : '';
+
+                const retryBtn = (canWrite && (job.status === 'failed' || job.status === 'cancelled'))
+                    ? '<button class="btn-retry" onclick="event.stopPropagation(); retryJob(\'' + job.job_id + '\')">Retry</button>'
+                    : '';
+
+                const deleteBtn = (canWrite && (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled'))
+                    ? '<button class="btn-delete" onclick="event.stopPropagation(); deleteJob(\'' + job.job_id + '\')">Delete</button>'
+                    : '';
+
+                html += '<tr onclick="openJobDetail(\'' + job.job_id + '\')">' +
+                    '<td data-label="Job ID"><span class="job-id" title="' + escapeHtml(job.job_id) + '">' + shortId + '...</span></td>' +
+                    '<td data-label="Type">' + escapeHtml(job.job_type) + '</td>' +
+                    '<td data-label="Status"><span class="status-badge status-' + job.status + '">' + job.status + '</span>' + errorHtml + '</td>' +
+                    '<td data-label="Submitted">' + submitted + '</td>' +
+                    '<td data-label="Completed">' + completed + '</td>' +
+                    '<td data-label="Actions">' + cancelBtn + retryBtn + deleteBtn + '</td>' +
+                    '</tr>';
+            }
+
+            html += '</tbody></table>';
+            container.innerHTML = html;
         }
 
         async function loadExportConfigs() {
@@ -477,6 +885,99 @@
             }
         }
 
+        async function retryJob(jobId) {
+            if (!confirm('Retry this training job?')) return;
+            try {
+                const data = await fetchJSON('/api/training/jobs/' + jobId + '/retry', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                if (data.success) {
+                    alert('Job resubmitted: ' + (data.new_job_id || '').substring(0, 8) + '...');
+                    refreshAll();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Failed to retry job: ' + e.message);
+            }
+        }
+
+        async function deleteJob(jobId) {
+            if (!confirm('Delete this training job? This cannot be undone.')) return;
+            try {
+                const data = await fetchJSON('/api/training/jobs/' + jobId, {
+                    method: 'DELETE',
+                    headers: { 'Content-Type': 'application/json' }
+                });
+                if (data.success) {
+                    refreshAll();
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Failed to delete job: ' + e.message);
+            }
+        }
+
+        function openJobDetail(jobId) {
+            const job = allJobs.find(j => j.job_id === jobId);
+            if (!job) return;
+            currentJob = job;
+
+            const submitted = job.submitted_at ? new Date(job.submitted_at + 'Z').toLocaleString() : '-';
+            const completed = job.completed_at ? new Date(job.completed_at + 'Z').toLocaleString() : '-';
+
+            let html = '<div class="job-detail-row"><span class="job-detail-label">Job ID:</span><span class="job-detail-value">' + escapeHtml(job.job_id) + '</span></div>';
+            html += '<div class="job-detail-row"><span class="job-detail-label">Type:</span><span class="job-detail-value">' + escapeHtml(job.job_type) + '</span></div>';
+            html += '<div class="job-detail-row"><span class="job-detail-label">Status:</span><span class="job-detail-value"><span class="status-badge status-' + job.status + '">' + job.status + '</span></span></div>';
+            html += '<div class="job-detail-row"><span class="job-detail-label">Submitted:</span><span class="job-detail-value">' + submitted + '</span></div>';
+            html += '<div class="job-detail-row"><span class="job-detail-label">Completed:</span><span class="job-detail-value">' + completed + '</span></div>';
+
+            if (job.config) {
+                html += '<div style="margin-top:12px;"><span class="job-detail-label">Configuration:</span><div class="job-detail-json">' + escapeHtml(JSON.stringify(job.config, null, 2)) + '</div></div>';
+            }
+
+            if (job.result) {
+                html += '<div style="margin-top:12px;"><span class="job-detail-label">Result:</span><div class="job-detail-json">' + escapeHtml(JSON.stringify(job.result, null, 2)) + '</div></div>';
+            }
+
+            if (job.error_message) {
+                html += '<div class="job-detail-error"><strong>Error:</strong> ' + escapeHtml(job.error_message) + '</div>';
+            }
+
+            if (canWrite) {
+                html += '<div class="job-detail-actions">';
+                if (job.status === 'failed' || job.status === 'cancelled') {
+                    html += '<button class="btn-retry" onclick="retryJobFromDetail()">Retry Job</button>';
+                }
+                if (job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled') {
+                    html += '<button class="btn-delete" onclick="deleteJobFromDetail()">Delete Job</button>';
+                }
+                html += '</div>';
+            }
+
+            document.getElementById('job-detail-body').innerHTML = html;
+            document.getElementById('job-detail-modal').classList.add('active');
+        }
+
+        function closeJobDetail() {
+            document.getElementById('job-detail-modal').classList.remove('active');
+            currentJob = null;
+        }
+
+        async function retryJobFromDetail() {
+            if (!currentJob) return;
+            closeJobDetail();
+            await retryJob(currentJob.job_id);
+        }
+
+        async function deleteJobFromDetail() {
+            if (!currentJob) return;
+            closeJobDetail();
+            await deleteJob(currentJob.job_id);
+        }
+
         function escapeHtml(str) {
             if (!str) return '';
             const div = document.createElement('div');
@@ -484,15 +985,223 @@
             return div.innerHTML;
         }
 
+        async function loadModels() {
+            try {
+                const data = await fetchJSON('/api/ai/models?active_only=false');
+                if (!data.success) return;
+
+                const container = document.getElementById('models-container');
+                if (!data.models || data.models.length === 0) {
+                    container.innerHTML = '<div class="empty-models"><p>No models registered yet</p><small>Models are auto-registered when AI predictions are submitted</small></div>';
+                    return;
+                }
+
+                container.innerHTML = '<div class="model-grid">' + data.models.map(model => {
+                    const rate = model.approval_rate != null ? (model.approval_rate * 100).toFixed(1) : '-';
+                    const barClass = model.approval_rate >= 0.85 ? 'bar-good' : model.approval_rate >= 0.7 ? 'bar-ok' : 'bar-poor';
+                    const barWidth = model.approval_rate != null ? (model.approval_rate * 100) : 0;
+                    const typeClass = model.model_type === 'yolo' ? 'type-yolo' : model.model_type === 'vibration' ? 'type-vibration' : 'type-location';
+                    const thresholds = model.confidence_thresholds || {};
+                    const metrics = model.latest_metrics || {};
+                    const isActive = model.is_active != null ? model.is_active : true;
+
+                    let metricsHtml = '';
+                    if (Object.keys(metrics).length > 0) {
+                        metricsHtml = '<div class="model-metrics">';
+                        if (metrics.accuracy != null) metricsHtml += '<div class="metric-row"><span class="metric-label">Accuracy</span><span class="metric-value">' + (metrics.accuracy * 100).toFixed(1) + '%</span></div>';
+                        if (metrics.val_accuracy != null) metricsHtml += '<div class="metric-row"><span class="metric-label">Val Accuracy</span><span class="metric-value">' + (metrics.val_accuracy * 100).toFixed(1) + '%</span></div>';
+                        if (metrics.loss != null) metricsHtml += '<div class="metric-row"><span class="metric-label">Loss</span><span class="metric-value">' + metrics.loss.toFixed(4) + '</span></div>';
+                        if (metrics.epochs != null) metricsHtml += '<div class="metric-row"><span class="metric-label">Epochs</span><span class="metric-value">' + metrics.epochs + '</span></div>';
+                        metricsHtml += '</div>';
+                    }
+
+                    const toggleHtml = canWrite ? `<label class="toggle-switch">
+                        <input type="checkbox" ${isActive ? 'checked' : ''} onchange="toggleModelActive('${escapeHtml(model.model_name)}', '${escapeHtml(model.model_version)}', this.checked)">
+                        <span class="toggle-slider"></span>
+                    </label>` : '';
+
+                    const metricsBtn = `<button class="btn-secondary" style="padding:4px 10px;font-size:12px;margin-top:8px;" onclick="toggleMetricsHistory('${model.id}')">View Metrics</button>`;
+
+                    return `<div class="model-card">
+                        <div class="model-card-header">
+                            <div>
+                                <div class="model-name">${escapeHtml(model.model_name)}</div>
+                                <div class="model-version">v${escapeHtml(model.model_version)}</div>
+                            </div>
+                            <div style="display:flex;align-items:center;gap:8px;">
+                                <span class="model-type-badge ${typeClass}">${escapeHtml(model.model_type)}</span>
+                                ${toggleHtml}
+                            </div>
+                        </div>
+                        <div class="model-stats-row">
+                            <div class="model-stat">
+                                <div class="model-stat-value">${rate}%</div>
+                                <div class="model-stat-label">Approval Rate</div>
+                            </div>
+                            <div class="model-stat">
+                                <div class="model-stat-value">${model.total_predictions || 0}</div>
+                                <div class="model-stat-label">Predictions</div>
+                            </div>
+                            <div class="model-stat">
+                                <div class="model-stat-value">${model.total_approved || 0}</div>
+                                <div class="model-stat-label">Approved</div>
+                            </div>
+                            <div class="model-stat">
+                                <div class="model-stat-value">${model.total_rejected || 0}</div>
+                                <div class="model-stat-label">Rejected</div>
+                            </div>
+                        </div>
+                        <div class="approval-bar"><div class="approval-bar-fill ${barClass}" style="width:${barWidth}%"></div></div>
+                        ${canWrite ? `<div class="threshold-controls" id="thresholds-${model.id}">
+                            <div class="threshold-group">
+                                <label>Auto Approve</label>
+                                <input type="number" step="0.05" min="0" max="1" value="${thresholds.auto_approve || 0.95}" data-field="auto_approve">
+                            </div>
+                            <div class="threshold-group">
+                                <label>Review</label>
+                                <input type="number" step="0.05" min="0" max="1" value="${thresholds.review || 0.7}" data-field="review">
+                            </div>
+                            <div class="threshold-group">
+                                <label>Auto Reject</label>
+                                <input type="number" step="0.05" min="0" max="1" value="${thresholds.auto_reject || 0.3}" data-field="auto_reject">
+                            </div>
+                            <div class="threshold-save">
+                                <button onclick="saveThresholds('${escapeHtml(model.model_name)}', '${escapeHtml(model.model_version)}', ${model.id})">Save Thresholds</button>
+                            </div>
+                        </div>` : ''}
+                        ${metricsHtml}
+                        ${metricsBtn}
+                        <div class="metrics-history" id="metrics-history-${model.id}"></div>
+                    </div>`;
+                }).join('') + '</div>';
+            } catch (e) {
+                console.error('Failed to load models', e);
+            }
+        }
+
+        async function toggleModelActive(modelName, modelVersion, active) {
+            try {
+                const data = await fetchJSON('/api/ai/models/' + encodeURIComponent(modelName) + '/toggle', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ active: active, model_version: modelVersion })
+                });
+
+                if (data.success) {
+                    console.log('Model ' + modelName + ' v' + modelVersion + ' is now ' + (active ? 'active' : 'inactive'));
+                } else {
+                    alert('Error: ' + data.error);
+                    loadModels(); // Reload to reset toggle
+                }
+            } catch (e) {
+                alert('Failed to toggle model: ' + e.message);
+                loadModels(); // Reload to reset toggle
+            }
+        }
+
+        async function toggleMetricsHistory(modelId) {
+            const container = document.getElementById('metrics-history-' + modelId);
+            if (!container) return;
+
+            if (container.classList.contains('expanded')) {
+                container.classList.remove('expanded');
+                return;
+            }
+
+            // Fetch metrics history
+            const modelCard = container.closest('.model-card');
+            const modelName = modelCard.querySelector('.model-name').textContent;
+
+            try {
+                const data = await fetchJSON('/api/ai/models/' + encodeURIComponent(modelName) + '/metrics');
+                if (!data.success || !data.metrics || data.metrics.length === 0) {
+                    container.innerHTML = '<div style="padding:8px;text-align:center;color:#95a5a6;font-size:11px;">No metrics history available</div>';
+                    container.classList.add('expanded');
+                    return;
+                }
+
+                const maxAccuracy = Math.max(...data.metrics.map(m => m.accuracy || 0));
+
+                let html = '<div style="padding:8px;border-top:1px solid #f0f0f0;margin-top:8px;">';
+                html += '<div style="font-size:11px;font-weight:600;color:#555;margin-bottom:6px;">Metrics History</div>';
+
+                data.metrics.forEach(m => {
+                    const date = m.recorded_at ? new Date(m.recorded_at + 'Z').toLocaleDateString() : '-';
+                    const acc = m.accuracy != null ? (m.accuracy * 100).toFixed(1) + '%' : '-';
+                    const loss = m.loss != null ? m.loss.toFixed(4) : '-';
+                    const epochs = m.epochs || '-';
+                    const barWidth = m.accuracy != null && maxAccuracy > 0 ? (m.accuracy / maxAccuracy * 60) : 0;
+
+                    html += '<div class="metrics-entry">';
+                    html += '<span>' + date + '</span>';
+                    html += '<span>Acc: ' + acc + '<span class="mini-bar" style="width:' + barWidth + 'px"></span></span>';
+                    html += '<span>Loss: ' + loss + '</span>';
+                    html += '<span>Ep: ' + epochs + '</span>';
+                    html += '</div>';
+                });
+
+                html += '</div>';
+                container.innerHTML = html;
+                container.classList.add('expanded');
+            } catch (e) {
+                console.error('Failed to load metrics history', e);
+                container.innerHTML = '<div style="padding:8px;text-align:center;color:#e74c3c;font-size:11px;">Failed to load metrics</div>';
+                container.classList.add('expanded');
+            }
+        }
+
+        async function saveThresholds(modelName, modelVersion, modelId) {
+            const container = document.getElementById('thresholds-' + modelId);
+            if (!container) return;
+
+            const inputs = container.querySelectorAll('input[data-field]');
+            const thresholds = {};
+            inputs.forEach(input => {
+                thresholds[input.dataset.field] = parseFloat(input.value);
+            });
+
+            try {
+                const data = await fetchJSON('/api/ai/models/' + encodeURIComponent(modelName) + '/thresholds', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ model_version: modelVersion, thresholds: thresholds })
+                });
+
+                if (data.success) {
+                    alert('Thresholds updated for ' + modelName + ' v' + modelVersion);
+                } else {
+                    alert('Error: ' + data.error);
+                }
+            } catch (e) {
+                alert('Failed to save thresholds: ' + e.message);
+            }
+        }
+
         function refreshAll() {
             loadQueueStatus();
             loadJobs();
+            loadModels();
+            loadWorkerStatus();
         }
 
         loadExportConfigs();
         loadVibrationTags();
         refreshAll();
         refreshInterval = setInterval(refreshAll, 30000);
+
+        // Close modal on ESC key
+        document.addEventListener('keydown', function(e) {
+            if (e.key === 'Escape') {
+                closeJobDetail();
+            }
+        });
+
+        // Close modal on background click
+        document.getElementById('job-detail-modal').addEventListener('click', function(e) {
+            if (e.target === this) {
+                closeJobDetail();
+            }
+        });
     </script>
 </body>
 </html>

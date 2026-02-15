@@ -8,63 +8,75 @@
     <link rel="stylesheet" href="/static/css/style.css">
     <script src="https://d3js.org/d3.v7.min.js"></script>
     <style>
+        /* Mobile-first base styles */
         .topology-container {
             max-width: 1600px;
-            margin: 20px auto;
-            padding: 20px;
+            margin: 8px auto;
+            padding: 8px;
         }
 
         .topology-header {
             display: flex;
-            justify-content: space-between;
-            align-items: center;
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 15px;
             margin-bottom: 30px;
+        }
+
+        .topology-header h1 {
+            font-size: 20px;
+        }
+
+        .topology-header a {
+            padding: 8px 16px;
+            font-size: 14px;
         }
 
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 8px;
             margin-bottom: 30px;
         }
 
         .stat-card {
             background: #2a2a2a;
-            padding: 20px;
+            padding: 12px;
             border-radius: 8px;
             text-align: center;
         }
 
         .stat-card .number {
-            font-size: 32px;
+            font-size: 22px;
             font-weight: bold;
             color: #4CAF50;
         }
 
         .stat-card .label {
-            font-size: 14px;
+            font-size: 12px;
             color: #aaa;
             margin-top: 5px;
         }
 
         .content-grid {
             display: grid;
-            grid-template-columns: 1fr 400px;
-            gap: 20px;
+            grid-template-columns: 1fr;
+            gap: 15px;
             margin-top: 20px;
         }
 
         .graph-panel {
             background: #2a2a2a;
             border-radius: 8px;
-            padding: 20px;
-            min-height: 600px;
+            padding: 10px;
+            min-height: 300px;
+            display: none;
         }
 
         .sidebar-panel {
             background: #2a2a2a;
             border-radius: 8px;
-            padding: 20px;
+            padding: 10px;
         }
 
         .sidebar-panel h3 {
@@ -74,17 +86,18 @@
         }
 
         .person-list {
-            max-height: 400px;
+            max-height: 250px;
             overflow-y: auto;
         }
 
         .person-item {
-            padding: 10px;
+            padding: 12px;
             margin: 5px 0;
             background: #1a1a1a;
             border-radius: 4px;
             cursor: pointer;
             transition: background 0.2s;
+            font-size: 14px;
         }
 
         .person-item:hover {
@@ -97,7 +110,7 @@
         }
 
         .transition-list {
-            max-height: 300px;
+            max-height: 250px;
             overflow-y: auto;
         }
 
@@ -106,7 +119,7 @@
             margin: 5px 0;
             background: #1a1a1a;
             border-radius: 4px;
-            font-size: 13px;
+            font-size: 12px;
         }
 
         .transition-item .camera-path {
@@ -123,6 +136,7 @@
             margin-top: 20px;
             padding-top: 20px;
             border-top: 1px solid #444;
+            padding: 15px;
         }
 
         .suggestion-item {
@@ -131,6 +145,7 @@
             background: #1a1a1a;
             border-radius: 4px;
             border-left: 3px solid #FFA500;
+            font-size: 13px;
         }
 
         .suggestion-item .confidence {
@@ -151,8 +166,8 @@
 
         .suggestion-item button {
             margin-top: 8px;
-            padding: 4px 8px;
-            font-size: 11px;
+            padding: 8px 12px;
+            font-size: 13px;
         }
 
         #topology-graph {
@@ -167,7 +182,7 @@
 
         .node text {
             fill: #fff;
-            font-size: 12px;
+            font-size: 10px;
             pointer-events: none;
         }
 
@@ -184,58 +199,123 @@
 
         .link-label {
             fill: #aaa;
-            font-size: 10px;
+            font-size: 8px;
             text-anchor: middle;
         }
 
         .empty-state {
             text-align: center;
-            padding: 40px;
+            padding: 20px;
             color: #666;
+            font-size: 14px;
         }
 
-        /* Mobile Responsive Styles */
-        @media (max-width: 1024px) {
+        /* View toggle styles */
+        .view-toggle {
+            display: flex;
+            gap: 0;
+            margin-bottom: 15px;
+            background: #ecf0f1;
+            border-radius: 8px;
+            padding: 4px;
+        }
+
+        .view-toggle-btn {
+            flex: 1;
+            padding: 10px 16px;
+            border: none;
+            background: transparent;
+            font-size: 14px;
+            font-weight: 500;
+            color: #7f8c8d;
+            cursor: pointer;
+            border-radius: 6px;
+            transition: all 0.2s;
+            min-height: 44px;
+        }
+
+        .view-toggle-btn.active {
+            background: white;
+            color: #2c3e50;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .topology-list-view {
+            background: white;
+            border-radius: 8px;
+            padding: 15px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: block;
+        }
+
+        .topology-list-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+            gap: 12px;
+        }
+
+        .topology-list-item:last-child {
+            border-bottom: none;
+        }
+
+        .list-camera-name {
+            font-weight: 600;
+            color: #2c3e50;
+            font-size: 15px;
+        }
+
+        .list-camera-meta {
+            font-size: 13px;
+            color: #7f8c8d;
+        }
+
+        .list-camera-connections {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 6px;
+        }
+
+        .list-connection-badge {
+            background: #ebf5fb;
+            color: #2980b9;
+            padding: 3px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+        }
+
+        .list-view-loading {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+        }
+
+        /* SVG adjustments for mobile */
+        svg {
+            max-width: 100%;
+            height: auto;
+        }
+
+        /* Tablet and up (768px+) */
+        @media (min-width: 768px) {
             .topology-container {
                 padding: 15px;
             }
 
-            .content-grid {
-                grid-template-columns: 1fr;
-                gap: 15px;
-            }
-
-            .sidebar-panel {
-                max-height: none;
-            }
-
-            .person-list {
-                max-height: 300px;
-            }
-        }
-
-        @media (max-width: 768px) {
-            .topology-container {
-                padding: 10px;
-            }
-
             .topology-header {
-                flex-direction: column;
-                align-items: flex-start;
-                gap: 15px;
+                flex-direction: row;
+                justify-content: space-between;
+                align-items: center;
             }
 
             .topology-header h1 {
                 font-size: 22px;
             }
 
-            .topology-header a {
-                padding: 8px 16px;
-                font-size: 14px;
-            }
-
             .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
+                grid-template-columns: repeat(4, 1fr);
                 gap: 10px;
             }
 
@@ -247,18 +327,22 @@
                 font-size: 26px;
             }
 
-            .stat-card .label {
-                font-size: 12px;
-            }
-
-            .content-grid {
-                grid-template-columns: 1fr;
-                gap: 15px;
-            }
-
             .graph-panel {
+                display: block;
                 min-height: 400px;
                 padding: 15px;
+            }
+
+            .topology-list-view {
+                display: none;
+            }
+
+            .topology-list-view.view-visible {
+                display: block;
+            }
+
+            .graph-panel.view-hidden {
+                display: none;
             }
 
             .sidebar-panel {
@@ -270,37 +354,12 @@
             }
 
             .person-item {
-                padding: 12px;
                 font-size: 15px;
-            }
-
-            .transition-list {
-                max-height: 250px;
             }
 
             .transition-item {
                 padding: 10px;
                 font-size: 13px;
-            }
-
-            .suggestions-panel {
-                padding: 15px;
-            }
-
-            .suggestion-item {
-                padding: 12px;
-                font-size: 14px;
-            }
-
-            .suggestion-item button {
-                padding: 8px 12px;
-                font-size: 13px;
-            }
-
-            /* SVG adjustments */
-            svg {
-                max-width: 100%;
-                height: auto;
             }
 
             .node text {
@@ -312,72 +371,54 @@
             }
         }
 
-        @media (max-width: 480px) {
+        /* Desktop (1024px+) */
+        @media (min-width: 1024px) {
             .topology-container {
-                padding: 8px;
+                padding: 20px;
             }
 
-            .topology-header h1 {
-                font-size: 20px;
-            }
-
-            .stats-grid {
-                grid-template-columns: 1fr;
-                gap: 8px;
-            }
-
-            .stat-card {
-                padding: 12px;
-            }
-
-            .stat-card .number {
-                font-size: 22px;
+            .content-grid {
+                grid-template-columns: 2fr 1fr;
+                gap: 20px;
             }
 
             .graph-panel {
-                min-height: 300px;
-                padding: 10px;
+                min-height: 600px;
+                padding: 20px;
             }
 
             .sidebar-panel {
-                padding: 10px;
+                padding: 20px;
+                max-height: none;
             }
 
             .person-list {
-                max-height: 250px;
+                max-height: 400px;
             }
 
-            .person-item {
-                padding: 10px;
+            .stat-card {
+                padding: 20px;
+            }
+
+            .stat-card .number {
+                font-size: 32px;
+            }
+
+            .stat-card .label {
                 font-size: 14px;
+            }
+
+            .transition-list {
+                max-height: 300px;
             }
 
             .transition-item {
-                padding: 8px;
-                font-size: 12px;
-            }
-
-            .suggestion-item {
-                padding: 10px;
                 font-size: 13px;
-            }
-
-            .node text {
-                font-size: 10px;
-            }
-
-            .link-label {
-                font-size: 8px;
-            }
-
-            .empty-state {
-                padding: 20px;
-                font-size: 14px;
             }
         }
 
         /* Landscape mode optimization */
-        @media (max-width: 768px) and (orientation: landscape) {
+        @media (max-width: 767px) and (orientation: landscape) {
             .graph-panel {
                 min-height: 350px;
             }
@@ -391,7 +432,8 @@
         @media (hover: none) and (pointer: coarse) {
             .person-item,
             .suggestion-item button,
-            button {
+            button,
+            .view-toggle-btn {
                 min-height: 44px;
             }
 
@@ -414,17 +456,229 @@
                 fill: #4CAF50;
             }
         }
+        /* Topology Tabs */
+        .topology-tabs {
+            display: flex;
+            gap: 0;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #444;
+        }
+
+        .tab-btn {
+            padding: 12px 24px;
+            background: transparent;
+            border: none;
+            color: #888;
+            font-size: 15px;
+            font-weight: 500;
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -2px;
+            transition: color 0.2s, border-color 0.2s;
+        }
+
+        .tab-btn:hover {
+            color: #ccc;
+        }
+
+        .tab-btn.active {
+            color: #4CAF50;
+            border-bottom-color: #4CAF50;
+        }
+
+        .tab-content {
+            display: block;
+        }
+
+        .tab-content:not(.active) {
+            display: none !important;
+        }
+
+        /* Camera List */
+        .camera-filter-bar {
+            margin: 10px 0;
+        }
+
+        .camera-list {
+            max-height: 550px;
+            overflow-y: auto;
+        }
+
+        .camera-list-item {
+            padding: 12px;
+            margin: 5px 0;
+            background: #1a1a1a;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background 0.2s;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .camera-list-item:hover {
+            background: #333;
+        }
+
+        .camera-list-item.active {
+            background: #3a4a3a;
+            border-left: 3px solid #4CAF50;
+        }
+
+        .camera-list-item .camera-mac {
+            font-family: monospace;
+            font-size: 13px;
+            color: #4CAF50;
+        }
+
+        .camera-list-item .camera-info {
+            font-size: 12px;
+            color: #888;
+            margin-top: 2px;
+        }
+
+        .camera-list-item .camera-badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            font-weight: 500;
+        }
+
+        .camera-badge.has-location {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4CAF50;
+        }
+
+        .camera-badge.no-location {
+            background: rgba(255, 165, 0, 0.2);
+            color: #FFA500;
+        }
+
+        /* Location Form */
+        .location-form {
+            margin-top: 15px;
+        }
+
+        .location-form .form-group {
+            margin-bottom: 12px;
+        }
+
+        .location-form label {
+            display: block;
+            font-size: 13px;
+            color: #aaa;
+            margin-bottom: 4px;
+        }
+
+        .location-form input,
+        .location-form textarea,
+        .location-form select {
+            width: 100%;
+            padding: 8px;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            color: #fff;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .location-form .form-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        /* Reference Image Grid */
+        .reference-image-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 8px;
+            max-height: 250px;
+            overflow-y: auto;
+        }
+
+        .reference-image-grid .ref-thumb {
+            width: 100%;
+            aspect-ratio: 16/9;
+            object-fit: cover;
+            border-radius: 4px;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: border-color 0.2s;
+        }
+
+        .reference-image-grid .ref-thumb:hover {
+            border-color: #4CAF50;
+        }
+
+        .reference-image-grid .ref-thumb.selected {
+            border-color: #4CAF50;
+            box-shadow: 0 0 8px rgba(76, 175, 80, 0.4);
+        }
+
+        /* Export Section */
+        .export-stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 10px;
+        }
+
+        .export-stat-card {
+            background: #1a1a1a;
+            padding: 12px;
+            border-radius: 4px;
+            text-align: center;
+        }
+
+        .export-stat-card .location-label {
+            color: #4CAF50;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        .export-stat-card .frame-count {
+            color: #fff;
+            font-size: 20px;
+            font-weight: bold;
+        }
+
+        .export-stat-card .source-info {
+            color: #888;
+            font-size: 11px;
+            margin-top: 4px;
+        }
     </style>
 </head>
 <body>
+    <script src="/static/js/gt-utils.js"></script>
+    <script src="/static/js/responsive-utils.js"></script>
+    <nav class="site-nav" id="site-nav">
+        <div class="nav-brand">
+            <a href="/">Groundtruth Studio</a>
+            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
+                <span class="hamburger-icon"></span>
+            </button>
+        </div>
+        <div class="nav-links" id="nav-links">
+            <a href="/" class="nav-link">Video Library</a>
+            <a href="/add-content" class="nav-link">Add Content</a>
+            <a href="/person-manager" class="nav-link">Person Manager</a>
+            <a href="/camera-topology" class="nav-link">Camera Topology</a>
+            <a href="/model-training" class="nav-link">Model Training</a>
+            <a href="/prediction-review" class="nav-link">AI Review</a>
+            <a href="/sync-settings" class="nav-link">Sync Settings</a>
+            <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
+            <a href="/vibration-export" class="nav-link">Vibration Export</a>
+            <a href="/location-export" class="nav-link">Location Export</a>
+            <a href="/tag-manager" class="nav-link">Tag Manager</a>
+        </div>
+    </nav>
     <div class="topology-container">
         <div class="topology-header">
             <div>
-                <h1>📹 Camera Topology</h1>
+                <h1>Camera Topology</h1>
                 <p style="color: #666; margin-top: 5px;">Automatically learned from person tracking data</p>
-            </div>
-            <div>
-                <a href="/" class="btn btn-secondary">← Back to Library</a>
             </div>
         </div>
 
@@ -445,32 +699,148 @@
                 <div class="number" id="stat-paths">0</div>
                 <div class="label">Known Paths</div>
             </div>
+            <div class="stat-card">
+                <div class="number" id="stat-locations">0</div>
+                <div class="label">Locations</div>
+            </div>
         </div>
 
-        <div class="content-grid">
-            <div class="graph-panel">
-                <h3>Camera Network Graph</h3>
-                <div id="topology-graph"></div>
+        <div class="topology-tabs">
+            <button class="tab-btn active" onclick="switchTab('network')">Camera Network</button>
+            <button class="tab-btn" onclick="switchTab('locations')">Locations</button>
+        </div>
+
+        <div id="tab-network" class="tab-content active">
+            <div class="view-toggle" id="view-toggle">
+                <button class="view-toggle-btn active" data-view="list" onclick="toggleTopologyView('list')">List View</button>
+                <button class="view-toggle-btn" data-view="graph" onclick="toggleTopologyView('graph')">Graph View</button>
             </div>
 
-            <div class="sidebar-panel">
-                <h3>People</h3>
-                <div class="person-list" id="person-list">
-                    <div class="empty-state">Loading...</div>
+            <div class="topology-list-view" id="topology-list-view">
+                <div class="list-view-loading">Loading camera connections...</div>
+            </div>
+
+            <div class="content-grid">
+                <div class="graph-panel">
+                    <h3>Camera Network Graph</h3>
+                    <div id="topology-graph"></div>
                 </div>
 
-                <div id="person-details" style="display: none;">
-                    <h3 style="margin-top: 20px;">Movement Path</h3>
-                    <div class="transition-list" id="transition-list"></div>
+                <div class="sidebar-panel">
+                    <h3>People</h3>
+                    <div class="person-list" id="person-list">
+                        <div class="empty-state">Loading...</div>
+                    </div>
 
-                    <div class="suggestions-panel" id="suggestions-panel">
-                        <h3>Suggested Matches</h3>
-                        <p style="font-size: 12px; color: #666;">Unassigned detections that might be this person</p>
-                        <div id="suggestions-list"></div>
+                    <div id="person-details" style="display: none;">
+                        <h3 style="margin-top: 20px;">Movement Path</h3>
+                        <div class="transition-list" id="transition-list"></div>
+
+                        <div class="suggestions-panel" id="suggestions-panel">
+                            <h3>Suggested Matches</h3>
+                            <p style="font-size: 12px; color: #666;">Unassigned detections that might be this person</p>
+                            <div id="suggestions-list"></div>
+                        </div>
                     </div>
                 </div>
             </div>
         </div>
+
+        <div id="tab-locations" class="tab-content">
+            <div class="content-grid">
+                <!-- Left panel: Camera list -->
+                <div class="graph-panel">
+                    <h3>Discovered Cameras</h3>
+                    <div class="camera-filter-bar">
+                        <input type="text" id="camera-search" placeholder="Filter cameras by MAC or name..." style="width:100%; padding:8px; background:#1a1a1a; border:1px solid #444; color:#fff; border-radius:4px;">
+                    </div>
+                    <div class="camera-list" id="camera-list">
+                        <div class="empty-state">Loading cameras...</div>
+                    </div>
+                </div>
+
+                <!-- Right panel: Location assignment -->
+                <div class="sidebar-panel">
+                    <div id="location-no-selection" class="empty-state">
+                        <p>Select a camera from the list to assign a location</p>
+                    </div>
+                    <div id="location-form-container" style="display:none;">
+                        <h3 id="selected-camera-title">Camera Details</h3>
+                        <div class="location-form">
+                            <div class="form-group">
+                                <label>Camera MAC</label>
+                                <input type="text" id="loc-camera-id" readonly style="background:#333; color:#888;">
+                            </div>
+                            <div class="form-group">
+                                <label>Camera Name</label>
+                                <input type="text" id="loc-camera-name" placeholder="Display name...">
+                            </div>
+                            <div class="form-group">
+                                <label>Location Name <span style="color:#e74c3c;">*</span></label>
+                                <input type="text" id="loc-location-name" placeholder="e.g., Cedar Key Boat Ramp" list="location-suggestions">
+                                <datalist id="location-suggestions"></datalist>
+                            </div>
+                            <div class="form-group">
+                                <label>Site Name</label>
+                                <input type="text" id="loc-site-name" placeholder="Site name from EcoEye...">
+                            </div>
+                            <div class="form-group">
+                                <label>Description</label>
+                                <textarea id="loc-description" placeholder="Optional details about this location..." rows="2"></textarea>
+                            </div>
+                            <div class="form-group" style="display:grid; grid-template-columns:1fr 1fr; gap:10px;">
+                                <div>
+                                    <label>Latitude</label>
+                                    <input type="number" id="loc-latitude" step="any" placeholder="Optional">
+                                </div>
+                                <div>
+                                    <label>Longitude</label>
+                                    <input type="number" id="loc-longitude" step="any" placeholder="Optional">
+                                </div>
+                            </div>
+                            <div class="form-actions">
+                                <button class="btn btn-primary" onclick="saveLocation()">Save Location</button>
+                                <button class="btn btn-danger" id="btn-remove-location" onclick="removeLocation()" style="display:none;">Remove</button>
+                            </div>
+                        </div>
+
+                        <!-- Reference images from this camera -->
+                        <h3 style="margin-top:20px;">Reference Images</h3>
+                        <p style="font-size:12px; color:#666; margin-bottom:10px;">Click a thumbnail to set as reference image</p>
+                        <div class="reference-image-grid" id="reference-images">
+                            <div class="empty-state">No frames available</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Export Training Data Section -->
+            <div class="export-section" style="margin-top:20px;">
+                <div class="graph-panel">
+                    <h3>Export Training Data</h3>
+                    <div id="export-stats" class="export-stats-grid">
+                        <div class="empty-state">Loading export statistics...</div>
+                    </div>
+                    <div class="export-controls" style="margin-top:15px; display:flex; gap:15px; align-items:center; flex-wrap:wrap;">
+                        <div>
+                            <label style="color:#aaa; font-size:13px;">Format</label>
+                            <select id="export-format" style="padding:8px; background:#1a1a1a; border:1px solid #444; color:#fff; border-radius:4px;">
+                                <option value="imagefolder">ImageFolder (PyTorch)</option>
+                                <option value="csv">CSV + Frames</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label style="color:#aaa; font-size:13px;">Val Split</label>
+                            <input type="range" id="export-val-split" min="0.05" max="0.5" step="0.05" value="0.2" oninput="document.getElementById('val-split-label').textContent = Math.round(this.value*100) + '%'">
+                            <span id="val-split-label" style="color:#fff; font-size:13px;">20%</span>
+                        </div>
+                        <button class="btn btn-primary" onclick="exportDataset()" id="btn-export">Export Dataset</button>
+                    </div>
+                    <div id="export-result" style="margin-top:15px; display:none;"></div>
+                </div>
+            </div>
+        </div>
+
     </div>
 
     <script>
@@ -746,8 +1116,421 @@
             }
         }
 
+        // ===== Locations Tab =====
+        let discoveredCameras = [];
+        let selectedCamera = null;
+        let locationMappings = [];
+        let selectedLocationId = null;
+
+        function switchTab(tab) {
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
+
+            if (tab === 'network') {
+                document.querySelector('.tab-btn:nth-child(1)').classList.add('active');
+                document.getElementById('tab-network').classList.add('active');
+            } else {
+                document.querySelector('.tab-btn:nth-child(2)').classList.add('active');
+                document.getElementById('tab-locations').classList.add('active');
+                loadDiscoveredCameras();
+                loadExportStats();
+            }
+        }
+
+        async function loadDiscoveredCameras() {
+            try {
+                const response = await fetch('/api/camera-locations/cameras');
+                const data = await response.json();
+                if (data.success) {
+                    discoveredCameras = data.cameras;
+                    renderCameraList();
+                    updateLocationCount();
+                    loadLocationSuggestions();
+                }
+            } catch (error) {
+                console.error('Error loading cameras:', error);
+            }
+        }
+
+        function updateLocationCount() {
+            const count = discoveredCameras.filter(c => c.location_name).length;
+            document.getElementById('stat-locations').textContent = count;
+        }
+
+        function renderCameraList(filter = '') {
+            const container = document.getElementById('camera-list');
+            const filtered = discoveredCameras.filter(c => {
+                if (!filter) return true;
+                const f = filter.toLowerCase();
+                return (c.camera_id && c.camera_id.toLowerCase().includes(f)) ||
+                       (c.camera_name && c.camera_name.toLowerCase().includes(f)) ||
+                       (c.location_name && c.location_name.toLowerCase().includes(f));
+            });
+
+            if (filtered.length === 0) {
+                container.innerHTML = '<div class="empty-state">No cameras found</div>';
+                return;
+            }
+
+            container.innerHTML = filtered.map(cam => {
+                const mac = cam.camera_id || 'Unknown';
+                const displayMac = mac.length === 12 ? mac.match(/.{2}/g).join(':') : mac;
+                const isActive = selectedCamera && selectedCamera.camera_id === cam.camera_id;
+                return `
+                    <div class="camera-list-item ${isActive ? 'active' : ''}" onclick="selectCamera('${cam.camera_id}')">
+                        <div>
+                            <div class="camera-mac">${displayMac}</div>
+                            <div class="camera-info">
+                                ${cam.camera_name || cam.site_name || 'Unnamed'} &middot; ${cam.total_events} events
+                            </div>
+                        </div>
+                        <span class="camera-badge ${cam.location_name ? 'has-location' : 'no-location'}">
+                            ${cam.location_name || 'Unassigned'}
+                        </span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function loadLocationSuggestions() {
+            const datalist = document.getElementById('location-suggestions');
+            const uniqueLocations = [...new Set(discoveredCameras.filter(c => c.location_name).map(c => c.location_name))];
+            datalist.innerHTML = uniqueLocations.map(loc => `<option value="${loc}">`).join('');
+        }
+
+        async function selectCamera(cameraId) {
+            selectedCamera = discoveredCameras.find(c => c.camera_id === cameraId);
+            if (!selectedCamera) return;
+
+            renderCameraList(document.getElementById('camera-search').value);
+
+            document.getElementById('location-no-selection').style.display = 'none';
+            document.getElementById('location-form-container').style.display = 'block';
+
+            const mac = cameraId.length === 12 ? cameraId.match(/.{2}/g).join(':') : cameraId;
+            document.getElementById('selected-camera-title').textContent = `Camera ${mac}`;
+            document.getElementById('loc-camera-id').value = cameraId;
+            document.getElementById('loc-camera-name').value = selectedCamera.camera_name || '';
+
+            // If there's an existing location mapping, populate form
+            if (selectedCamera.location_id) {
+                selectedLocationId = selectedCamera.location_id;
+                try {
+                    const resp = await fetch(`/api/camera-locations/lookup/${cameraId}`);
+                    const data = await resp.json();
+                    if (data.success && data.location) {
+                        document.getElementById('loc-location-name').value = data.location.location_name || '';
+                        document.getElementById('loc-site-name').value = data.location.site_name || '';
+                        document.getElementById('loc-description').value = data.location.location_description || '';
+                        document.getElementById('loc-latitude').value = data.location.latitude || '';
+                        document.getElementById('loc-longitude').value = data.location.longitude || '';
+                        document.getElementById('btn-remove-location').style.display = 'inline-block';
+                    }
+                } catch (e) {
+                    console.error('Error fetching location:', e);
+                }
+            } else {
+                selectedLocationId = null;
+                document.getElementById('loc-location-name').value = '';
+                document.getElementById('loc-site-name').value = selectedCamera.site_name || '';
+                document.getElementById('loc-description').value = '';
+                document.getElementById('loc-latitude').value = '';
+                document.getElementById('loc-longitude').value = '';
+                document.getElementById('btn-remove-location').style.display = 'none';
+            }
+
+            // Load reference images (thumbnails from this camera)
+            loadReferenceImages(cameraId);
+        }
+
+        async function loadReferenceImages(cameraId) {
+            const container = document.getElementById('reference-images');
+            try {
+                const resp = await fetch(`/api/videos?camera_id=${encodeURIComponent(cameraId)}&limit=20`);
+                const data = await resp.json();
+                if (data.success && data.videos && data.videos.length > 0) {
+                    container.innerHTML = data.videos
+                        .filter(v => v.thumbnail_path)
+                        .map(v => { const thumbName = v.thumbnail_path.split('/').pop(); return `<img class="ref-thumb" src="/thumbnails/${thumbName}" title="${v.title || v.filename}" onclick="setReferenceImage('${v.thumbnail_path}', this)">`; }
+                        ).join('');
+                    if (container.innerHTML === '') {
+                        container.innerHTML = '<div class="empty-state">No thumbnails available</div>';
+                    }
+                } else {
+                    container.innerHTML = '<div class="empty-state">No frames from this camera</div>';
+                }
+            } catch (e) {
+                container.innerHTML = '<div class="empty-state">Error loading frames</div>';
+            }
+        }
+
+        async function setReferenceImage(imagePath, imgEl) {
+            if (!selectedLocationId) {
+                alert('Save the location first, then set a reference image.');
+                return;
+            }
+            try {
+                const resp = await fetch(`/api/camera-locations/${selectedLocationId}/reference-image`, {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({image_path: imagePath})
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    document.querySelectorAll('.ref-thumb').forEach(t => t.classList.remove('selected'));
+                    imgEl.classList.add('selected');
+                }
+            } catch (e) {
+                console.error('Error setting reference image:', e);
+            }
+        }
+
+        async function saveLocation() {
+            const cameraId = document.getElementById('loc-camera-id').value;
+            const locationName = document.getElementById('loc-location-name').value.trim();
+            if (!locationName) {
+                alert('Location name is required');
+                return;
+            }
+
+            try {
+                const resp = await fetch('/api/camera-locations', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        camera_id: cameraId,
+                        camera_name: document.getElementById('loc-camera-name').value.trim() || null,
+                        location_name: locationName,
+                        site_name: document.getElementById('loc-site-name').value.trim() || null,
+                        location_description: document.getElementById('loc-description').value.trim() || null,
+                        latitude: parseFloat(document.getElementById('loc-latitude').value) || null,
+                        longitude: parseFloat(document.getElementById('loc-longitude').value) || null
+                    })
+                });
+                const data = await resp.json();
+                if (data.success) {
+                    selectedLocationId = data.id;
+                    document.getElementById('btn-remove-location').style.display = 'inline-block';
+                    await loadDiscoveredCameras();
+                    selectCamera(cameraId);
+                } else {
+                    alert('Error: ' + (data.error || 'Unknown error'));
+                }
+            } catch (e) {
+                console.error('Error saving location:', e);
+                alert('Error saving location');
+            }
+        }
+
+        async function removeLocation() {
+            if (!selectedLocationId) return;
+            if (!confirm('Remove this location assignment?')) return;
+
+            try {
+                const resp = await fetch(`/api/camera-locations/${selectedLocationId}`, {method: 'DELETE'});
+                const data = await resp.json();
+                if (data.success) {
+                    selectedLocationId = null;
+                    await loadDiscoveredCameras();
+                    if (selectedCamera) selectCamera(selectedCamera.camera_id);
+                }
+            } catch (e) {
+                console.error('Error removing location:', e);
+            }
+        }
+
+        async function loadExportStats() {
+            try {
+                const resp = await fetch('/api/location-export/stats');
+                const data = await resp.json();
+                if (data.success && data.stats) {
+                    const stats = data.stats;
+                    const container = document.getElementById('export-stats');
+                    if (stats.locations && stats.locations.length > 0) {
+                        container.innerHTML = stats.locations.map(loc => `
+                            <div class="export-stat-card">
+                                <div class="location-label">${loc.location_name}</div>
+                                <div class="frame-count">${loc.total_frames}</div>
+                                <div class="source-info">
+                                    ${loc.manual_frames || 0} manual + ${loc.auto_frames || 0} auto-labeled
+                                </div>
+                            </div>
+                        `).join('');
+                    } else {
+                        container.innerHTML = '<div class="empty-state">No locations with training data yet. Assign camera locations above to auto-label frames.</div>';
+                    }
+                }
+            } catch (e) {
+                console.error('Error loading export stats:', e);
+            }
+        }
+
+        async function exportDataset() {
+            const btn = document.getElementById('btn-export');
+            btn.disabled = true;
+            btn.textContent = 'Exporting...';
+
+            try {
+                const resp = await fetch('/api/location-export/export', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        format: document.getElementById('export-format').value,
+                        val_split: parseFloat(document.getElementById('export-val-split').value)
+                    })
+                });
+                const data = await resp.json();
+                const resultDiv = document.getElementById('export-result');
+                resultDiv.style.display = 'block';
+
+                if (data.success) {
+                    resultDiv.innerHTML = `
+                        <div style="background:#1a3a1a; border:1px solid #4CAF50; border-radius:4px; padding:15px; color:#4CAF50;">
+                            <strong>Export complete!</strong><br>
+                            <span style="color:#aaa;">Path: ${data.output_dir || 'N/A'}</span><br>
+                            <span style="color:#aaa;">Format: ${data.format || 'N/A'}</span><br>
+                            <span style="color:#aaa;">Total frames: ${data.total_frames || 0} (Train: ${data.train_count || 0}, Val: ${data.val_count || 0})</span><br>
+                            <span style="color:#aaa;">Locations: ${data.location_count || 0}</span>
+                        </div>
+                    `;
+                } else {
+                    resultDiv.innerHTML = `
+                        <div style="background:#3a1a1a; border:1px solid #e74c3c; border-radius:4px; padding:15px; color:#e74c3c;">
+                            <strong>Export failed:</strong> ${data.error || 'Unknown error'}
+                        </div>
+                    `;
+                }
+            } catch (e) {
+                console.error('Error exporting:', e);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Export Dataset';
+            }
+        }
+
+        // View toggle functions
+        function toggleTopologyView(view) {
+            const listView = document.getElementById('topology-list-view');
+            const graphPanel = document.querySelector('.graph-panel');
+            const btns = document.querySelectorAll('.view-toggle-btn');
+
+            btns.forEach(b => b.classList.remove('active'));
+            document.querySelector(`[data-view="${view}"]`).classList.add('active');
+
+            if (view === 'list') {
+                if (listView) {
+                    listView.style.display = 'block';
+                    listView.classList.add('view-visible');
+                }
+                if (graphPanel) {
+                    graphPanel.style.display = 'none';
+                    graphPanel.classList.add('view-hidden');
+                }
+                populateListView();
+            } else {
+                if (listView) {
+                    listView.style.display = 'none';
+                    listView.classList.remove('view-visible');
+                }
+                if (graphPanel) {
+                    graphPanel.style.display = 'block';
+                    graphPanel.classList.remove('view-hidden');
+                }
+            }
+        }
+
+        function populateListView() {
+            const listView = document.getElementById('topology-list-view');
+            if (!listView || listView.dataset.loaded === 'true') return;
+
+            fetch('/api/camera-topology/graph')
+                .then(r => r.json())
+                .then(data => {
+                    if (!data.graph || !data.graph.nodes || data.graph.nodes.length === 0) {
+                        listView.textContent = 'No camera data available yet.';
+                        listView.className = 'topology-list-view';
+                        const loadingDiv = document.createElement('div');
+                        loadingDiv.className = 'list-view-loading';
+                        loadingDiv.textContent = 'No camera data available yet.';
+                        listView.innerHTML = '';
+                        listView.appendChild(loadingDiv);
+                        return;
+                    }
+
+                    const graph = data.graph;
+                    listView.innerHTML = '';
+
+                    graph.nodes.forEach(node => {
+                        const connections = (graph.edges || [])
+                            .filter(l => l.source === node.id || l.target === node.id ||
+                                         (l.source && l.source.id === node.id) ||
+                                         (l.target && l.target.id === node.id))
+                            .map(l => {
+                                const otherId = (l.source === node.id || (l.source && l.source.id === node.id))
+                                    ? (l.target.id || l.target)
+                                    : (l.source.id || l.source);
+                                const otherNode = graph.nodes.find(n => n.id === otherId);
+                                return otherNode ? otherNode.label || otherNode.id : otherId;
+                            });
+
+                        const itemDiv = document.createElement('div');
+                        itemDiv.className = 'topology-list-item';
+
+                        const contentDiv = document.createElement('div');
+
+                        const nameDiv = document.createElement('div');
+                        nameDiv.className = 'list-camera-name';
+                        nameDiv.textContent = node.label || node.id;
+
+                        const metaDiv = document.createElement('div');
+                        metaDiv.className = 'list-camera-meta';
+                        metaDiv.textContent = (node.location || 'No location') + ' · ' + (node.detection_count || 0) + ' detections';
+
+                        contentDiv.appendChild(nameDiv);
+                        contentDiv.appendChild(metaDiv);
+
+                        if (connections.length > 0) {
+                            const connectionsDiv = document.createElement('div');
+                            connectionsDiv.className = 'list-camera-connections';
+                            connections.forEach(c => {
+                                const badge = document.createElement('span');
+                                badge.className = 'list-connection-badge';
+                                badge.textContent = '→ ' + c;
+                                connectionsDiv.appendChild(badge);
+                            });
+                            contentDiv.appendChild(connectionsDiv);
+                        }
+
+                        itemDiv.appendChild(contentDiv);
+                        listView.appendChild(itemDiv);
+                    });
+
+                    listView.dataset.loaded = 'true';
+                })
+                .catch(() => {
+                    listView.innerHTML = '';
+                    const errorDiv = document.createElement('div');
+                    errorDiv.className = 'list-view-loading';
+                    errorDiv.textContent = 'Failed to load camera data.';
+                    listView.appendChild(errorDiv);
+                });
+        }
+
         // Initialize
-        document.addEventListener('DOMContentLoaded', loadTopology);
+        document.addEventListener('DOMContentLoaded', () => {
+            loadTopology();
+
+            // Camera search filter
+            const searchInput = document.getElementById('camera-search');
+            if (searchInput) {
+                searchInput.addEventListener('input', (e) => renderCameraList(e.target.value));
+            }
+
+            // Auto-populate list view on mobile
+            if (window.matchMedia('(max-width: 767px)').matches) {
+                populateListView();
+            }
+        });
     </script>
 </body>
 </html>

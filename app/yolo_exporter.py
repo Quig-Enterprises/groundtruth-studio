@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 import cv2
 from database import VideoDatabase
+from psycopg2 import extras
 from db_connection import get_connection
 
 
@@ -35,7 +36,7 @@ class YOLOExporter:
             config_id
         """
         with get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             cursor.execute('''
                 INSERT INTO yolo_export_configs
@@ -47,9 +48,9 @@ class YOLOExporter:
                 config_name,
                 description,
                 json.dumps(class_mapping),
-                options.get('include_reviewed_only', 0),
-                options.get('include_ai_generated', 1),
-                options.get('include_negative_examples', 1),
+                bool(options.get('include_reviewed_only', False)),
+                bool(options.get('include_ai_generated', True)),
+                bool(options.get('include_negative_examples', True)),
                 options.get('min_confidence', 0.0),
                 options.get('export_format', 'yolov8')
             ))
@@ -70,7 +71,7 @@ class YOLOExporter:
         - video_id: Specific video ID
         """
         with get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             cursor.execute('''
                 INSERT INTO yolo_export_filters (export_config_id, filter_type, filter_value, is_exclusion)
@@ -82,7 +83,7 @@ class YOLOExporter:
     def get_export_configs(self) -> List[Dict]:
         """Get all export configurations"""
         with get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             cursor.execute('SELECT * FROM yolo_export_configs ORDER BY created_date DESC')
             rows = cursor.fetchall()
@@ -103,7 +104,7 @@ class YOLOExporter:
             List of video_ids
         """
         with get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             # Get filters
             cursor.execute('SELECT * FROM yolo_export_filters WHERE export_config_id = %s', (config_id,))
@@ -115,7 +116,7 @@ class YOLOExporter:
                     SELECT DISTINCT video_id FROM keyframe_annotations
                     WHERE bbox_x IS NOT NULL AND bbox_width > 0
                 ''')
-                video_ids = [row[0] for row in cursor.fetchall()]
+                video_ids = [row['video_id'] for row in cursor.fetchall()]
             else:
                 # Apply filters
                 video_ids = set()
@@ -155,7 +156,7 @@ class YOLOExporter:
                     elif filter_type == 'video_id':
                         cursor.execute('SELECT id FROM videos WHERE id = %s', (int(filter_value),))
 
-                    filter_results = set(row[0] for row in cursor.fetchall())
+                    filter_results = set(list(row.values())[0] for row in cursor.fetchall())
 
                     if is_exclusion:
                         video_ids -= filter_results
@@ -180,7 +181,7 @@ class YOLOExporter:
             Dict with export statistics and paths
         """
         with get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             # Get configuration
             cursor.execute('SELECT * FROM yolo_export_configs WHERE id = %s', (config_id,))
@@ -197,8 +198,10 @@ class YOLOExporter:
         else:
             export_dir = self.export_base_dir / f"{config['config_name']}_{config_id}"
 
+        # Clean and recreate export directory
+        if export_dir.exists():
+            shutil.rmtree(export_dir)
         export_dir.mkdir(parents=True, exist_ok=True)
-        # Create train/val split directories
         for split in ('train', 'val'):
             (export_dir / split / 'images').mkdir(parents=True, exist_ok=True)
             (export_dir / split / 'labels').mkdir(parents=True, exist_ok=True)
@@ -211,15 +214,14 @@ class YOLOExporter:
         train_count = 0
         val_count = 0
 
-        # Collect all frame entries first for splitting
-        all_frame_entries = []
+        # Collect annotations grouped by frame (video_id + timestamp)
+        # Each unique frame gets one image file with all its bboxes in one label file
+        frame_groups = {}  # key: (video_id, timestamp) -> {video: dict, annotations: [list]}
 
         for video_id in video_ids:
-                # Get video info
                 cursor.execute('SELECT * FROM videos WHERE id = %s', (video_id,))
                 video = dict(cursor.fetchone())
 
-                # Get keyframe annotations
                 cursor.execute('''
                     SELECT * FROM keyframe_annotations
                     WHERE video_id = %s
@@ -230,8 +232,6 @@ class YOLOExporter:
 
                 annotations = [dict(row) for row in cursor.fetchall()]
 
-                # Filter based on configuration
-                filtered_annotations = []
                 for ann in annotations:
                     if config['include_reviewed_only'] and not ann.get('reviewed'):
                         continue
@@ -241,66 +241,90 @@ class YOLOExporter:
                         continue
                     if ann['activity_tag'] not in config['class_mapping']:
                         continue
-                    filtered_annotations.append(ann)
 
-                if not filtered_annotations:
-                    continue
+                    key = (video_id, ann['timestamp'])
+                    if key not in frame_groups:
+                        frame_groups[key] = {'video': video, 'annotations': []}
+                    frame_groups[key]['annotations'].append(ann)
 
-                for ann in filtered_annotations:
-                    all_frame_entries.append((video_id, video, ann))
-
-        # Shuffle and split into train/val
+        # Shuffle frames and split into train/val
+        all_frames = list(frame_groups.items())
         rng = random.Random(seed)
-        rng.shuffle(all_frame_entries)
-        val_size = max(1, int(len(all_frame_entries) * val_split)) if all_frame_entries else 0
+        rng.shuffle(all_frames)
+        val_size = max(1, int(len(all_frames) * val_split)) if all_frames else 0
         val_set = set(range(val_size))
 
         # Process each frame
+        image_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
         open_caps = {}
-        for idx, (video_id, video, ann) in enumerate(all_frame_entries):
+        for idx, ((video_id, timestamp), group) in enumerate(all_frames):
             split = 'val' if idx in val_set else 'train'
             images_dir = export_dir / split / 'images'
             labels_dir = export_dir / split / 'labels'
 
+            video = group['video']
+            anns = group['annotations']
             video_path = self.videos_dir / video['filename']
-            if not video_path.exists():
-                print(f"Warning: Video file not found: {video_path}")
+            thumbnail_path = Path(video['thumbnail_path']) if video.get('thumbnail_path') else None
+            frame = None
+            img_width = None
+            img_height = None
+            frame_filename = None
+
+            # Source 1: Direct image file (uploaded JPG/PNG stored as video entry)
+            if video_path.exists() and video_path.suffix.lower() in image_exts:
+                frame = cv2.imread(str(video_path))
+                if frame is not None:
+                    img_height, img_width = frame.shape[:2]
+                    frame_filename = f"video_{video_id}_img_{int(timestamp * 1000)}.jpg"
+
+            # Source 2: Video file - extract frame at timestamp
+            if frame is None and video_path.exists() and not video['filename'].endswith('.placeholder'):
+                if video_id not in open_caps:
+                    cap = cv2.VideoCapture(str(video_path))
+                    open_caps[video_id] = {
+                        'cap': cap,
+                        'width': int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
+                        'height': int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
+                        'fps': cap.get(cv2.CAP_PROP_FPS),
+                    }
+                vc = open_caps[video_id]
+                frame_number = int(timestamp * vc['fps'])
+                vc['cap'].set(cv2.CAP_PROP_POS_FRAMES, frame_number)
+                ret, frame = vc['cap'].read()
+                if ret:
+                    img_width = vc['width']
+                    img_height = vc['height']
+                    frame_filename = f"video_{video_id}_frame_{frame_number}.jpg"
+                else:
+                    frame = None
+
+            # Source 3: Thumbnail
+            if frame is None and thumbnail_path and thumbnail_path.exists():
+                frame = cv2.imread(str(thumbnail_path))
+                if frame is not None:
+                    img_height, img_width = frame.shape[:2]
+                    frame_filename = f"video_{video_id}_thumb_{int(timestamp * 1000)}.jpg"
+
+            if frame is None:
+                print(f"Warning: No usable image source for video {video_id}")
                 continue
 
-            # Cache video captures
-            if video_id not in open_caps:
-                cap = cv2.VideoCapture(str(video_path))
-                open_caps[video_id] = {
-                    'cap': cap,
-                    'width': int(cap.get(cv2.CAP_PROP_FRAME_WIDTH)),
-                    'height': int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT)),
-                    'fps': cap.get(cv2.CAP_PROP_FPS),
-                }
-            vc = open_caps[video_id]
-            cap = vc['cap']
-
-            frame_number = int(ann['timestamp'] * vc['fps'])
-            cap.set(cv2.CAP_PROP_POS_FRAMES, frame_number)
-            ret, frame = cap.read()
-
-            if not ret:
-                continue
-
-            frame_filename = f"video_{video_id}_frame_{frame_number}.jpg"
             cv2.imwrite(str(images_dir / frame_filename), frame)
 
+            # Write ALL annotations for this frame into one label file
             label_filename = frame_filename.replace('.jpg', '.txt')
-            class_id = config['class_mapping'][ann['activity_tag']]
-            x_center = (ann['bbox_x'] + ann['bbox_width'] / 2) / vc['width']
-            y_center = (ann['bbox_y'] + ann['bbox_height'] / 2) / vc['height']
-            width = ann['bbox_width'] / vc['width']
-            height = ann['bbox_height'] / vc['height']
-
             with open(labels_dir / label_filename, 'w') as f:
-                f.write(f"{class_id} {x_center:.6f} {y_center:.6f} {width:.6f} {height:.6f}\n")
+                for ann in anns:
+                    class_id = config['class_mapping'][ann['activity_tag']]
+                    x_center = (ann['bbox_x'] + ann['bbox_width'] / 2) / img_width
+                    y_center = (ann['bbox_y'] + ann['bbox_height'] / 2) / img_height
+                    w_norm = ann['bbox_width'] / img_width
+                    h_norm = ann['bbox_height'] / img_height
+                    f.write(f"{class_id} {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}\n")
+                    total_annotations += 1
 
             total_frames += 1
-            total_annotations += 1
             if split == 'val':
                 val_count += 1
             else:
@@ -335,7 +359,7 @@ names:
         readme_content = f"""# YOLO Training Dataset Export
 
 **Configuration:** {config['config_name']}
-**Export Date:** {cursor.execute('SELECT datetime()').fetchone()[0]}
+**Export Date:** {__import__('datetime').datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 **Description:** {config.get('description', 'N/A')}
 
 ## Statistics
@@ -396,7 +420,7 @@ python train.py --data {yaml_path.absolute()} --weights yolov5s.pt --epochs 100
             # Update config
             cursor.execute('''
                 UPDATE yolo_export_configs
-                SET last_export_date = datetime(), last_export_count = %s
+                SET last_export_date = NOW(), last_export_count = %s
                 WHERE id = %s
             ''', (total_annotations, config_id))
 
@@ -422,7 +446,7 @@ python train.py --data {yaml_path.absolute()} --weights yolov5s.pt --epochs 100
         video_ids = self.get_filtered_videos(config_id)
 
         with get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
             # Get config
             cursor.execute('SELECT * FROM yolo_export_configs WHERE id = %s', (config_id,))
@@ -441,8 +465,8 @@ python train.py --data {yaml_path.absolute()} --weights yolov5s.pt --epochs 100
                 ''', (video_id,))
 
                 for row in cursor.fetchall():
-                    activity_tag = row[0]
-                    count = row[1]
+                    activity_tag = row['activity_tag']
+                    count = row['count']
                     if activity_tag in class_counts:
                         class_counts[activity_tag] += count
                         total_annotations += count

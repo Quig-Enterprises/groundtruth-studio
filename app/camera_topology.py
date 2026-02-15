@@ -9,6 +9,7 @@ from collections import defaultdict
 import json
 from datetime import datetime
 import psycopg2.extras
+import numpy as np
 
 class CameraTopologyLearner:
     def __init__(self, db_path: str = None):
@@ -374,3 +375,211 @@ class CameraTopologyLearner:
             })
 
         return path
+
+    def match_track_across_cameras(self, departing_track, arriving_track, max_transit_seconds=300):
+        """Match a departing track on one camera with an arriving track on another.
+
+        Uses ReID embeddings + learned camera topology transit times.
+
+        Args:
+            departing_track: dict with keys: track_id, camera_id, identity_id, end_time, entity_type
+            arriving_track: dict with keys: track_id, camera_id, start_time, entity_type
+            max_transit_seconds: maximum allowed transit time
+
+        Returns: dict with match_confidence, transit_seconds, method or None
+        """
+        # Check entity types match
+        if departing_track.get('entity_type') != arriving_track.get('entity_type'):
+            return None
+
+        # Calculate transit time
+        from datetime import datetime
+        if isinstance(departing_track.get('end_time'), str):
+            end_time = datetime.fromisoformat(departing_track['end_time'])
+        else:
+            end_time = departing_track['end_time']
+
+        if isinstance(arriving_track.get('start_time'), str):
+            start_time = datetime.fromisoformat(arriving_track['start_time'])
+        else:
+            start_time = arriving_track['start_time']
+
+        transit_seconds = (start_time - end_time).total_seconds()
+
+        # Must be positive and within max window
+        if transit_seconds < 0 or transit_seconds > max_transit_seconds:
+            return None
+
+        # Look up learned topology for this camera pair
+        with db_get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+            cursor.execute('''
+                SELECT min_transit_seconds, max_transit_seconds, avg_transit_seconds, observation_count
+                FROM camera_topology_learned
+                WHERE camera_a = %s AND camera_b = %s
+            ''', (departing_track['camera_id'], arriving_track['camera_id']))
+
+            topology = cursor.fetchone()
+
+            # Base confidence from topology timing
+            confidence = 0.0
+            method = "topology"
+
+            if topology:
+                min_transit = topology['min_transit_seconds']
+                max_transit = topology['max_transit_seconds']
+                avg_transit = topology['avg_transit_seconds']
+
+                # Transit time within learned range
+                if min_transit <= transit_seconds <= max_transit:
+                    confidence = 0.5
+                    # Bonus if close to average
+                    time_diff = abs(transit_seconds - avg_transit)
+                    if time_diff < 30:
+                        confidence += 0.2
+                    elif time_diff < 60:
+                        confidence += 0.1
+
+            # Look up ReID embeddings for both tracks
+            cursor.execute('''
+                SELECT embedding
+                FROM embeddings
+                WHERE track_id = %s AND camera_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            ''', (departing_track['track_id'], departing_track['camera_id']))
+
+            departing_embedding_row = cursor.fetchone()
+
+            cursor.execute('''
+                SELECT embedding
+                FROM embeddings
+                WHERE track_id = %s AND camera_id = %s
+                ORDER BY created_at DESC
+                LIMIT 1
+            ''', (arriving_track['track_id'], arriving_track['camera_id']))
+
+            arriving_embedding_row = cursor.fetchone()
+
+            # If embeddings found, compute cosine similarity
+            if departing_embedding_row and arriving_embedding_row:
+                departing_embedding = np.array(departing_embedding_row['embedding'])
+                arriving_embedding = np.array(arriving_embedding_row['embedding'])
+
+                similarity = self._cosine_similarity(departing_embedding, arriving_embedding)
+
+                # Add similarity to confidence (similarity is 0-1, weight it appropriately)
+                confidence += similarity * 0.5
+                method = "topology+reid"
+
+        if confidence > 0:
+            return {
+                'match_confidence': min(confidence, 1.0),
+                'transit_seconds': transit_seconds,
+                'method': method
+            }
+
+        return None
+
+    def find_handoff_candidates(self, ended_track, active_tracks, topology_data=None):
+        """Find candidate tracks on adjacent cameras that could be the same entity.
+
+        Args:
+            ended_track: dict with track_id, camera_id, identity_id, end_time, entity_type
+            active_tracks: list of active tracks on other cameras
+            topology_data: optional pre-fetched topology data
+
+        Returns: list of candidates sorted by confidence
+        """
+        candidates = []
+
+        # Filter to same entity type
+        same_type_tracks = [
+            t for t in active_tracks
+            if t.get('entity_type') == ended_track.get('entity_type')
+            and t.get('camera_id') != ended_track.get('camera_id')
+        ]
+
+        # Get adjacent cameras if not provided
+        if topology_data is None:
+            adjacent = self.get_adjacent_cameras(ended_track['camera_id'])
+            adjacent_camera_ids = {a['camera_id'] for a in adjacent}
+        else:
+            adjacent_camera_ids = {row['camera_b'] for row in topology_data}
+
+        # Filter by adjacent cameras
+        adjacent_tracks = [
+            t for t in same_type_tracks
+            if t.get('camera_id') in adjacent_camera_ids
+        ]
+
+        # Score each candidate
+        for track in adjacent_tracks:
+            match_result = self.match_track_across_cameras(ended_track, track)
+            if match_result:
+                candidates.append({
+                    'track': track,
+                    'confidence': match_result['match_confidence'],
+                    'transit_seconds': match_result['transit_seconds'],
+                    'method': match_result['method']
+                })
+
+        # Sort by confidence descending
+        candidates.sort(key=lambda x: x['confidence'], reverse=True)
+
+        return candidates
+
+    def update_learned_topology(self, camera_a, camera_b, transit_seconds):
+        """Update the camera_topology_learned table with a new observed transit.
+
+        Uses INSERT ON CONFLICT to update min/max/avg and increment observation_count.
+        """
+        with db_get_connection() as conn:
+            cursor = conn.cursor()
+
+            cursor.execute('''
+                INSERT INTO camera_topology_learned
+                    (camera_a, camera_b, min_transit_seconds, max_transit_seconds, avg_transit_seconds, observation_count)
+                VALUES (%s, %s, %s, %s, %s, 1)
+                ON CONFLICT (camera_a, camera_b) DO UPDATE SET
+                    min_transit_seconds = LEAST(camera_topology_learned.min_transit_seconds, EXCLUDED.min_transit_seconds),
+                    max_transit_seconds = GREATEST(camera_topology_learned.max_transit_seconds, EXCLUDED.max_transit_seconds),
+                    avg_transit_seconds = (camera_topology_learned.avg_transit_seconds * camera_topology_learned.observation_count + EXCLUDED.avg_transit_seconds) / (camera_topology_learned.observation_count + 1),
+                    observation_count = camera_topology_learned.observation_count + 1
+            ''', (camera_a, camera_b, transit_seconds, transit_seconds, transit_seconds))
+
+            conn.commit()
+
+    def get_adjacent_cameras(self, camera_id):
+        """Get cameras adjacent to the given camera from learned topology.
+
+        Returns list of dicts with camera_id, min_transit, max_transit, avg_transit, observations.
+        """
+        with db_get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+
+            cursor.execute('''
+                SELECT
+                    camera_b as camera_id,
+                    min_transit_seconds as min_transit,
+                    max_transit_seconds as max_transit,
+                    avg_transit_seconds as avg_transit,
+                    observation_count as observations
+                FROM camera_topology_learned
+                WHERE camera_a = %s
+                ORDER BY observation_count DESC
+            ''', (camera_id,))
+
+            return [dict(row) for row in cursor.fetchall()]
+
+    def _cosine_similarity(self, vec_a, vec_b):
+        """Compute cosine similarity between two vectors."""
+        dot_product = np.dot(vec_a, vec_b)
+        norm_a = np.linalg.norm(vec_a)
+        norm_b = np.linalg.norm(vec_b)
+
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+
+        return dot_product / (norm_a * norm_b)

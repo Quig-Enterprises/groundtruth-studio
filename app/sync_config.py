@@ -235,7 +235,7 @@ class SyncConfigManager:
                 RETURNING id
             ''', (sync_type,))
 
-            sync_id = cursor.fetchone()['id']
+            sync_id = cursor.fetchone()[0]
             conn.commit()
 
         return sync_id

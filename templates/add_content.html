@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add Content - Groundtruth Studio</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="{{ static_v('css/style.css') }}">
+    <style>
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .add-content-header {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+
+        .add-content-header h1 {
+            color: var(--color-dark, #2c3e50);
+            font-size: 22px;
+        }
+
+        .add-content-header p {
+            color: var(--color-text-secondary, #7f8c8d);
+            font-size: 14px;
+        }
+
+        .content-sections {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .content-section {
+            background: var(--color-white, white);
+            padding: var(--card-padding, 20px);
+            border-radius: var(--card-radius, 8px);
+            box-shadow: var(--card-shadow, 0 2px 4px rgba(0,0,0,0.1));
+        }
+
+        .content-section h2 {
+            font-size: 18px;
+            margin-bottom: 15px;
+            color: var(--color-dark-alt, #34495e);
+        }
+
+        .upload-area {
+            border: 2px dashed var(--color-border, #ddd);
+            border-radius: var(--card-radius, 8px);
+            padding: 40px 20px;
+            text-align: center;
+            transition: border-color 0.2s, background 0.2s;
+            cursor: pointer;
+        }
+
+        .upload-area:hover {
+            border-color: var(--color-primary, #3498db);
+            background: rgba(52, 152, 219, 0.04);
+        }
+
+        .upload-area .upload-icon {
+            font-size: 48px;
+            margin-bottom: 12px;
+        }
+
+        .upload-area .upload-text {
+            font-size: 16px;
+            font-weight: 500;
+            color: var(--color-dark, #2c3e50);
+            margin-bottom: 4px;
+        }
+
+        .upload-area .upload-hint {
+            font-size: 13px;
+            color: var(--color-text-secondary, #7f8c8d);
+        }
+
+        .or-divider {
+            text-align: center;
+            color: var(--color-text-secondary, #7f8c8d);
+            font-size: 14px;
+            margin: 20px 0;
+            position: relative;
+        }
+
+        .or-divider::before,
+        .or-divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 40%;
+            height: 1px;
+            background: var(--color-border, #ddd);
+        }
+
+        .or-divider::before { left: 0; }
+        .or-divider::after { right: 0; }
+
+        @media (min-width: 768px) {
+            .add-content-header h1 {
+                font-size: 28px;
+            }
+
+            .content-sections {
+                display: grid;
+                grid-template-columns: 1fr 1fr;
+                gap: 20px;
+            }
+
+            .content-section.full-width {
+                grid-column: 1 / -1;
+            }
+        }
+    </style>
+</head>
+<body>
+    <script src="/static/js/gt-utils.js"></script>
+    <script src="/static/js/responsive-utils.js"></script>
+    <nav class="site-nav" id="site-nav">
+        <div class="nav-brand">
+            <a href="/">Groundtruth Studio</a>
+            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
+                <span class="hamburger-icon"></span>
+            </button>
+        </div>
+        <div class="nav-links" id="nav-links">
+            <a href="/" class="nav-link">Video Library</a>
+            <a href="/add-content" class="nav-link">Add Content</a>
+            <a href="/person-manager" class="nav-link">Person Manager</a>
+            <a href="/camera-topology" class="nav-link">Camera Topology</a>
+            <a href="/model-training" class="nav-link">Model Training</a>
+            <a href="/prediction-review" class="nav-link">AI Review</a>
+            <a href="/sync-settings" class="nav-link">Sync Settings</a>
+            <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
+            <a href="/vibration-export" class="nav-link">Vibration Export</a>
+            <a href="/location-export" class="nav-link">Location Export</a>
+            <a href="/tag-manager" class="nav-link">Tag Manager</a>
+        </div>
+    </nav>
+    <div class="container">
+        <div class="add-content-header">
+            <h1>Add Content</h1>
+            <p>Download videos from the web or upload files from your device</p>
+        </div>
+
+        <div class="content-sections">
+            <div class="content-section">
+                <h2>Upload Videos</h2>
+                <div class="upload-area" onclick="document.getElementById('video-files').click()">
+                    <div class="upload-icon">📤</div>
+                    <div class="upload-text">Click to select files</div>
+                    <div class="upload-hint">MP4, AVI, MOV, MKV, WebM supported</div>
+                </div>
+                <input type="file" id="video-files" accept=".mp4,.avi,.mov,.mkv,.webm" multiple style="display: none;" onchange="handleFileSelection(this)">
+                <div id="file-list" style="margin-top: 10px; font-size: 13px; color: var(--color-text-secondary, #7f8c8d);"></div>
+                <div class="form-group" style="margin-top: 15px;">
+                    <label>Notes (optional, applies to all files):</label>
+                    <textarea id="upload-notes" placeholder="Add notes about these videos..." rows="3"></textarea>
+                </div>
+                <div style="display: flex; gap: 10px; margin-top: 15px;">
+                    <button onclick="uploadFiles()" class="btn-primary" style="flex: 1;">Upload Files</button>
+                </div>
+                <div id="upload-status" class="status-message" style="margin-top: 15px;"></div>
+                <div id="upload-progress" style="margin-top: 15px;"></div>
+            </div>
+
+            <div class="content-section">
+                <h2>Download from URL</h2>
+                <p style="font-size: 14px; color: var(--color-text-secondary, #7f8c8d); margin-bottom: 15px;">
+                    Paste a video URL from YouTube, Vimeo, or other supported sites
+                </p>
+                <div class="input-group" style="flex-direction: column;">
+                    <input type="text" id="video-url" placeholder="Paste video URL (YouTube, Vimeo, etc.)" />
+                    <div style="display: flex; gap: 10px;">
+                        <button onclick="previewVideo()" class="btn-secondary" style="flex: 1;">Preview Info</button>
+                        <button onclick="downloadVideo()" class="btn-primary" style="flex: 1;">Download & Add</button>
+                    </div>
+                </div>
+                <div id="preview-info" class="preview-info" style="display: none;"></div>
+                <div id="download-status" class="status-message"></div>
+            </div>
+
+            <div class="content-section full-width">
+                <h2>Download Queue</h2>
+                <div id="download-queue-status">
+                    <div class="loading">Loading queue status...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ static_v('js/app.js') }}"></script>
+</body>
+</html>

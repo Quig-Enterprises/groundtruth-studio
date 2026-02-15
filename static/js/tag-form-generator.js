@@ -400,6 +400,33 @@ class TagFormGenerator {
             missingFields: missing
         };
     }
+
+    /**
+     * Load dynamic options from API endpoint
+     */
+    async loadDynamicOptions(groupName, selectElement, apiUrl, mapFn) {
+        try {
+            const response = await fetch(apiUrl);
+            const data = await response.json();
+
+            let options = [];
+            if (mapFn) {
+                options = mapFn(data);
+            } else if (data.locations) {
+                options = data.locations.map(loc => loc.location_name);
+            }
+
+            // Add fetched options to the select
+            options.forEach(opt => {
+                const optionEl = document.createElement('option');
+                optionEl.value = opt;
+                optionEl.textContent = opt;
+                selectElement.appendChild(optionEl);
+            });
+        } catch (error) {
+            console.error(`Failed to load dynamic options for ${groupName}:`, error);
+        }
+    }
 }
 
 // Create global instance

@@ -258,6 +258,9 @@
                         <select id="prediction-model-filter" onchange="predictionReview.filterByModel(this.value)">
                             <option value="">All Models</option>
                         </select>
+                        <label style="font-size:12px;color:#95a5a6;cursor:pointer;margin-left:8px;" title="Show auto-rejected low-confidence detections">
+                            <input type="checkbox" id="show-low-confidence" onchange="predictionReview.toggleShowAll(this.checked)" style="cursor:pointer;"> Low conf.
+                        </label>
                         <span class="prediction-count" id="prediction-count-display"></span>
                     </div>
                     <div id="predictions-list" class="predictions-list-container">

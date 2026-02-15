@@ -16,6 +16,14 @@ import requests
 
 logger = logging.getLogger(__name__)
 
+# Try to import person recognizer (optional)
+try:
+    from person_recognizer import get_recognizer
+    RECOGNITION_AVAILABLE = True
+except ImportError:
+    RECOGNITION_AVAILABLE = False
+    logger.debug("Person recognizer not available")
+
 MODEL_PATH = "/models/custom/people-vehicles-objects/models/person-face-v1-best.pt"
 API_BASE_URL = "http://localhost:5050"
 MODEL_NAME = "person-face-v1"
@@ -180,6 +188,27 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, device: str = "cpu
 
         # Ensure every face has a person bbox
         predictions = _ensure_person_for_faces(predictions, img_width, img_height)
+
+        # --- Person Recognition ---
+        # For each face detection, try to identify the person
+        face_predictions = [p for p in predictions if p['tags'].get('class_id') == 1]
+        if RECOGNITION_AVAILABLE and face_predictions:
+            try:
+                recognizer = get_recognizer()
+                gallery = recognizer.get_reference_gallery()
+                if gallery:  # Only run if we have reference embeddings
+                    face_bboxes = [p['bbox'] for p in face_predictions]
+                    id_predictions = recognizer.recognize_faces_in_thumbnail(
+                        thumbnail_path, face_bboxes
+                    )
+                    if id_predictions:
+                        predictions.extend(id_predictions)
+                        logger.info(
+                            f"Auto-detect video {video_id}: {len(id_predictions)} person identifications"
+                        )
+            except Exception as e:
+                logger.warning(f"Person recognition failed for video {video_id}: {e}")
+                # Non-fatal - continue with regular predictions
 
         person_count = sum(1 for p in predictions if p['tags']['class_id'] == 0)
         face_count = sum(1 for p in predictions if p['tags']['class_id'] == 1)

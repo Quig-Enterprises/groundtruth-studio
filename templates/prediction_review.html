@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Prediction Review - Groundtruth Studio</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .review-container {
+            max-width: 1400px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+
+        .header-section {
+            margin-bottom: 30px;
+        }
+
+        .header-section h1 {
+            margin: 0 0 5px 0;
+            font-size: 28px;
+            color: #1a1a1a;
+        }
+
+        .header-section .subtitle {
+            color: #666;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .back-link {
+            display: inline-block;
+            color: #4a90e2;
+            text-decoration: none;
+            font-size: 14px;
+            margin-bottom: 10px;
+        }
+
+        .back-link:hover {
+            text-decoration: underline;
+        }
+
+        .filter-bar {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+
+        .filter-bar label {
+            font-size: 14px;
+            color: #333;
+            margin-right: 5px;
+        }
+
+        .filter-bar select,
+        .filter-bar input[type="number"] {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 14px;
+        }
+
+        .filter-bar input[type="number"] {
+            width: 80px;
+        }
+
+        .filter-bar button {
+            padding: 8px 20px;
+            background: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .filter-bar button:hover {
+            background: #3a7bc8;
+        }
+
+        .stats-summary {
+            background: #fff;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .stat-item {
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .stat-item .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 5px;
+        }
+
+        .stat-item .stat-value {
+            font-size: 28px;
+            font-weight: bold;
+            color: #1a1a1a;
+        }
+
+        .bulk-actions {
+            background: #fff;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 20px;
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+
+        .bulk-actions button {
+            padding: 10px 20px;
+            background: #28a745;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .bulk-actions button:hover {
+            background: #218838;
+        }
+
+        .predictions-grid {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .pred-card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            overflow: hidden;
+            transition: all 0.3s ease;
+        }
+
+        .pred-card:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .pred-card-top {
+            padding: 15px;
+            display: flex;
+            gap: 15px;
+            align-items: flex-start;
+            position: relative;
+        }
+
+        .pred-thumb {
+            width: 80px;
+            height: 60px;
+            object-fit: cover;
+            border-radius: 4px;
+            flex-shrink: 0;
+        }
+
+        .pred-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .pred-video-title {
+            font-weight: 600;
+            font-size: 14px;
+            color: #1a1a1a;
+            margin-bottom: 5px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .pred-type {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 8px;
+            text-transform: capitalize;
+        }
+
+        .pred-tags {
+            display: flex;
+            gap: 5px;
+            flex-wrap: wrap;
+        }
+
+        .tag-pill {
+            background: #e9ecef;
+            color: #495057;
+            padding: 3px 8px;
+            border-radius: 12px;
+            font-size: 11px;
+            white-space: nowrap;
+        }
+
+        .confidence-pill {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .conf-high {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .conf-medium {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .conf-low {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .pred-card-meta {
+            padding: 0 15px 10px 15px;
+            display: flex;
+            justify-content: space-between;
+            font-size: 11px;
+            color: #999;
+        }
+
+        .pred-card-actions {
+            padding: 15px;
+            border-top: 1px solid #eee;
+            display: flex;
+            gap: 10px;
+        }
+
+        .pred-card-actions button {
+            flex: 1;
+            padding: 8px 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 13px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .btn-approve {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-approve:hover {
+            background: #218838;
+        }
+
+        .btn-reject {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-reject:hover {
+            background: #c82333;
+        }
+
+        .btn-correct {
+            background: #fd7e14;
+            color: white;
+        }
+
+        .btn-correct:hover {
+            background: #e8590c;
+        }
+
+        .pagination {
+            background: white;
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .pagination button {
+            padding: 8px 16px;
+            background: #4a90e2;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+        }
+
+        .pagination button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+
+        .pagination button:not(:disabled):hover {
+            background: #3a7bc8;
+        }
+
+        .pagination-info {
+            font-size: 14px;
+            color: #666;
+        }
+
+        .empty-state {
+            background: white;
+            padding: 60px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+
+        .empty-state p {
+            font-size: 18px;
+            color: #666;
+            margin-bottom: 10px;
+        }
+
+        .empty-state small {
+            font-size: 14px;
+            color: #999;
+        }
+
+        /* Mobile-first filter bar - stack vertically on mobile, horizontal on desktop */
+        .filter-bar {
+            flex-direction: column;
+            align-items: stretch;
+        }
+
+        .filter-bar > div {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        @media (min-width: 768px) {
+            .filter-bar {
+                flex-direction: row;
+                align-items: center;
+            }
+
+            .filter-bar > div {
+                flex-direction: row;
+                align-items: center;
+            }
+        }
+
+        @media (min-width: 768px) {
+            .predictions-grid {
+                grid-template-columns: repeat(auto-fill, minmax(400px, 1fr));
+            }
+
+            .stats-summary {
+                flex-direction: row;
+                gap: 30px;
+                flex-wrap: wrap;
+            }
+        }
+
+        /* Bottom Action Bar with Safe Area Insets */
+        .bottom-action-bar {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--color-white, white);
+            box-shadow: 0 -2px 8px rgba(0,0,0,0.1);
+            padding: 12px 15px;
+            padding-bottom: calc(12px + env(safe-area-inset-bottom));
+            display: flex;
+            gap: 10px;
+            justify-content: space-between;
+            align-items: center;
+            z-index: 100;
+        }
+
+        .bottom-action-bar .action-count {
+            font-size: 14px;
+            color: var(--color-text-secondary, #7f8c8d);
+            font-weight: 500;
+        }
+
+        .bottom-action-bar .action-buttons {
+            display: flex;
+            gap: 8px;
+            flex: 1;
+            justify-content: flex-end;
+        }
+
+        .bottom-action-bar button {
+            padding: 10px 16px;
+            font-size: 14px;
+            border-radius: 4px;
+            border: none;
+            cursor: pointer;
+            font-weight: 500;
+            min-height: 44px;
+        }
+
+        /* Add bottom padding to container to prevent content from being hidden behind action bar */
+        .review-container {
+            padding-bottom: calc(80px + env(safe-area-inset-bottom));
+        }
+
+        @media (min-width: 768px) {
+            .bottom-action-bar {
+                padding: 15px 20px;
+                padding-bottom: calc(15px + env(safe-area-inset-bottom));
+            }
+
+            .bottom-action-bar .action-count {
+                font-size: inherit;
+            }
+
+            .bottom-action-bar button {
+                padding: 8px 20px;
+                min-height: auto;
+            }
+        }
+    </style>
+</head>
+<body>
+    <script src="/static/js/gt-utils.js"></script>
+    <script src="/static/js/responsive-utils.js"></script>
+    <nav class="site-nav" id="site-nav">
+        <div class="nav-brand">
+            <a href="/">Groundtruth Studio</a>
+            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
+                <span class="hamburger-icon"></span>
+            </button>
+        </div>
+        <div class="nav-links" id="nav-links">
+            <a href="/" class="nav-link">Video Library</a>
+            <a href="/add-content" class="nav-link">Add Content</a>
+            <a href="/person-manager" class="nav-link">Person Manager</a>
+            <a href="/camera-topology" class="nav-link">Camera Topology</a>
+            <a href="/model-training" class="nav-link">Model Training</a>
+            <a href="/prediction-review" class="nav-link">AI Review</a>
+            <a href="/sync-settings" class="nav-link">Sync Settings</a>
+            <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
+            <a href="/vibration-export" class="nav-link">Vibration Export</a>
+            <a href="/location-export" class="nav-link">Location Export</a>
+            <a href="/tag-manager" class="nav-link">Tag Manager</a>
+        </div>
+    </nav>
+    <div class="review-container">
+        <div class="header-section">
+            <h1>AI Prediction Review</h1>
+            <div class="subtitle">Review and approve AI predictions across all videos</div>
+        </div>
+
+        <div class="filter-bar">
+            <div>
+                <label for="model-filter">Model:</label>
+                <select id="model-filter">
+                    <option value="">All Models</option>
+                </select>
+            </div>
+            <div>
+                <label for="min-confidence">Min Confidence:</label>
+                <input type="number" id="min-confidence" min="0" max="1" step="0.1" placeholder="0.0">
+            </div>
+            <div>
+                <label for="max-confidence">Max Confidence:</label>
+                <input type="number" id="max-confidence" min="0" max="1" step="0.1" placeholder="1.0">
+            </div>
+            <button onclick="predReview.applyFilters()">Apply Filters</button>
+        </div>
+
+        <div class="stats-summary">
+            <div class="stat-item">
+                <div class="stat-label">Total Pending</div>
+                <div class="stat-value" id="total-count">0</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Auto Approved</div>
+                <div class="stat-value" id="auto-approved-count">-</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-label">Reviewed Today</div>
+                <div class="stat-value" id="reviewed-today-count">-</div>
+            </div>
+        </div>
+
+        {% if can_write %}
+        <div class="bulk-actions">
+            <button onclick="predReview.approveAllHighConfidence()">Approve All High Confidence (≥95%)</button>
+        </div>
+        {% endif %}
+
+        <div id="predictions-container">
+            <div class="empty-state">
+                <p>Loading predictions...</p>
+            </div>
+        </div>
+
+        <div class="pagination">
+            <button id="prev-btn" onclick="predReview.prevPage()" disabled>Previous</button>
+            <span class="pagination-info" id="pagination-info">-</span>
+            <button id="next-btn" onclick="predReview.nextPage()" disabled>Next</button>
+        </div>
+    </div>
+
+    <!-- Bottom Action Bar for Mobile -->
+    <div class="bottom-action-bar">
+        <div class="action-count">
+            <span id="action-count-text">0 predictions</span>
+        </div>
+        <div class="action-buttons">
+            <button id="bottom-prev-btn" onclick="predReview.prevPage()" class="btn-secondary" disabled>Previous</button>
+            <button id="bottom-next-btn" onclick="predReview.nextPage()" class="btn-primary" disabled>Next</button>
+        </div>
+    </div>
+
+    <script>const canWrite = {{ can_write|tojson }};</script>
+    <script src="{{ url_for('static', filename='js/prediction_review_page.js') }}"></script>
+</body>
+</html>

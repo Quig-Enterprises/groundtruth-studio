@@ -13,22 +13,22 @@
 }
 
 .source-badge.ecoeye-video {
-    background: #27ae60;
-    color: white;
+    background: var(--color-success, #27ae60);
+    color: var(--color-white, white);
 }
 
 .source-badge.ecoeye-meta {
-    background: #3498db;
-    color: white;
+    background: var(--color-primary, #3498db);
+    color: var(--color-white, white);
 }
 
 /* Video card styling for EcoEye imports */
 .video-card.ecoeye-import {
-    border: 2px solid #3498db;
+    border: 2px solid var(--color-primary, #3498db);
 }
 
 .video-card.ecoeye-import.metadata-only {
-    border-color: #95a5a6;
+    border-color: var(--color-secondary, #95a5a6);
 }
 
 .video-card.ecoeye-import .video-thumbnail {

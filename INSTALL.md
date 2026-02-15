@@ -126,11 +126,9 @@ Install FFmpeg:
 sudo apt install ffmpeg
 ```
 
-### "Database is locked" errors
+### Database connection errors
 
-SQLite has concurrency limits. For multi-user access:
-1. Use production mode with proper systemd service
-2. Or migrate to PostgreSQL for production use
+PostgreSQL handles concurrency natively and supports multiple simultaneous connections. Ensure the DATABASE_URL environment variable is set and the PostgreSQL service is running.
 
 ### Port 5000 already in use
 
