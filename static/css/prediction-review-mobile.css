@@ -392,6 +392,16 @@ body {
     color: var(--color-text-muted);
 }
 
+/* Review Guidance */
+.review-guidance {
+    padding: 6px 24px 10px;
+    font-size: 13px;
+    line-height: 1.4;
+    color: var(--color-text-secondary);
+    text-align: center;
+    background: var(--color-bg);
+}
+
 /* Action Zone */
 .action-zone {
     background: var(--color-bg);

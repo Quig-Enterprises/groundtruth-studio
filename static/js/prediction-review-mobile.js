@@ -25,6 +25,18 @@ var ReviewApp = {
     queueData: null,
     _maskIdCounter: 0,
 
+    // Review guidance descriptions per scenario
+    scenarioGuidance: {
+        'person_detection': 'Is there a person inside the bounding box? The box should tightly wrap the full body or visible portion.',
+        'face_detection': 'Is there a face inside the bounding box? The box should frame the face clearly, not empty space or other objects.',
+        'person_identification': 'Is the identified person correct? Check if the face/body matches the labeled identity.',
+        'vehicle_detection': 'Is there a vehicle inside the bounding box? The box should tightly enclose the entire vehicle.',
+        'boat_detection': 'Is there a boat inside the bounding box? The box should enclose the full vessel including hull and cabin.',
+        'license_plate': 'Is there a legible license plate inside the bounding box? The plate text should be readable.',
+        'animal_detection': 'Is there an animal inside the bounding box? The box should tightly wrap the animal.',
+        'object_detection': 'Is there a recognizable object inside the bounding box? The box should tightly wrap the detected item.'
+    },
+
     // Touch state
     touch: {
         startX: 0,
@@ -71,7 +83,7 @@ var ReviewApp = {
             'card-container', 'reject-sheet',
             'approve-button', 'reject-button', 'skip-button', 'undo-button',
             'review-back', 'queue-back',
-            'metadata-strip', 'pred-class', 'pred-confidence', 'pred-model',
+            'metadata-strip', 'pred-class', 'pred-confidence', 'pred-model', 'review-guidance',
             'progress-fill', 'review-count', 'position-dots',
             'glow-left', 'glow-right', 'review-video-title',
             'other-input-container', 'other-input',
@@ -520,12 +532,20 @@ var ReviewApp = {
         img.onerror = function() { this.style.display = 'none'; };
         imgWrap.appendChild(img);
 
-        // SVG bbox overlay
+        // SVG bbox overlay — use image natural dimensions for accurate placement
         if (pred.bbox_x != null && pred.bbox_width > 0) {
-            var vw = pred.video_width || 1920;
-            var vh = pred.video_height || 1080;
-            var bboxSvg = this.createBboxOverlay(pred, vw, vh);
-            imgWrap.appendChild(bboxSvg);
+            var self = this;
+            var addBbox = function(vw, vh) {
+                var bboxSvg = self.createBboxOverlay(pred, vw, vh);
+                imgWrap.appendChild(bboxSvg);
+            };
+            if (pred.video_width && pred.video_height) {
+                addBbox(pred.video_width, pred.video_height);
+            } else {
+                img.addEventListener('load', function() {
+                    addBbox(this.naturalWidth, this.naturalHeight);
+                });
+            }
         }
 
         card.appendChild(imgWrap);
@@ -655,20 +675,19 @@ var ReviewApp = {
     },
 
     extractClassName: function(pred) {
-        if (pred.scenario) return pred.scenario.replace(/_/g, ' ');
+        // For identification scenarios, show the identified name prominently
         if (pred.predicted_tags) {
             var tags = pred.predicted_tags;
             if (typeof tags === 'string') {
-                try { tags = JSON.parse(tags); } catch (e) { return tags; }
+                try { tags = JSON.parse(tags); } catch (e) { tags = {}; }
             }
             if (tags && typeof tags === 'object') {
+                if (tags.person_name) return tags.person_name;
                 if (tags.class_name) return tags.class_name;
                 if (tags.label) return tags.label;
-                if (tags.person_name) return tags.person_name;
-                var keys = Object.keys(tags);
-                if (keys.length > 0) return String(tags[keys[0]]);
             }
         }
+        if (pred.scenario) return pred.scenario.replace(/_/g, ' ');
         return '';
     },
 
@@ -685,6 +704,20 @@ var ReviewApp = {
             var modelStr = pred.model_name || 'unknown';
             if (pred.model_version) modelStr += ' v' + pred.model_version;
             this.els.predModel.textContent = modelStr;
+        }
+        // Show review guidance for this scenario
+        if (this.els.reviewGuidance) {
+            var scenario = pred.scenario || '';
+            var guidance = this.scenarioGuidance[scenario] || 'Does the bounding box correctly identify the detected object?';
+            // For person identification, include the identified name
+            if (scenario === 'person_identification') {
+                var tags = pred.predicted_tags || {};
+                if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch(e) { tags = {}; } }
+                var name = tags.person_name || 'unknown';
+                var similarity = tags.match_similarity ? Math.round(tags.match_similarity * 100) + '%' : '';
+                guidance = 'The system thinks this is "' + name + '"' + (similarity ? ' (' + similarity + ' match)' : '') + '. Is this the correct person?';
+            }
+            this.els.reviewGuidance.textContent = guidance;
         }
     },
 
