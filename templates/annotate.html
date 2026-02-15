@@ -345,5 +345,15 @@
     <script src="{{ static_v('js/annotate.js') }}"></script>
     <script src="{{ static_v('js/annotate-integration.js') }}"></script>
     <script src="{{ static_v('js/prediction-review.js') }}"></script>
+    <script>
+        // Initialize prediction review with current video ID
+        (function() {
+            const params = new URLSearchParams(window.location.search);
+            const videoId = params.get('id');
+            if (videoId && typeof predictionReview !== 'undefined') {
+                predictionReview.init(videoId);
+            }
+        })();
+    </script>
 </body>
 </html>
