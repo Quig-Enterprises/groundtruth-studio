@@ -77,12 +77,12 @@ var ReviewApp = {
 
     cacheElements: function() {
         var ids = [
-            'queue-screen', 'review-screen', 'summary-screen',
+            'queue-screen', 'review-screen', 'summary-screen', 'history-screen',
             'video-list', 'queue-summary', 'pending-count', 'video-count',
             'all-videos-card', 'all-videos-subtitle',
             'card-container', 'reject-sheet',
             'approve-button', 'reject-button', 'skip-button', 'undo-button',
-            'review-back', 'queue-back',
+            'review-back', 'queue-back', 'history-back', 'history-button',
             'metadata-strip', 'pred-class', 'pred-confidence', 'pred-model', 'review-guidance',
             'progress-fill', 'review-count', 'position-dots',
             'glow-left', 'glow-right', 'review-video-title',
@@ -90,7 +90,8 @@ var ReviewApp = {
             'skip-feedback', 'done-feedback',
             'completion-ring-fill', 'completion-count',
             'approved-count', 'rejected-count', 'skipped-count', 'skipped-line',
-            'back-to-queue', 'review-skipped'
+            'back-to-queue', 'review-skipped',
+            'sheet-undo-button', 'summary-undo-button', 'history-list'
         ];
         for (var i = 0; i < ids.length; i++) {
             var id = ids[i];
@@ -140,6 +141,43 @@ var ReviewApp = {
         if (this.els.reviewSkipped) {
             this.els.reviewSkipped.addEventListener('click', function() {
                 self.reviewSkippedItems();
+            });
+        }
+        if (this.els.summaryUndoButton) {
+            this.els.summaryUndoButton.addEventListener('click', function() {
+                self.undo();
+                self.showScreen('review');
+                self.renderCurrentCard();
+            });
+        }
+
+        // History buttons
+        if (this.els.historyButton) {
+            this.els.historyButton.addEventListener('click', function() {
+                self.showHistory();
+            });
+        }
+        if (this.els.historyBack) {
+            this.els.historyBack.addEventListener('click', function() {
+                self.showQueue();
+            });
+        }
+
+        // History filter chips
+        var historyChips = document.querySelectorAll('[data-history-filter]');
+        for (var i = 0; i < historyChips.length; i++) {
+            historyChips[i].addEventListener('click', function() {
+                for (var j = 0; j < historyChips.length; j++) historyChips[j].classList.remove('active');
+                this.classList.add('active');
+                self.loadHistory(this.getAttribute('data-history-filter'));
+            });
+        }
+
+        // Reject sheet undo button
+        if (this.els.sheetUndoButton) {
+            this.els.sheetUndoButton.addEventListener('click', function() {
+                self.hideRejectSheet();
+                self.undo();
             });
         }
 
@@ -233,7 +271,7 @@ var ReviewApp = {
     // --------------- Screen management ---------------
     showScreen: function(name) {
         this.screen = name;
-        var screens = ['queue', 'review', 'summary'];
+        var screens = ['queue', 'review', 'summary', 'history'];
         for (var i = 0; i < screens.length; i++) {
             var el = document.getElementById(screens[i] + '-screen');
             if (el) {
@@ -760,6 +798,127 @@ var ReviewApp = {
             this.els.undoButton.disabled = !this.undoStack;
             this.els.undoButton.style.opacity = this.undoStack ? '1' : '0.3';
         }
+    },
+
+    // --------------- S3: History Screen ---------------
+    showHistory: function() {
+        this.showScreen('history');
+        this.loadHistory('all');
+    },
+
+    loadHistory: function(filter) {
+        var self = this;
+        var url = '/api/ai/predictions/review-history?limit=100';
+        if (filter && filter !== 'all') {
+            url += '&status=' + filter;
+        }
+
+        fetch(url)
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    self.renderHistory(data.predictions);
+                }
+            })
+            .catch(function(err) {
+                console.error('Failed to load history:', err);
+            });
+    },
+
+    renderHistory: function(predictions) {
+        var list = this.els.historyList;
+        if (!list) return;
+        list.textContent = '';
+
+        if (predictions.length === 0) {
+            var empty = document.createElement('div');
+            empty.className = 'history-empty';
+            empty.textContent = 'No reviewed predictions yet';
+            list.appendChild(empty);
+            return;
+        }
+
+        var self = this;
+        for (var i = 0; i < predictions.length; i++) {
+            var pred = predictions[i];
+            var item = this.createHistoryItem(pred);
+            list.appendChild(item);
+        }
+    },
+
+    createHistoryItem: function(pred) {
+        var self = this;
+        var item = document.createElement('div');
+        item.className = 'history-item';
+        item.setAttribute('data-prediction-id', pred.id);
+
+        // Thumbnail
+        var img = document.createElement('img');
+        img.className = 'history-thumb';
+        img.src = this.getThumbUrl(pred.thumbnail_path);
+        img.alt = '';
+        img.onerror = function() { this.style.display = 'none'; };
+        item.appendChild(img);
+
+        // Info
+        var info = document.createElement('div');
+        info.className = 'history-info';
+
+        var name = document.createElement('div');
+        name.className = 'history-info-name';
+        var tags = pred.predicted_tags || {};
+        if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch(e) { tags = {}; } }
+        name.textContent = tags.person_name || tags.class_name || tags.label || (pred.scenario || '').replace(/_/g, ' ') || 'Detection';
+        info.appendChild(name);
+
+        var detail = document.createElement('div');
+        detail.className = 'history-info-detail';
+        var conf = pred.confidence ? Math.round(pred.confidence * 100) + '%' : '';
+        var reviewer = pred.reviewed_by || '';
+        var timeStr = '';
+        if (pred.reviewed_at) {
+            var d = new Date(pred.reviewed_at);
+            timeStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+        }
+        detail.textContent = [conf, reviewer, timeStr].filter(Boolean).join(' · ');
+        info.appendChild(detail);
+
+        item.appendChild(info);
+
+        // Status badge
+        var status = document.createElement('span');
+        status.className = 'history-status ' + pred.review_status;
+        status.textContent = pred.review_status;
+        item.appendChild(status);
+
+        // Revert button
+        var revert = document.createElement('button');
+        revert.className = 'history-revert-button';
+        revert.textContent = 'Revert';
+        revert.addEventListener('click', function() {
+            self.revertPrediction(pred.id, item);
+        });
+        item.appendChild(revert);
+
+        return item;
+    },
+
+    revertPrediction: function(predictionId, itemElement) {
+        fetch('/api/ai/predictions/' + predictionId + '/undo', { method: 'POST' })
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    itemElement.style.transition = 'opacity 0.3s ease, transform 0.3s ease';
+                    itemElement.style.opacity = '0';
+                    itemElement.style.transform = 'translateX(-100%)';
+                    setTimeout(function() { itemElement.remove(); }, 300);
+                } else {
+                    alert('Failed to revert: ' + (data.error || 'Unknown error'));
+                }
+            })
+            .catch(function(err) {
+                console.error('Revert failed:', err);
+            });
     },
 
     // --------------- Touch / Swipe handling ---------------

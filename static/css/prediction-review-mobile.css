@@ -19,7 +19,9 @@
     --color-bg: #000000;
     --color-bg-queue: #111111;
     --color-surface: #1A1A1A;
+    --color-surface-hover: #333333;
     --color-surface-elevated: #262626;
+    --color-border: #333333;
 
     /* Spacing */
     --safe-top: env(safe-area-inset-top);
@@ -514,23 +516,65 @@ body {
 }
 
 .undo-button {
-    background: none;
-    border: none;
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 20px;
     color: var(--color-text-secondary);
-    font-size: 15px;
+    font-size: 14px;
     font-weight: 500;
     cursor: pointer;
-    padding: 8px 0;
-    transition: color 0.2s ease;
+    padding: 8px 16px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s ease;
 }
 
 .undo-button:active {
     color: var(--color-text-primary);
+    background: var(--color-surface-hover);
+    transform: scale(0.95);
 }
 
 .undo-button:disabled {
     opacity: 0.3;
     cursor: not-allowed;
+}
+
+.undo-button svg {
+    flex-shrink: 0;
+}
+
+/* Sheet undo button */
+.sheet-undo-button {
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: 20px;
+    color: var(--color-text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 8px 14px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    transition: all 0.2s ease;
+}
+
+.sheet-undo-button:active {
+    color: var(--color-text-primary);
+    background: var(--color-surface-hover);
+}
+
+/* Summary undo button */
+.undo-last-button {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    color: var(--color-text-secondary);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
 }
 
 .review-count {
@@ -982,4 +1026,135 @@ body {
 .empty-state-description {
     font-size: 14px;
     color: var(--color-text-secondary);
+}
+
+/* History Screen */
+.history-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 16px 20px;
+    background: var(--color-bg);
+    border-bottom: 1px solid var(--color-border);
+}
+
+.history-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    margin: 0;
+}
+
+.history-button {
+    background: none;
+    border: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    padding: 8px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    transition: color 0.2s ease;
+}
+
+.history-button:active {
+    color: var(--color-text-primary);
+    background: var(--color-surface);
+}
+
+.history-filters {
+    display: flex;
+    gap: 8px;
+    padding: 12px 20px;
+    background: var(--color-bg);
+}
+
+.history-list {
+    padding: 8px 16px;
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    flex: 1;
+}
+
+.history-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 12px;
+    background: var(--color-surface);
+    border-radius: 10px;
+    margin-bottom: 8px;
+}
+
+.history-thumb {
+    width: 64px;
+    height: 48px;
+    border-radius: 6px;
+    object-fit: cover;
+    flex-shrink: 0;
+    background: var(--color-surface-elevated);
+}
+
+.history-info {
+    flex: 1;
+    min-width: 0;
+}
+
+.history-info-name {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--color-text-primary);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.history-info-detail {
+    font-size: 12px;
+    color: var(--color-text-muted);
+    margin-top: 2px;
+}
+
+.history-status {
+    font-size: 11px;
+    font-weight: 600;
+    padding: 4px 10px;
+    border-radius: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    flex-shrink: 0;
+}
+
+.history-status.approved {
+    background: rgba(22, 163, 74, 0.15);
+    color: #16A34A;
+}
+
+.history-status.rejected {
+    background: rgba(220, 38, 38, 0.15);
+    color: #DC2626;
+}
+
+.history-revert-button {
+    background: none;
+    border: 1px solid var(--color-border);
+    border-radius: 16px;
+    color: var(--color-text-secondary);
+    font-size: 12px;
+    padding: 6px 12px;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.2s ease;
+}
+
+.history-revert-button:active {
+    background: var(--color-surface-hover);
+    color: var(--color-text-primary);
+}
+
+.history-empty {
+    text-align: center;
+    color: var(--color-text-muted);
+    padding: 40px 20px;
+    font-size: 14px;
 }

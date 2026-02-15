@@ -22,7 +22,8 @@ from vibration_exporter import VibrationExporter
 from location_exporter import LocationExporter
 from sample_router import SampleRouter
 from face_clustering import FaceClusterer
-from auto_detect_runner import trigger_auto_detect, run_detection_on_thumbnail
+from auto_detect_runner import run_detection_on_thumbnail
+from vehicle_detect_runner import trigger_vehicle_detect
 from person_recognizer import get_recognizer
 from frigate_ingester import get_ingester, start_background_ingester, stop_background_ingester
 import time
@@ -415,7 +416,7 @@ def sync_ecoeye_sample():
                 thumb_result = processor.extract_thumbnail(str(DOWNLOAD_DIR / dl_result['filename']))
                 if thumb_result.get('success'):
                     db.update_video(video_id, thumbnail_path=thumb_result['thumbnail_path'])
-                    trigger_auto_detect(video_id, thumb_result['thumbnail_path'])
+                    trigger_vehicle_detect(video_id, thumb_result['thumbnail_path'])
 
                 return jsonify({
                     'success': True,
@@ -455,9 +456,9 @@ def sync_ecoeye_sample():
             )
             print(f"[EcoEye Sync] Created record_id: {record_id}")
 
-            # Auto-detect persons/faces on thumbnail
+            # YOLO-World pre-screen: detects vehicles + gates person-face-v1
             if thumbnail_path:
-                trigger_auto_detect(record_id, thumbnail_path)
+                trigger_vehicle_detect(record_id, thumbnail_path)
 
             return jsonify({
                 'success': True,
@@ -923,9 +924,9 @@ def upload_video():
         notes=notes
     )
 
-    # Auto-detect persons/faces on thumbnail
+    # YOLO-World pre-screen: detects vehicles + gates person-face-v1
     if thumbnail_path:
-        trigger_auto_detect(video_id, thumbnail_path)
+        trigger_vehicle_detect(video_id, thumbnail_path)
 
     return jsonify({
         'success': True,
@@ -3052,6 +3053,26 @@ def get_prediction_stats():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@app.route('/api/ai/predictions/review-history', methods=['GET'])
+def get_review_history():
+    """Get reviewed predictions for history view"""
+    try:
+        status_filter = request.args.get('status')  # approved, rejected, or None for all
+        reviewer = request.args.get('reviewer')
+        limit = request.args.get('limit', 50, type=int)
+        offset = request.args.get('offset', 0, type=int)
+
+        predictions = db.get_review_history(status_filter, reviewer, limit, offset)
+        for p in predictions:
+            for key in ['confidence', 'match_similarity']:
+                if key in p and p[key] is not None:
+                    p[key] = float(p[key])
+
+        return jsonify({'success': True, 'predictions': predictions, 'count': len(predictions)})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @app.route('/api/ai/predictions/review-queue', methods=['GET'])
 def get_review_queue():
     """Get pending predictions for mobile review queue"""
@@ -3133,6 +3154,7 @@ def undo_prediction_review(prediction_id):
 def get_all_pending_predictions():
     """Get all pending predictions across all videos for global review page."""
     model_filter = request.args.get('model')
+    scenario_filter = request.args.get('scenario')
     min_confidence = request.args.get('min_confidence', type=float)
     max_confidence = request.args.get('max_confidence', type=float)
     limit = min(request.args.get('limit', 100, type=int), 500)
@@ -3153,6 +3175,9 @@ def get_all_pending_predictions():
             if model_filter:
                 query += ' AND p.model_name = %s'
                 params.append(model_filter)
+            if scenario_filter:
+                query += ' AND p.scenario = %s'
+                params.append(scenario_filter)
             if min_confidence is not None:
                 query += ' AND p.confidence >= %s'
                 params.append(min_confidence)

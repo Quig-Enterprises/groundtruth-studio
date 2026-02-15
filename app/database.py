@@ -1944,6 +1944,35 @@ class VideoDatabase:
             ''', (prediction_id,))
             return cursor.rowcount > 0
 
+    def get_review_history(self, status_filter=None, reviewer=None, limit=50, offset=0):
+        """Get reviewed predictions for history view, most recent first"""
+        with self.get_cursor() as cur:
+            conditions = ["review_status IN ('approved', 'rejected')"]
+            params = []
+
+            if status_filter:
+                conditions.append("review_status = %s")
+                params.append(status_filter)
+            if reviewer:
+                conditions.append("reviewed_by = %s")
+                params.append(reviewer)
+
+            where = " AND ".join(conditions)
+            params.extend([limit, offset])
+
+            cur.execute(f"""
+                SELECT p.id, p.video_id, v.title as video_title, p.prediction_type, p.scenario,
+                       p.predicted_tags, p.confidence, p.review_status, p.reviewed_by, p.reviewed_at,
+                       p.review_notes, p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
+                       p.thumbnail_path
+                FROM ai_predictions p
+                LEFT JOIN videos v ON p.video_id = v.id
+                WHERE {where}
+                ORDER BY p.reviewed_at DESC NULLS LAST
+                LIMIT %s OFFSET %s
+            """, params)
+            return [dict(row) for row in cur.fetchall()]
+
     # ==================== Model Registry ====================
 
     def get_or_create_model_registry(self, model_name: str, model_version: str,
