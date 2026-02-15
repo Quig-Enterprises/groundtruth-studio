@@ -580,9 +580,61 @@ var ReviewApp = {
         video.src = clipUrl;
         imgWrap.appendChild(video);
 
+        // Video badge indicator
+        var badge = document.createElement('div');
+        badge.className = 'media-badge media-badge-video';
+        badge.textContent = 'VIDEO';
+        imgWrap.appendChild(badge);
+
+        // Play button overlay (shown if autoplay fails)
+        var playBtn = document.createElement('div');
+        playBtn.className = 'video-play-overlay';
+        var playSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        playSvg.setAttribute('viewBox', '0 0 48 48');
+        playSvg.setAttribute('width', '48');
+        playSvg.setAttribute('height', '48');
+        var playCircle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+        playCircle.setAttribute('cx', '24');
+        playCircle.setAttribute('cy', '24');
+        playCircle.setAttribute('r', '23');
+        playCircle.setAttribute('fill', 'rgba(0,0,0,0.5)');
+        playCircle.setAttribute('stroke', 'white');
+        playCircle.setAttribute('stroke-width', '2');
+        var playPolygon = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
+        playPolygon.setAttribute('points', '18,12 38,24 18,36');
+        playPolygon.setAttribute('fill', 'white');
+        playSvg.appendChild(playCircle);
+        playSvg.appendChild(playPolygon);
+        playBtn.appendChild(playSvg);
+        playBtn.style.display = 'none';
+        imgWrap.appendChild(playBtn);
+
+        // Show play button if autoplay doesn't start within 500ms
+        var playTimer = setTimeout(function() {
+            if (video.paused) {
+                playBtn.style.display = '';
+            }
+        }, 500);
+
+        video.addEventListener('playing', function() {
+            clearTimeout(playTimer);
+            playBtn.style.display = 'none';
+        });
+
+        playBtn.addEventListener('click', function(e) {
+            e.stopPropagation();
+            video.play();
+            playBtn.style.display = 'none';
+        });
+
         // On video error (404 for snapshots), swap to static thumbnail
         video.onerror = function() {
+            clearTimeout(playTimer);
+            playBtn.style.display = 'none';
             imgWrap.removeChild(video);
+            // Swap badge to PHOTO
+            badge.className = 'media-badge media-badge-photo';
+            badge.textContent = 'PHOTO';
             var img = document.createElement('img');
             img.className = 'card-image';
             img.alt = 'Prediction frame';
@@ -1614,6 +1666,18 @@ var ReviewApp = {
         return '/thumbnails/' + encodeURIComponent(filename);
     }
 };
+
+// Inject video indicator styles
+(function() {
+    var style = document.createElement('style');
+    style.textContent = '' +
+        '.media-badge { position: absolute; top: 8px; left: 8px; padding: 3px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; letter-spacing: 0.5px; z-index: 5; pointer-events: none; }' +
+        '.media-badge-video { background: rgba(220, 53, 69, 0.85); color: white; }' +
+        '.media-badge-photo { background: rgba(108, 117, 125, 0.7); color: white; }' +
+        '.video-play-overlay { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 5; cursor: pointer; opacity: 0.9; transition: opacity 0.2s; }' +
+        '.video-play-overlay:hover { opacity: 1; }';
+    document.head.appendChild(style);
+})();
 
 // Boot on DOMContentLoaded
 document.addEventListener('DOMContentLoaded', function() {

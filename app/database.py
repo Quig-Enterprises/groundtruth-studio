@@ -49,15 +49,17 @@ class VideoDatabase:
     def add_video(self, filename: str, original_url: str = None, title: str = None,
                   duration: float = None, width: int = None, height: int = None,
                   file_size: int = None, thumbnail_path: str = None, notes: str = None,
-                  camera_id: str = None) -> int:
+                  camera_id: str = None, metadata: dict = None) -> int:
+        import json as _json
         with get_cursor() as cursor:
             cursor.execute('''
                 INSERT INTO videos (filename, original_url, title, duration, width, height,
-                                  file_size, thumbnail_path, notes, camera_id)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                                  file_size, thumbnail_path, notes, camera_id, metadata)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (filename) DO NOTHING
                 RETURNING id
-            ''', (filename, original_url, title, duration, width, height, file_size, thumbnail_path, notes, camera_id))
+            ''', (filename, original_url, title, duration, width, height, file_size, thumbnail_path, notes, camera_id,
+                  _json.dumps(metadata) if metadata else '{}'))
             result = cursor.fetchone()
             if result:
                 return result['id']

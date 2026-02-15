@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS videos (
     thumbnail_path TEXT,
     upload_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     notes TEXT,
-    camera_id TEXT
+    camera_id TEXT,
+    metadata JSONB DEFAULT '{}'
 );
 
 -- Tags table
@@ -892,6 +893,15 @@ def run_migrations():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_interp_tracks_video ON interpolation_tracks(video_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_interp_tracks_status ON interpolation_tracks(status)")
             logger.info("Interpolation tracks table ready")
+
+            # Migration: Add metadata JSONB column to videos table
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'videos' AND column_name = 'metadata'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("ALTER TABLE videos ADD COLUMN metadata JSONB DEFAULT '{}'")
+                logger.info("Added metadata column to videos table")
 
         logger.info("Migrations completed successfully")
     except Exception as e:

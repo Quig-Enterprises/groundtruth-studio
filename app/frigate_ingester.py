@@ -221,7 +221,14 @@ class FrigateEventIngester:
                 height=height,
                 file_size=len(image_bytes),
                 camera_id=camera,
-                notes=f"Frigate alert: {label} (score={score:.2f}, event={event_id[:12]})"
+                notes=f"Frigate alert: {label} (score={score:.2f}, event={event_id[:12]})",
+                metadata={
+                    'frigate_event_id': event_id,
+                    'frigate_camera': camera,
+                    'frigate_label': label,
+                    'frigate_score': score,
+                    'source': 'frigate'
+                }
             )
 
             # Trigger our YOLO-World pipeline for detailed classification

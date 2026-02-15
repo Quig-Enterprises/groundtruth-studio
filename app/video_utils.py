@@ -3,6 +3,7 @@ import os
 import json
 from pathlib import Path
 from typing import Dict, Optional
+import requests
 
 class VideoProcessor:
     def __init__(self, thumbnail_dir='thumbnails'):
@@ -184,6 +185,120 @@ class VideoProcessor:
             return {'success': False, 'error': 'Clip extraction timeout'}
         except Exception as e:
             return {'success': False, 'error': f'Error: {str(e)}'}
+
+    def fetch_frigate_clip(self, frigate_url: str, event_id: str, camera: str,
+                           duration: float = 5.0,
+                           clips_dir: str = '/opt/groundtruth-studio/clips') -> Dict:
+        """
+        Fetch a video clip from Frigate's recording API for a specific event.
+
+        Args:
+            frigate_url: Base URL of the Frigate instance
+            event_id: Full Frigate event UUID
+            camera: Camera name
+            duration: Desired clip duration (unused, Frigate returns event-scoped clip)
+            clips_dir: Directory to cache downloaded clips
+
+        Returns:
+            Dict with success status and clip_path
+        """
+        try:
+            clips_path = Path(clips_dir)
+            clips_path.mkdir(exist_ok=True)
+
+            # Cache key based on event_id
+            clip_name = f"frigate_{event_id}.mp4"
+            clip_path = clips_path / clip_name
+
+            # Return cached clip if already fetched
+            if clip_path.exists() and clip_path.stat().st_size > 0:
+                return {'success': True, 'clip_path': str(clip_path)}
+
+            # Fetch event clip from Frigate API
+            url = f"{frigate_url.rstrip('/')}/api/events/{event_id}/clip.mp4"
+            resp = requests.get(url, timeout=30, stream=True)
+
+            if resp.status_code != 200:
+                return {'success': False, 'error': f'Frigate clip API returned {resp.status_code}'}
+
+            # Stream to file
+            with open(clip_path, 'wb') as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+            if clip_path.stat().st_size == 0:
+                clip_path.unlink(missing_ok=True)
+                return {'success': False, 'error': 'Frigate returned empty clip'}
+
+            return {'success': True, 'clip_path': str(clip_path)}
+
+        except requests.Timeout:
+            return {'success': False, 'error': 'Frigate clip request timed out'}
+        except Exception as e:
+            return {'success': False, 'error': f'Failed to fetch Frigate clip: {str(e)}'}
+
+    def cleanup_clips(self, max_age_days: int = 7, max_size_mb: int = 500,
+                      clips_dir: str = '/opt/groundtruth-studio/clips') -> Dict:
+        """
+        Clean up cached video clips based on age and total size.
+
+        Args:
+            max_age_days: Remove clips older than this many days
+            max_size_mb: Maximum total size of clips directory in MB
+
+        Returns:
+            Dict with cleanup stats
+        """
+        try:
+            clips_path = Path(clips_dir)
+            if not clips_path.exists():
+                return {'success': True, 'removed': 0, 'freed_mb': 0}
+
+            import time
+            now = time.time()
+            max_age_secs = max_age_days * 86400
+            max_size_bytes = max_size_mb * 1024 * 1024
+
+            removed = 0
+            freed = 0
+
+            # Phase 1: Remove clips older than max_age_days
+            clips = sorted(clips_path.glob('*.mp4'), key=lambda f: f.stat().st_mtime)
+            for clip in clips:
+                try:
+                    age = now - clip.stat().st_mtime
+                    if age > max_age_secs:
+                        size = clip.stat().st_size
+                        clip.unlink()
+                        removed += 1
+                        freed += size
+                except OSError:
+                    continue
+
+            # Phase 2: If still over max size, remove oldest first
+            remaining = sorted(clips_path.glob('*.mp4'), key=lambda f: f.stat().st_mtime)
+            total_size = sum(f.stat().st_size for f in remaining)
+
+            while total_size > max_size_bytes and remaining:
+                oldest = remaining.pop(0)
+                try:
+                    size = oldest.stat().st_size
+                    oldest.unlink()
+                    removed += 1
+                    freed += size
+                    total_size -= size
+                except OSError:
+                    continue
+
+            return {
+                'success': True,
+                'removed': removed,
+                'freed_mb': round(freed / (1024 * 1024), 1),
+                'remaining_mb': round(total_size / (1024 * 1024), 1),
+                'remaining_count': len(list(clips_path.glob('*.mp4')))
+            }
+        except Exception as e:
+            return {'success': False, 'error': str(e)}
 
     def check_ffmpeg_installed(self) -> bool:
         """

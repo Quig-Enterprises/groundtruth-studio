@@ -118,6 +118,14 @@ unifi_client = None  # Initialized on-demand with credentials
 init_training_jobs_table(db)
 training_queue = TrainingQueueClient(db)
 
+# Run clip cache cleanup on startup (remove clips older than 7 days, cap at 500MB)
+try:
+    _startup_cleanup = processor.cleanup_clips(max_age_days=7, max_size_mb=500)
+    if _startup_cleanup.get('removed', 0) > 0:
+        logger.info(f"Startup clip cleanup: removed {_startup_cleanup['removed']} clips, freed {_startup_cleanup['freed_mb']}MB")
+except Exception as e:
+    logger.warning(f"Startup clip cleanup failed: {e}")
+
 # Start auto-retrain background checker
 start_auto_retrain_checker(db, yolo_exporter, training_queue)
 
@@ -997,6 +1005,35 @@ def serve_clip(filename):
     """Serve cached video clip"""
     return send_from_directory(CLIPS_DIR, filename)
 
+@app.route('/api/clips/cleanup', methods=['POST'])
+def cleanup_clips():
+    """Clean up cached video clips based on age and size limits."""
+    if not can_write():
+        return jsonify({'success': False, 'error': 'Read-only mode'}), 403
+    max_age = request.json.get('max_age_days', 7) if request.is_json else 7
+    max_size = request.json.get('max_size_mb', 500) if request.is_json else 500
+    result = processor.cleanup_clips(max_age_days=max_age, max_size_mb=max_size)
+    return jsonify(result)
+
+@app.route('/api/clips/stats', methods=['GET'])
+def clips_stats():
+    """Get clip cache statistics."""
+    clips_dir = CLIPS_DIR
+    if not clips_dir.exists():
+        return jsonify({'count': 0, 'total_mb': 0, 'oldest_days': 0})
+    import time
+    clips = list(clips_dir.glob('*.mp4'))
+    total = sum(f.stat().st_size for f in clips) if clips else 0
+    oldest_age = 0
+    if clips:
+        oldest_mtime = min(f.stat().st_mtime for f in clips)
+        oldest_age = round((time.time() - oldest_mtime) / 86400, 1)
+    return jsonify({
+        'count': len(clips),
+        'total_mb': round(total / (1024 * 1024), 1),
+        'oldest_days': oldest_age
+    })
+
 @app.route('/api/ai/predictions/<int:prediction_id>/clip')
 def get_prediction_clip(prediction_id):
     """Generate and serve a ~5 second video clip around a prediction's timestamp."""
@@ -1012,17 +1049,49 @@ def get_prediction_clip(prediction_id):
         video_path = DOWNLOAD_DIR / video['filename']
         timestamp = pred.get('timestamp') or 0.0
 
+        # Try local ffmpeg clip extraction first
         result = processor.extract_clip(
             str(video_path),
             float(timestamp),
             duration=5.0
         )
 
-        if not result['success']:
-            return jsonify({'success': False, 'error': result['error']}), 404
+        if result['success']:
+            clip_path = Path(result['clip_path'])
+            return send_from_directory(clip_path.parent, clip_path.name, mimetype='video/mp4')
 
-        clip_path = Path(result['clip_path'])
-        return send_from_directory(clip_path.parent, clip_path.name, mimetype='video/mp4')
+        # Fallback: try Frigate event clip if metadata has frigate_event_id
+        metadata = video.get('metadata') or {}
+        if isinstance(metadata, str):
+            import json
+            try:
+                metadata = json.loads(metadata)
+            except (json.JSONDecodeError, TypeError):
+                metadata = {}
+
+        frigate_event_id = metadata.get('frigate_event_id')
+        if frigate_event_id:
+            frigate_url = os.environ.get('FRIGATE_URL', '')
+            if not frigate_url:
+                # Try to get from ingester singleton
+                try:
+                    ingester = get_ingester()
+                    if ingester:
+                        frigate_url = ingester.frigate_url
+                except Exception:
+                    pass
+
+            if frigate_url:
+                frigate_result = processor.fetch_frigate_clip(
+                    frigate_url=frigate_url,
+                    event_id=frigate_event_id,
+                    camera=metadata.get('frigate_camera', '')
+                )
+                if frigate_result['success']:
+                    clip_path = Path(frigate_result['clip_path'])
+                    return send_from_directory(clip_path.parent, clip_path.name, mimetype='video/mp4')
+
+        return jsonify({'success': False, 'error': result['error']}), 404
 
     except Exception as e:
         logger.error(f'Failed to generate clip for prediction {prediction_id}: {e}')
