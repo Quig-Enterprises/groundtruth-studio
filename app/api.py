@@ -411,12 +411,10 @@ def sync_ecoeye_sample():
                     notes=notes,
                     camera_id=event.get('camera_id')
                 )
-                processor.generate_thumbnail(str(DOWNLOAD_DIR / dl_result['filename']), video_id)
-
-                # Auto-detect persons/faces on thumbnail
-                video_record = db.get_video(video_id)
-                if video_record and video_record.get('thumbnail_path'):
-                    trigger_auto_detect(video_id, video_record['thumbnail_path'])
+                thumb_result = processor.extract_thumbnail(str(DOWNLOAD_DIR / dl_result['filename']))
+                if thumb_result.get('success'):
+                    db.update_video(video_id, thumbnail_path=thumb_result['thumbnail_path'])
+                    trigger_auto_detect(video_id, thumb_result['thumbnail_path'])
 
                 return jsonify({
                     'success': True,
@@ -3950,10 +3948,6 @@ def recognize_person_in_video():
                 f"recognition-{int(time.time())}", id_predictions
             )
             created = len(pred_ids)
-
-            # Force all to review status (never auto-approve person identification)
-            for pid in pred_ids:
-                db.update_prediction_routing(pid, 'pending', 'person_recognition', {})
 
             matches = [
                 {"person_name": p['tags']['person_name'], "confidence": p['confidence']}
