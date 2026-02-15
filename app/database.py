@@ -1612,6 +1612,15 @@ class VideoDatabase:
 
     # ==================== AI Predictions ====================
 
+    def count_predictions_for_video(self, video_id: int, model_name: str, model_version: str) -> int:
+        """Count existing predictions for a video from a specific model."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                SELECT COUNT(*) FROM ai_predictions
+                WHERE video_id = %s AND model_name = %s AND model_version = %s
+            ''', (video_id, model_name, model_version))
+            return cursor.fetchone()['count']
+
     def insert_predictions_batch(self, video_id: int, model_name: str, model_version: str,
                                   batch_id: str, predictions: List[Dict]) -> List[int]:
         """Insert a batch of AI predictions. Returns list of prediction IDs."""
@@ -1662,6 +1671,20 @@ class VideoDatabase:
                 ORDER BY p.confidence DESC, p.created_at DESC
                 LIMIT %s OFFSET %s
             ''', params)
+            rows = cursor.fetchall()
+            return [dict(row) for row in rows]
+
+    def get_predictions_for_video(self, video_id: int, limit: int = 200, offset: int = 0) -> List[Dict]:
+        """Get all predictions for a video regardless of review status."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT p.*, v.filename as video_filename, v.title as video_title
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                WHERE p.video_id = %s
+                ORDER BY p.confidence DESC, p.created_at DESC
+                LIMIT %s OFFSET %s
+            ''', (video_id, limit, offset))
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
@@ -1757,17 +1780,19 @@ class VideoDatabase:
                 bw = bbox['width'] if bbox else pred['bbox_width']
                 bh = bbox['height'] if bbox else pred['bbox_height']
 
+                source = 'ai_auto_approved' if pred['review_status'] == 'auto_approved' else 'ai_prediction'
                 cursor.execute('''
                     INSERT INTO keyframe_annotations
                     (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
-                     activity_tag, comment, reviewed)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, true)
+                     activity_tag, comment, reviewed, source, source_prediction_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false, %s, %s)
                     RETURNING id
                 ''', (
                     pred['video_id'], pred['timestamp'],
                     bx, by, bw, bh,
                     pred['scenario'],
-                    f"AI prediction (model={pred['model_name']} v{pred['model_version']}, confidence={pred['confidence']:.2f})"
+                    f"AI prediction (model={pred['model_name']} v{pred['model_version']}, confidence={pred['confidence']:.2f})",
+                    source, prediction_id
                 ))
                 result = cursor.fetchone()
                 annotation_id = result['id']

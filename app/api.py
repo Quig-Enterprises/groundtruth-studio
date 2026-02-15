@@ -1730,7 +1730,7 @@ def get_person_detections():
                     'bbox_y': row['bbox_y'],
                     'bbox_width': row['bbox_width'],
                     'bbox_height': row['bbox_height'],
-                    'thumbnail_path': row['thumbnail_path'],
+                    'thumbnail_path': f"/thumbnails/{os.path.basename(row['thumbnail_path'])}" if row.get('thumbnail_path') else None,
                     'person_name': person_name,
                     'pose': row['pose'],
                     'distance_category': row['distance_category'],
@@ -2907,6 +2907,19 @@ def submit_predictions_batch():
         model_type = data.get('model_type', 'yolo')
         db.get_or_create_model_registry(model_name, model_version, model_type)
 
+        # Dedup: skip if this model/version already has predictions for this video
+        existing_count = db.count_predictions_for_video(video_id, model_name, model_version)
+        if existing_count > 0:
+            return jsonify({
+                'success': True,
+                'batch_id': batch_id,
+                'predictions_submitted': 0,
+                'prediction_ids': [],
+                'routing': {},
+                'skipped': True,
+                'reason': f'Video already has {existing_count} predictions from {model_name} v{model_version}'
+            })
+
         # Insert predictions
         prediction_ids = db.insert_predictions_batch(
             video_id, model_name, model_version, batch_id, predictions
@@ -2930,14 +2943,18 @@ def submit_predictions_batch():
 
 @app.route('/api/ai/predictions/pending', methods=['GET'])
 def get_pending_predictions():
-    """Get pending predictions for review"""
+    """Get pending predictions for review. Pass include_all=1 to include auto_rejected."""
     try:
         video_id = request.args.get('video_id', type=int)
         model_name = request.args.get('model_name')
         limit = request.args.get('limit', 100, type=int)
         offset = request.args.get('offset', 0, type=int)
+        include_all = request.args.get('include_all', '0') == '1'
 
-        predictions = db.get_pending_predictions(video_id, model_name, limit, offset)
+        if include_all and video_id:
+            predictions = db.get_predictions_for_video(video_id, limit=limit, offset=offset)
+        else:
+            predictions = db.get_pending_predictions(video_id, model_name, limit, offset)
         return jsonify({'success': True, 'predictions': predictions})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
