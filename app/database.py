@@ -1787,18 +1787,20 @@ class VideoDatabase:
                 bh = bbox['height'] if bbox else pred['bbox_height']
 
                 source = 'ai_auto_approved' if pred['review_status'] == 'auto_approved' else 'ai_prediction'
+                # Human-reviewed predictions are already verified; auto-approved need review
+                is_reviewed = pred['review_status'] == 'approved'
                 cursor.execute('''
                     INSERT INTO keyframe_annotations
                     (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
                      activity_tag, comment, reviewed, source, source_prediction_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, false, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 ''', (
                     pred['video_id'], pred['timestamp'],
                     bx, by, bw, bh,
                     pred['scenario'],
                     f"AI prediction (model={pred['model_name']} v{pred['model_version']}, confidence={pred['confidence']:.2f})",
-                    source, prediction_id
+                    is_reviewed, source, prediction_id
                 ))
                 result = cursor.fetchone()
                 annotation_id = result['id']
