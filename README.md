@@ -531,6 +531,100 @@ for url in urls:
         print(f"Failed: {result['error']}")
 ```
 
+## Local LAN Training Queue
+
+The training pipeline supports a local mode that replaces AWS (S3/SQS) with HTTP-based job queuing and data transfer. Any machine on the LAN can act as a training worker by polling the Studio API.
+
+### How It Works
+
+```
+Submit job (UI/API) → DB status='queued'
+                           ↓
+Worker polls GET /api/training/jobs/next → claims job (status='processing')
+                           ↓
+Worker downloads GET /api/training/jobs/{id}/download → tar.gz of export data
+                           ↓
+Worker runs training locally (YOLO, vibration, location, custom)
+                           ↓
+Worker reports POST /api/training/jobs/{id}/complete with metrics
+```
+
+Local mode activates automatically when AWS credentials are not configured. The Studio server at `192.168.50.20:5050` becomes the queue coordinator.
+
+### Worker API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/api/training/jobs/next` | GET | Atomically claim next queued job (race-condition safe) |
+| `/api/training/jobs/<id>/download` | GET | Download export data as tar.gz |
+| `/api/training/jobs/<id>/complete` | POST | Report completion with metrics |
+| `/api/training/jobs/<id>/fail` | POST | Report failure with error message |
+| `/api/training/queue-status` | GET | Queue depth (DB-based in local mode) |
+
+### Running a Local Training Worker
+
+The local worker requires only Python 3 and `requests`. No AWS SDK needed.
+
+```bash
+# On the Studio server itself
+python3 /opt/groundtruth-studio/worker/training_worker_local.py
+
+# On another LAN machine (point to Studio)
+python3 training_worker_local.py --studio-url http://192.168.50.20:5050
+
+# Custom data directory and poll interval
+python3 training_worker_local.py --data-dir /data/training-jobs --poll-interval 60
+
+# Process one job and exit (for testing or cron)
+python3 training_worker_local.py --once
+```
+
+**Environment variables** (alternative to CLI flags):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STUDIO_URL` | `http://192.168.50.20:5050` | Studio API base URL |
+| `DATA_DIR` | `/tmp/training-jobs` | Where to download and extract training data |
+| `POLL_INTERVAL` | `30` | Seconds between job polls |
+| `TRAINING_COMMANDS` | (built-in) | JSON override for training command templates |
+
+### Supported Job Types
+
+| Job Type | Command Template |
+|----------|-----------------|
+| `yolo-training` | `yolo train data={data_dir}/data.yaml model={model_type} epochs={epochs} imgsz=640` |
+| `bearing-fault` | `python3 train_bearing_fault.py --train {train_file} --val {val_file} ...` |
+| `vibration` | Same as bearing-fault |
+| `location` | `python3 -m torchvision.models --data {data_dir} ...` |
+| `custom` | `echo "Custom job {job_id}: data at {data_dir}"` |
+
+### Multiple Workers
+
+Multiple workers can run simultaneously on different machines. The `/api/training/jobs/next` endpoint uses `FOR UPDATE SKIP LOCKED` to ensure each job is claimed by exactly one worker. Workers are stateless and can be started/stopped freely.
+
+### Verifying Local Mode
+
+```bash
+# Check that local mode is active
+curl http://192.168.50.20:5050/api/training/queue-status
+# Should return: {"local_mode": true, "queue_messages": N, ...}
+
+# Submit a test job
+curl -X POST http://192.168.50.20:5050/api/training/submit \
+  -H 'Content-Type: application/json' \
+  -d '{"export_path": "/path/to/export", "job_type": "yolo-training", "config": {"epochs": 10}}'
+# Should return: {"status": "queued", ...}  (not "uploading")
+```
+
+### Files
+
+| File | Description |
+|------|-------------|
+| `app/training_queue.py` | Queue client with local/AWS mode detection |
+| `app/api.py` | REST API including worker endpoints |
+| `worker/training_worker_local.py` | HTTP-based local worker (no AWS dependency) |
+| `worker/training_worker.py` | Original SQS/S3-based worker (requires AWS) |
+
 ## Troubleshooting
 
 ### yt-dlp errors

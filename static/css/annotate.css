@@ -1374,3 +1374,122 @@
         padding: 10px;
     }
 }
+
+/* ===== Movement Tracks Panel ===== */
+
+.tracks-section {
+    padding: 0;
+}
+
+.tracks-section .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+}
+
+.tracks-empty {
+    text-align: center;
+    padding: 30px 20px;
+    color: #95a5a6;
+    font-size: 14px;
+}
+
+.tracks-empty .help-text-small {
+    font-size: 12px;
+    color: #bdc3c7;
+    margin-top: 8px;
+}
+
+.tracks-list {
+    padding: 8px;
+}
+
+.track-entry {
+    background: #f8f9fa;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+    padding: 12px;
+    margin-bottom: 8px;
+}
+
+.track-entry.ready {
+    border-color: #27ae60;
+    background: #f0faf4;
+}
+
+.track-entry-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 6px;
+}
+
+.track-name {
+    font-weight: 600;
+    font-size: 14px;
+    color: #2c3e50;
+}
+
+.track-class-badge {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 10px;
+    background: #3498db;
+    color: white;
+    font-weight: 500;
+}
+
+.track-entry-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: #7f8c8d;
+    margin-bottom: 8px;
+}
+
+.track-entry-keyframes {
+    display: flex;
+    gap: 4px;
+    flex-wrap: wrap;
+    margin-bottom: 8px;
+}
+
+.kf-dot {
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 4px;
+    background: #ecf0f1;
+    border: 1px solid #bdc3c7;
+    color: #2c3e50;
+    cursor: pointer;
+}
+
+.kf-dot:hover {
+    background: #3498db;
+    color: white;
+    border-color: #3498db;
+}
+
+.btn-interpolate {
+    width: 100%;
+    padding: 8px;
+    background: #27ae60;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.btn-interpolate:hover {
+    background: #219a52;
+}
+
+.track-hint {
+    font-size: 12px;
+    color: #95a5a6;
+    text-align: center;
+    padding: 4px;
+}

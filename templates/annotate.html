@@ -230,6 +230,9 @@
                     <button class="panel-tab" id="tab-predictions" onclick="switchTab('predictions')">
                         AI Predictions <span class="tab-badge" id="tab-prediction-badge" style="display:none;">0</span>
                     </button>
+                    <button class="panel-tab" id="tab-tracks" onclick="switchTab('tracks')">
+                        Tracks
+                    </button>
                 </div>
                 <!-- Unified Annotation Section -->
                 <div class="annotation-section">
@@ -244,6 +247,18 @@
                         </div>
                         <div id="keyframe-annotations-list" class="keyframes-list-container">
                             <!-- Keyframe annotations will be loaded here -->
+                        </div>
+                    </div>
+                </div>
+                <!-- Movement Tracks Section -->
+                <div class="tracks-section" id="tracks-section" style="display:none;">
+                    <div class="section-header">
+                        <h2>Movement Tracks</h2>
+                    </div>
+                    <div id="movement-tracks-panel">
+                        <div class="tracks-empty">
+                            <p>No movement tracks yet.</p>
+                            <p class="help-text-small">Use the "Movement Tracking" scenario to tag objects across keyframes, then trigger interpolation.</p>
                         </div>
                     </div>
                 </div>
@@ -299,10 +314,15 @@
         function switchTab(tab) {
             document.getElementById('tab-annotations').classList.toggle('active', tab === 'annotations');
             document.getElementById('tab-predictions').classList.toggle('active', tab === 'predictions');
+            document.getElementById('tab-tracks').classList.toggle('active', tab === 'tracks');
             document.querySelector('.annotation-section').style.display = tab === 'annotations' ? '' : 'none';
             document.getElementById('prediction-section').style.display = tab === 'predictions' ? '' : 'none';
+            document.getElementById('tracks-section').style.display = tab === 'tracks' ? '' : 'none';
             if (typeof predictionReview !== 'undefined') {
                 predictionReview.onTabSwitch(tab);
+            }
+            if (tab === 'tracks' && typeof movementTracker !== 'undefined') {
+                movementTracker.refresh();
             }
         }
 
@@ -347,6 +367,7 @@
     <script src="{{ static_v('js/annotate.js') }}"></script>
     <script src="{{ static_v('js/annotate-integration.js') }}"></script>
     <script src="{{ static_v('js/prediction-review.js') }}"></script>
+    <script src="{{ static_v('js/movement-tracking.js') }}"></script>
     <script>
         // Initialize prediction review with current video ID
         (function() {

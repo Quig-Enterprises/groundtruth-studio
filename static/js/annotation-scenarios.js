@@ -695,6 +695,52 @@ const annotationScenarios = {
         }
     },
 
+    // Movement tracking (guided keyframe interpolation)
+    'movement_tracking': {
+        label: 'Movement Tracking',
+        description: 'Track an object across keyframes to generate interpolated detections',
+        category: 'Tracking',
+        requiresBoundingBox: true,
+        allowEventBoundaries: false,
+        allowDynamicSteps: false,
+        isMovementTracking: true,
+        steps: [
+            {
+                id: 'tracked_object',
+                label: 'Tracked Object',
+                prompt: 'Draw bounding box around the object you want to track',
+                optional: false,
+                notVisibleOption: false
+            }
+        ],
+        tags: {
+            'track_number': {
+                type: 'dropdown',
+                label: 'Track',
+                options: [],
+                required: true,
+                dynamicOptions: 'movement_tracks',
+                placeholder: 'Select or create track...'
+            },
+            'track_label': {
+                type: 'text_autocomplete',
+                label: 'Track Label (optional)',
+                placeholder: 'e.g., red truck, blue SUV...',
+                required: false,
+                showRecentValues: true,
+                recentCount: 10
+            },
+            'class': {
+                type: 'configurable_dropdown',
+                label: 'Object Class',
+                defaultOptions: ['sedan', 'pickup truck', 'SUV', 'minivan', 'van', 'tractor', 'ATV', 'UTV', 'motorcycle', 'trailer', 'bus', 'semi truck', 'dump truck', 'rowboat', 'fishing boat', 'speed boat', 'pontoon boat', 'kayak', 'canoe', 'sailboat', 'jet ski', 'person', 'other'],
+                required: true,
+                allowCustom: true,
+                customPrompt: 'Enter object class'
+            }
+        }
+    },
+
     // Generic fallback
     'other': {
         label: 'Other Annotation',
@@ -732,6 +778,7 @@ const scenarioCategories = {
     'Environmental': ['environmental_conditions', 'camera_quality', 'location_context'],
     'Compliance': ['compliance_violation'],
     'Events': ['interesting_event', 'audio_event'],
+    'Tracking': ['movement_tracking'],
     'Other': ['other']
 };
 

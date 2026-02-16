@@ -29,7 +29,7 @@ API_BASE_URL = "http://localhost:5050"
 MODEL_NAME = "person-face-v1"
 MODEL_VERSION = "1.0"
 MODEL_TYPE = "yolo"
-CONF_THRESHOLD = 0.05
+CONF_THRESHOLD = 0.15
 
 CLASS_NAMES = {0: "person", 1: "face"}
 SCENARIO_MAP = {0: "person_detection", 1: "face_detection"}

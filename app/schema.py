@@ -339,7 +339,7 @@ CREATE TABLE IF NOT EXISTS ai_predictions (
     scenario VARCHAR(255) NOT NULL,
     predicted_tags JSONB NOT NULL DEFAULT '{}',
     review_status VARCHAR(20) DEFAULT 'pending'
-        CHECK (review_status IN ('pending', 'approved', 'rejected', 'needs_correction', 'auto_approved', 'auto_rejected')),
+        CHECK (review_status IN ('pending', 'approved', 'rejected', 'needs_correction', 'auto_approved', 'auto_rejected', 'processing')),
     reviewed_by VARCHAR(255),
     reviewed_at TIMESTAMP WITH TIME ZONE,
     review_notes TEXT,
@@ -576,6 +576,64 @@ CREATE INDEX IF NOT EXISTS idx_model_registry_name ON model_registry(model_name)
 CREATE INDEX IF NOT EXISTS idx_model_registry_active ON model_registry(is_active);
 CREATE INDEX IF NOT EXISTS idx_training_metrics_job ON training_metrics(training_job_id);
 CREATE INDEX IF NOT EXISTS idx_training_metrics_model ON training_metrics(model_name, model_version);
+
+-- Prediction groups table (same-camera prediction grouping for batch review)
+CREATE TABLE IF NOT EXISTS prediction_groups (
+    id BIGSERIAL PRIMARY KEY,
+    camera_id TEXT NOT NULL,
+    scenario VARCHAR(255) NOT NULL,
+    representative_prediction_id BIGINT,
+    bbox_centroid_x INTEGER NOT NULL,
+    bbox_centroid_y INTEGER NOT NULL,
+    avg_bbox_width INTEGER NOT NULL,
+    avg_bbox_height INTEGER NOT NULL,
+    member_count INTEGER NOT NULL DEFAULT 1,
+    min_confidence REAL,
+    max_confidence REAL,
+    avg_confidence REAL,
+    min_timestamp REAL,
+    max_timestamp REAL,
+    review_status VARCHAR(20) DEFAULT 'pending'
+        CHECK (review_status IN ('pending', 'approved', 'rejected', 'partial')),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_pred_groups_camera ON prediction_groups(camera_id);
+CREATE INDEX IF NOT EXISTS idx_pred_groups_status ON prediction_groups(review_status);
+CREATE INDEX IF NOT EXISTS idx_pred_groups_scenario ON prediction_groups(scenario);
+
+-- Camera object tracks (cross-status spatial grouping for decision propagation)
+CREATE TABLE IF NOT EXISTS camera_object_tracks (
+    id BIGSERIAL PRIMARY KEY,
+    camera_id TEXT NOT NULL,
+    scenario VARCHAR(255) NOT NULL,
+    bbox_centroid_x INTEGER NOT NULL,
+    bbox_centroid_y INTEGER NOT NULL,
+    avg_bbox_width INTEGER NOT NULL,
+    avg_bbox_height INTEGER NOT NULL,
+    member_count INTEGER NOT NULL DEFAULT 0,
+    approved_count INTEGER NOT NULL DEFAULT 0,
+    rejected_count INTEGER NOT NULL DEFAULT 0,
+    pending_count INTEGER NOT NULL DEFAULT 0,
+    auto_approved_count INTEGER NOT NULL DEFAULT 0,
+    anchor_status VARCHAR(20) DEFAULT 'pending'
+        CHECK (anchor_status IN ('pending', 'approved', 'rejected', 'conflict')),
+    anchor_classification JSONB,
+    classification_conflict BOOLEAN DEFAULT FALSE,
+    representative_prediction_id BIGINT,
+    min_confidence REAL,
+    max_confidence REAL,
+    avg_confidence REAL,
+    first_seen REAL,
+    last_seen REAL,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_cam_obj_tracks_camera ON camera_object_tracks(camera_id);
+CREATE INDEX IF NOT EXISTS idx_cam_obj_tracks_status ON camera_object_tracks(anchor_status);
+CREATE INDEX IF NOT EXISTS idx_cam_obj_tracks_scenario ON camera_object_tracks(scenario);
+CREATE INDEX IF NOT EXISTS idx_cam_obj_tracks_camera_scenario ON camera_object_tracks(camera_id, scenario);
+
 CREATE INDEX IF NOT EXISTS idx_content_libraries_name ON content_libraries(name);
 CREATE INDEX IF NOT EXISTS idx_library_items_library ON content_library_items(library_id);
 CREATE INDEX IF NOT EXISTS idx_library_items_video ON content_library_items(video_id);
@@ -606,6 +664,27 @@ CREATE INDEX IF NOT EXISTS idx_violations_person ON violations(person_identity_i
 CREATE INDEX IF NOT EXISTS idx_visits_person ON visits(person_identity_id);
 CREATE INDEX IF NOT EXISTS idx_visits_vehicle ON visits(vehicle_identity_id);
 CREATE INDEX IF NOT EXISTS idx_visits_arrival ON visits(arrival_time);
+
+-- Cross-camera entity links (matches same real-world entity across different cameras)
+CREATE TABLE IF NOT EXISTS cross_camera_links (
+    id BIGSERIAL PRIMARY KEY,
+    track_a_id BIGINT NOT NULL REFERENCES camera_object_tracks(id) ON DELETE CASCADE,
+    track_b_id BIGINT NOT NULL REFERENCES camera_object_tracks(id) ON DELETE CASCADE,
+    entity_type VARCHAR(20) NOT NULL CHECK (entity_type IN ('vehicle', 'person', 'boat')),
+    match_confidence REAL NOT NULL,
+    match_method VARCHAR(50) NOT NULL,
+    reid_similarity REAL,
+    temporal_gap_seconds REAL,
+    classification_match BOOLEAN,
+    status VARCHAR(20) DEFAULT 'auto' CHECK (status IN ('auto', 'confirmed', 'rejected')),
+    confirmed_by VARCHAR(100),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(track_a_id, track_b_id)
+);
+CREATE INDEX IF NOT EXISTS idx_xcam_track_a ON cross_camera_links(track_a_id);
+CREATE INDEX IF NOT EXISTS idx_xcam_track_b ON cross_camera_links(track_b_id);
+CREATE INDEX IF NOT EXISTS idx_xcam_entity ON cross_camera_links(entity_type);
+CREATE INDEX IF NOT EXISTS idx_xcam_status ON cross_camera_links(status);
 """
 
 
@@ -624,6 +703,19 @@ def init_schema():
         with get_cursor() as cursor:
             # Execute the complete schema
             cursor.execute(SCHEMA_SQL)
+
+            # Migrations for cross-camera tracking
+            migration_sqls = [
+                "ALTER TABLE camera_object_tracks ADD COLUMN IF NOT EXISTS cross_camera_identity_id BIGINT",
+                "ALTER TABLE camera_object_tracks ADD COLUMN IF NOT EXISTS cross_camera_conflict BOOLEAN DEFAULT FALSE",
+                "CREATE INDEX IF NOT EXISTS idx_cam_obj_tracks_xcam_identity ON camera_object_tracks(cross_camera_identity_id)",
+            ]
+            for sql in migration_sqls:
+                try:
+                    cursor.execute(sql)
+                except Exception:
+                    pass  # Column may already exist
+
             logger.info("Database schema initialized successfully")
 
     except Exception as e:
@@ -648,7 +740,8 @@ def verify_schema():
         'camera_locations', 'ai_predictions', 'model_registry', 'training_metrics',
         'content_libraries', 'content_library_items', 'interpolation_tracks',
         'identities', 'embeddings', 'associations', 'tracks', 'sightings',
-        'camera_topology_learned', 'violations', 'visits'
+        'camera_topology_learned', 'violations', 'visits', 'prediction_groups',
+        'camera_object_tracks', 'cross_camera_links'
     ]
 
     with get_cursor(commit=False) as cursor:
@@ -902,6 +995,133 @@ def run_migrations():
             if not cursor.fetchone():
                 cursor.execute("ALTER TABLE videos ADD COLUMN metadata JSONB DEFAULT '{}'")
                 logger.info("Added metadata column to videos table")
+
+            # Migration: Create prediction_groups table and add prediction_group_id to ai_predictions
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS prediction_groups (
+                    id BIGSERIAL PRIMARY KEY,
+                    camera_id TEXT NOT NULL,
+                    scenario VARCHAR(255) NOT NULL,
+                    representative_prediction_id BIGINT,
+                    bbox_centroid_x INTEGER NOT NULL,
+                    bbox_centroid_y INTEGER NOT NULL,
+                    avg_bbox_width INTEGER NOT NULL,
+                    avg_bbox_height INTEGER NOT NULL,
+                    member_count INTEGER NOT NULL DEFAULT 1,
+                    min_confidence REAL,
+                    max_confidence REAL,
+                    avg_confidence REAL,
+                    min_timestamp REAL,
+                    max_timestamp REAL,
+                    review_status VARCHAR(20) DEFAULT 'pending'
+                        CHECK (review_status IN ('pending', 'approved', 'rejected', 'partial')),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pred_groups_camera ON prediction_groups(camera_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pred_groups_status ON prediction_groups(review_status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_pred_groups_scenario ON prediction_groups(scenario)")
+
+            # Add prediction_group_id column to ai_predictions if not exists
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'ai_predictions' AND column_name = 'prediction_group_id'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("""
+                    ALTER TABLE ai_predictions ADD COLUMN prediction_group_id BIGINT
+                    REFERENCES prediction_groups(id) ON DELETE SET NULL
+                """)
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_group ON ai_predictions(prediction_group_id)")
+                logger.info("Added prediction_group_id column to ai_predictions table")
+            logger.info("Prediction groups table ready")
+
+            # Camera object tracks table + column migration
+            cursor.execute("""
+                SELECT EXISTS (
+                    SELECT FROM information_schema.tables
+                    WHERE table_name = 'camera_object_tracks'
+                )
+            """)
+            if not cursor.fetchone()['exists']:
+                cursor.execute("""
+                    CREATE TABLE camera_object_tracks (
+                        id BIGSERIAL PRIMARY KEY,
+                        camera_id TEXT NOT NULL,
+                        scenario VARCHAR(255) NOT NULL,
+                        bbox_centroid_x INTEGER NOT NULL,
+                        bbox_centroid_y INTEGER NOT NULL,
+                        avg_bbox_width INTEGER NOT NULL,
+                        avg_bbox_height INTEGER NOT NULL,
+                        member_count INTEGER NOT NULL DEFAULT 0,
+                        approved_count INTEGER NOT NULL DEFAULT 0,
+                        rejected_count INTEGER NOT NULL DEFAULT 0,
+                        pending_count INTEGER NOT NULL DEFAULT 0,
+                        auto_approved_count INTEGER NOT NULL DEFAULT 0,
+                        anchor_status VARCHAR(20) DEFAULT 'pending'
+                            CHECK (anchor_status IN ('pending', 'approved', 'rejected', 'conflict')),
+                        anchor_classification JSONB,
+                        classification_conflict BOOLEAN DEFAULT FALSE,
+                        representative_prediction_id BIGINT,
+                        min_confidence REAL,
+                        max_confidence REAL,
+                        avg_confidence REAL,
+                        first_seen REAL,
+                        last_seen REAL,
+                        created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                        updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                    )
+                """)
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_cam_obj_tracks_camera ON camera_object_tracks(camera_id)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_cam_obj_tracks_status ON camera_object_tracks(anchor_status)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_cam_obj_tracks_scenario ON camera_object_tracks(scenario)")
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_cam_obj_tracks_camera_scenario ON camera_object_tracks(camera_id, scenario)")
+                logger.info("Created camera_object_tracks table")
+
+            # Add camera_object_track_id to ai_predictions
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'ai_predictions' AND column_name = 'camera_object_track_id'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("""
+                    ALTER TABLE ai_predictions ADD COLUMN camera_object_track_id BIGINT
+                    REFERENCES camera_object_tracks(id) ON DELETE SET NULL
+                """)
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_cam_track ON ai_predictions(camera_object_track_id)")
+                logger.info("Added camera_object_track_id to ai_predictions")
+
+            # Migration: Add rejection_reason to cross_camera_links
+            cursor.execute("ALTER TABLE cross_camera_links ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR(100)")
+
+            # Migration: Add 'processing' to review_status CHECK constraint
+            # Allows predictions to be held back from review until automated processing completes
+            try:
+                cursor.execute("""
+                    SELECT conname FROM pg_constraint
+                    WHERE conrelid = 'ai_predictions'::regclass
+                      AND contype = 'c'
+                      AND consrc LIKE '%%review_status%%'
+                """)
+                existing = cursor.fetchone()
+                if existing:
+                    constraint_name = existing['conname']
+                    # Check if 'processing' is already in the constraint
+                    cursor.execute("""
+                        SELECT consrc FROM pg_constraint WHERE conname = %s
+                    """, (constraint_name,))
+                    consrc_row = cursor.fetchone()
+                    if consrc_row and 'processing' not in (consrc_row.get('consrc') or ''):
+                        cursor.execute(f"ALTER TABLE ai_predictions DROP CONSTRAINT {constraint_name}")
+                        cursor.execute("""
+                            ALTER TABLE ai_predictions ADD CONSTRAINT ai_predictions_review_status_check
+                            CHECK (review_status IN ('pending', 'approved', 'rejected', 'needs_correction',
+                                                     'auto_approved', 'auto_rejected', 'processing'))
+                        """)
+                        logger.info("Updated review_status CHECK constraint to include 'processing'")
+            except Exception as e:
+                logger.warning(f"review_status constraint migration note: {e}")
 
         logger.info("Migrations completed successfully")
     except Exception as e:

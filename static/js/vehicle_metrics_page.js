@@ -94,9 +94,10 @@ const vehicleMetrics = {
         // Convert to array and sort
         const statsArray = Object.entries(classStats).map(([className, stats]) => {
             const total = stats.total || 0;
-            const reviewed = (stats.approved || 0) + (stats.rejected || 0) + (stats.corrected || 0);
-            const accuracy = reviewed > 0 ? ((stats.approved || 0) / reviewed) * 100 : 0;
-            const correctionRate = reviewed > 0 ? ((stats.corrected || 0) / reviewed) * 100 : 0;
+            const reviewed = (stats.approved || 0) + (stats.rejected || 0);
+            const corrected = stats.corrected || 0;
+            const accuracy = reviewed > 0 ? (Math.max(0, reviewed - corrected) / reviewed) * 100 : 0;
+            const correctionRate = reviewed > 0 ? (corrected / reviewed) * 100 : 0;
 
             return {
                 className,
@@ -150,10 +151,16 @@ const vehicleMetrics = {
         statsArray.forEach(stat => {
             const row = document.createElement('tr');
 
-            // Class name
+            // Class name (clickable link to detail page)
             const classCell = document.createElement('td');
             classCell.className = 'class-name';
-            classCell.textContent = stat.className;
+            const classLink = document.createElement('a');
+            classLink.textContent = stat.className;
+            classLink.href = '/vehicle-metrics/' + encodeURIComponent(stat.className);
+            classLink.style.color = 'inherit';
+            classLink.style.textDecoration = 'underline';
+            classLink.style.cursor = 'pointer';
+            classCell.appendChild(classLink);
             row.appendChild(classCell);
 
             // Total
@@ -231,12 +238,24 @@ const vehicleMetrics = {
 
             const originalCell = document.createElement('td');
             originalCell.className = 'class-name';
-            originalCell.textContent = entry.original_class;
+            const origLink = document.createElement('a');
+            origLink.textContent = entry.original_class;
+            origLink.href = '/vehicle-metrics/' + encodeURIComponent(entry.original_class);
+            origLink.style.color = 'inherit';
+            origLink.style.textDecoration = 'underline';
+            origLink.style.cursor = 'pointer';
+            originalCell.appendChild(origLink);
             row.appendChild(originalCell);
 
             const correctedCell = document.createElement('td');
             correctedCell.className = 'class-name';
-            correctedCell.textContent = entry.corrected_class;
+            const corrLink = document.createElement('a');
+            corrLink.textContent = entry.corrected_class;
+            corrLink.href = '/vehicle-metrics/' + encodeURIComponent(entry.corrected_class);
+            corrLink.style.color = 'inherit';
+            corrLink.style.textDecoration = 'underline';
+            corrLink.style.cursor = 'pointer';
+            correctedCell.appendChild(corrLink);
             row.appendChild(correctedCell);
 
             const countCell = document.createElement('td');

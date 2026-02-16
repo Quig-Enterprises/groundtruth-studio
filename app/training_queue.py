@@ -17,6 +17,7 @@ from typing import Dict, List, Optional
 import boto3
 from botocore.exceptions import ClientError, NoCredentialsError
 
+import psycopg2.extras
 from db_connection import get_connection
 
 logger = logging.getLogger(__name__)
@@ -64,8 +65,24 @@ class TrainingQueueClient:
         self.queue_url = queue_url or os.environ.get('SQS_QUEUE_URL', DEFAULT_QUEUE_URL)
         self.dlq_url = dlq_url or os.environ.get('SQS_DLQ_URL', DEFAULT_DLQ_URL)
 
-        self.sqs = boto3.client('sqs', region_name=self.region)
-        self.s3 = boto3.client('s3', region_name=self.region)
+        try:
+            session = boto3.Session(region_name=self.region)
+            credentials = session.get_credentials()
+            if credentials is None:
+                raise NoCredentialsError()
+            # Resolve to verify credentials are actually available
+            credentials = credentials.get_frozen_credentials()
+            if not credentials.access_key:
+                raise NoCredentialsError()
+            self.sqs = session.client('sqs')
+            self.s3 = session.client('s3')
+            self.local_mode = False
+            logger.info('AWS credentials found, using S3/SQS mode')
+        except (NoCredentialsError, Exception) as e:
+            logger.warning(f'AWS credentials unavailable, running in local mode: {e}')
+            self.sqs = None
+            self.s3 = None
+            self.local_mode = True
 
     def submit_job(self, export_path: str, job_type: str, config: dict,
                    export_config_id: int = None) -> Dict:
@@ -76,6 +93,26 @@ class TrainingQueueClient:
         Returns immediately with job_id and status='uploading'.
         """
         job_id = str(uuid.uuid4())
+
+        if self.local_mode:
+            s3_uri = f'local://{export_path}'
+            config['export_path'] = export_path
+
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    INSERT INTO training_jobs (job_id, job_type, status, s3_uri, config_json, export_config_id)
+                    VALUES (%s, %s, 'queued', %s, %s, %s)
+                ''', (job_id, job_type, s3_uri, json.dumps(config), export_config_id))
+                conn.commit()
+
+            return {
+                'success': True,
+                'job_id': job_id,
+                's3_uri': s3_uri,
+                'status': 'queued'
+            }
+
         s3_uri = f's3://{self.bucket}/{S3_PREFIX}/{job_id}/'
 
         with get_connection() as conn:
@@ -158,6 +195,23 @@ class TrainingQueueClient:
 
     def get_queue_status(self) -> Dict:
         """Get approximate message counts for the main queue and DLQ."""
+        if self.local_mode:
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute('''
+                    SELECT
+                        COUNT(*) FILTER (WHERE status = 'queued') as queued,
+                        COUNT(*) FILTER (WHERE status = 'processing') as processing
+                    FROM training_jobs
+                ''')
+                row = cursor.fetchone()
+                return {
+                    'queue_messages': row[0],
+                    'queue_in_flight': row[1],
+                    'dlq_messages': 0,
+                    'local_mode': True,
+                }
+
         try:
             attrs = ['ApproximateNumberOfMessages', 'ApproximateNumberOfMessagesNotVisible']
 
@@ -191,7 +245,7 @@ class TrainingQueueClient:
     def get_jobs(self, limit: int = 50, offset: int = 0, export_config_id: int = None) -> List[Dict]:
         """Get all training jobs ordered by submission time."""
         with get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             if export_config_id is not None:
                 cursor.execute('''
                     SELECT * FROM training_jobs
@@ -227,7 +281,7 @@ class TrainingQueueClient:
     def get_job(self, job_id: str) -> Optional[Dict]:
         """Get a single training job by its UUID."""
         with get_connection() as conn:
-            cursor = conn.cursor()
+            cursor = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
             cursor.execute('SELECT * FROM training_jobs WHERE job_id = %s', (job_id,))
             row = cursor.fetchone()
 

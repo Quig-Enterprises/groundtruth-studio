@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>Groundtruth Studio - Cross-Camera Review</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="{{ static_v('css/cross-camera-review.css') }}">
+</head>
+<body>
+    <!-- Screen 1: Queue Screen -->
+    <div id="queue-screen" class="screen">
+        <div class="queue-header">
+            <div class="queue-top-bar">
+                <a href="/" class="back-button" id="queue-back">
+                    <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                        <path d="M15 18l-6-6 6-6"/>
+                    </svg>
+                </a>
+                <h1 class="queue-title">Cross-Camera Review</h1>
+            </div>
+            <div class="queue-summary" id="queue-summary">
+                <span id="pending-count">0</span> cross-camera matches to review
+            </div>
+            <div class="filter-chips">
+                <button class="filter-chip active" data-filter="all">All</button>
+                <button class="filter-chip" data-filter="high">High Conf</button>
+                <button class="filter-chip" data-filter="low">Low Conf</button>
+            </div>
+        </div>
+
+        <div class="queue-body">
+            <div class="queue-info">
+                <div class="info-icon">
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                    </svg>
+                    <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="margin-left: -8px; opacity: 0.6;">
+                        <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
+                        <circle cx="12" cy="13" r="4"/>
+                    </svg>
+                </div>
+                <p class="info-text">Review vehicle matches detected between cameras. Confirm if images show the same vehicle, or reject if they don't match.</p>
+            </div>
+            <button class="start-review-button" id="start-review" disabled>
+                Start Review
+            </button>
+        </div>
+    </div>
+
+    <!-- Screen 2: Review Screen -->
+    <div id="review-screen" class="screen hidden">
+        <div class="review-header">
+            <button class="back-button" id="review-back">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                    <path d="M15 18l-6-6 6-6"/>
+                </svg>
+            </button>
+            <h2 class="review-title">Cross-Camera Review</h2>
+            <div class="review-count" id="review-count">0/0</div>
+            <button class="debug-copy-btn" id="btn-copy-debug" title="Copy debug info">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            </button>
+        </div>
+
+        <!-- Progress bar -->
+        <div class="progress-bar-container">
+            <div class="progress-bar" id="progress-bar"></div>
+        </div>
+
+        <!-- Card Stage -->
+        <div class="card-stage" id="card-stage">
+            <div class="card" id="current-card">
+                <!-- Top: Camera A -->
+                <div class="crop-section crop-a">
+                    <div class="crop-image-container">
+                        <img id="img-a" class="crop-image" alt="Camera A" />
+                        <div class="crop-badges">
+                            <span class="badge badge-camera" id="badge-camera-a">cam</span>
+                            <span class="badge badge-time" id="badge-time-a">time</span>
+                        </div>
+                        <span class="badge badge-class" id="badge-class-a"></span>
+                    </div>
+                </div>
+
+                <!-- Confidence divider -->
+                <div class="confidence-divider">
+                    <div class="divider-line"></div>
+                    <span class="confidence-badge" id="confidence-badge">0% match</span>
+                    <div class="divider-line"></div>
+                </div>
+
+                <!-- Bottom: Camera B -->
+                <div class="crop-section crop-b">
+                    <div class="crop-image-container">
+                        <img id="img-b" class="crop-image" alt="Camera B" />
+                        <div class="crop-badges">
+                            <span class="badge badge-camera" id="badge-camera-b">cam</span>
+                            <span class="badge badge-time" id="badge-time-b">time</span>
+                        </div>
+                        <span class="badge badge-class" id="badge-class-b"></span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Edge glow indicators -->
+        <div class="edge-glow edge-glow-left" id="glow-left"></div>
+        <div class="edge-glow edge-glow-right" id="glow-right"></div>
+
+        <!-- Action Buttons -->
+        <div class="action-buttons">
+            <button class="action-btn reject-btn" id="btn-reject" title="Reject (← or A)">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M18 6L6 18M6 6l12 12"/>
+                </svg>
+            </button>
+            <button class="action-btn skip-btn" id="btn-skip" title="Skip (↓ or S)">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
+                </svg>
+            </button>
+            <button class="action-btn confirm-btn" id="btn-confirm" title="Confirm (→ or D)">
+                <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                    <path d="M20 6L9 17l-5-5"/>
+                </svg>
+            </button>
+        </div>
+
+        <!-- Undo bar -->
+        <div class="undo-bar hidden" id="undo-bar">
+            <button class="undo-button" id="btn-undo">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M3 7v6h6"/><path d="M3 13a9 9 0 1 0 2.6-6.4L3 9"/>
+                </svg>
+                Undo
+            </button>
+        </div>
+    </div>
+
+    <!-- Rejection Feedback Bottom Sheet -->
+    <div id="reject-sheet" class="bottom-sheet">
+        <div class="sheet-grabber"></div>
+        <h3 class="sheet-heading">Why reject this match?</h3>
+
+        <div class="rejection-reasons">
+            <button class="reason-chip" data-reason="not_same_vehicle">Not same vehicle</button>
+            <button class="reason-chip" data-reason="not_same_person">Not same person</button>
+            <button class="reason-chip" data-reason="not_same_object">Not same object</button>
+            <button class="reason-chip" data-reason="bad_image_quality">Bad image quality</button>
+            <button class="reason-chip" data-reason="wrong_time_window">Wrong time window</button>
+            <button class="reason-chip" data-reason="other">Other</button>
+        </div>
+
+        <div class="other-input-container hidden" id="other-input-container">
+            <input type="text" class="other-input" id="other-input" placeholder="Describe the issue..." maxlength="100">
+        </div>
+
+        <div class="sheet-actions">
+            <button class="skip-feedback-button" id="skip-feedback">Skip feedback</button>
+            <button class="done-button" id="done-feedback">Done</button>
+        </div>
+    </div>
+    <div class="sheet-backdrop hidden" id="sheet-backdrop"></div>
+
+    <!-- Screen 3: Summary Screen -->
+    <div id="summary-screen" class="screen hidden">
+        <div class="summary-container">
+            <div class="completion-ring-container">
+                <svg class="completion-ring" width="160" height="160" viewBox="0 0 160 160">
+                    <circle cx="80" cy="80" r="70" stroke="#262626" stroke-width="8" fill="none"/>
+                    <circle cx="80" cy="80" r="70" stroke="url(#gradient-ring)" stroke-width="8" fill="none"
+                            stroke-dasharray="439.82" stroke-dashoffset="439.82" stroke-linecap="round"
+                            transform="rotate(-90 80 80)" class="completion-ring-fill" id="completion-ring-fill"/>
+                    <defs>
+                        <linearGradient id="gradient-ring" x1="0%" y1="0%" x2="100%" y2="100%">
+                            <stop offset="0%" stop-color="#2DD4BF"/>
+                            <stop offset="100%" stop-color="#0D9488"/>
+                        </linearGradient>
+                    </defs>
+                </svg>
+                <div class="completion-count" id="completion-count">0</div>
+            </div>
+
+            <div class="completion-subtitle">matches reviewed</div>
+
+            <div class="summary-stats">
+                <div class="stat-card stat-confirmed">
+                    <div class="stat-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M20 6L9 17l-5-5"/>
+                        </svg>
+                    </div>
+                    <div class="stat-value" id="confirmed-count">0</div>
+                    <div class="stat-label">Confirmed</div>
+                </div>
+
+                <div class="stat-card stat-rejected">
+                    <div class="stat-icon">
+                        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+                            <path d="M18 6L6 18M6 6l12 12"/>
+                        </svg>
+                    </div>
+                    <div class="stat-value" id="rejected-count">0</div>
+                    <div class="stat-label">Rejected</div>
+                </div>
+            </div>
+
+            <div class="skipped-line" id="skipped-line">
+                <span id="skipped-count">0</span> skipped
+            </div>
+
+            <div class="summary-actions">
+                <button class="summary-button primary-button" id="back-to-queue">Back to Queue</button>
+                <button class="summary-button secondary-button" id="review-skipped">Review Skipped</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ static_v('js/cross-camera-review.js') }}"></script>
+</body>
+</html>

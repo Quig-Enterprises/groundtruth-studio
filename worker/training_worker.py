@@ -1,11 +1,15 @@
 #!/usr/bin/env python3
 """
 Training Worker
-Polls SQS for training jobs, syncs data from S3 to local storage,
-and executes configurable training commands.
+Polls for training jobs and executes configurable training commands.
+
+Supports two modes:
+  - SQS mode (default): Polls AWS SQS for jobs, syncs data from S3
+  - Local mode (--local): Polls Studio API for jobs, uses local data paths
 
 Usage:
-    python training_worker.py
+    python training_worker.py --local
+    python training_worker.py --local --studio-url http://localhost:5050
     python training_worker.py --nas-path /mnt/nas/training-jobs
     python training_worker.py --once  # Process one job and exit
 
@@ -14,8 +18,8 @@ Environment variables:
     SQS_QUEUE_URL       (default: groundtruth-studio-queue)
     S3_BUCKET           (default: groundtruth-studio)
     NAS_PATH            (default: /mnt/nas/training-jobs)
-    STUDIO_URL          (default: http://localhost:5000)
-    POLL_INTERVAL       (default: 20, SQS long poll seconds)
+    STUDIO_URL          (default: http://localhost:5050)
+    POLL_INTERVAL       (default: 20, seconds between polls)
     MAX_RETRIES         (default: 3, retries for S3 downloads)
 """
 
@@ -29,9 +33,7 @@ import sys
 import time
 from pathlib import Path
 
-import boto3
 import requests
-from botocore.exceptions import ClientError
 
 logging.basicConfig(
     level=logging.INFO,
@@ -44,16 +46,18 @@ DEFAULT_REGION = 'us-east-2'
 DEFAULT_QUEUE_URL = 'https://sqs.us-east-2.amazonaws.com/051951709252/groundtruth-studio-queue'
 DEFAULT_BUCKET = 'groundtruth-studio'
 DEFAULT_NAS_PATH = '/mnt/nas/training-jobs'
-DEFAULT_STUDIO_URL = 'http://localhost:5000'
+DEFAULT_STUDIO_URL = 'http://localhost:5050'
 DEFAULT_POLL_INTERVAL = 20
 DEFAULT_MAX_RETRIES = 3
 
 # Training commands per job type. Substitution variables:
-#   {job_id}, {data_dir}, {model_type}, {epochs}, {labels}
+#   {job_id}, {data_dir}, {model_type}, {epochs}, {labels}, {gpu_device}
 #   For vibration jobs: {train_file}, {val_file}, {manifest}, {format}
 # Override with TRAINING_COMMANDS env var (JSON object).
 DEFAULT_TRAINING_COMMANDS = {
     'yolo-training': 'yolo train data={data_dir}/data.yaml model={model_type} epochs={epochs} imgsz=640',
+    'yolo': 'yolo train data={data_dir}/data.yaml model={model_type}.pt epochs={epochs} imgsz=640 device={gpu_device} project={data_dir} name=train_run',
+    'yolov8_train': 'yolo train data={data_dir}/data.yaml model={model_type}.pt epochs={epochs} imgsz=640 device={gpu_device} project={data_dir} name=train_run',
     'bearing-fault': 'python3 train_bearing_fault.py --train {train_file} --val {val_file} --model {model_type} --epochs {epochs} --labels "{labels}"',
     'bearing-fault-training': 'python3 train_bearing_fault.py --train {train_file} --val {val_file} --model {model_type} --epochs {epochs} --labels "{labels}"',
     'vibration': 'python3 train_bearing_fault.py --train {train_file} --val {val_file} --model {model_type} --epochs {epochs} --labels "{labels}"',
@@ -64,7 +68,8 @@ DEFAULT_TRAINING_COMMANDS = {
 
 class TrainingWorker:
     def __init__(self, nas_path=None, studio_url=None, region=None,
-                 queue_url=None, bucket=None, poll_interval=None, max_retries=None):
+                 queue_url=None, bucket=None, poll_interval=None,
+                 max_retries=None, local_mode=False):
         self.nas_path = Path(nas_path or os.environ.get('NAS_PATH', DEFAULT_NAS_PATH))
         self.studio_url = (studio_url or os.environ.get('STUDIO_URL', DEFAULT_STUDIO_URL)).rstrip('/')
         self.region = region or os.environ.get('AWS_REGION', DEFAULT_REGION)
@@ -72,9 +77,17 @@ class TrainingWorker:
         self.bucket = bucket or os.environ.get('S3_BUCKET', DEFAULT_BUCKET)
         self.poll_interval = int(poll_interval or os.environ.get('POLL_INTERVAL', DEFAULT_POLL_INTERVAL))
         self.max_retries = int(max_retries or os.environ.get('MAX_RETRIES', DEFAULT_MAX_RETRIES))
+        self.local_mode = local_mode
 
-        self.sqs = boto3.client('sqs', region_name=self.region)
-        self.s3 = boto3.client('s3', region_name=self.region)
+        # Only initialize AWS clients when not in local mode
+        if self.local_mode:
+            self.sqs = None
+            self.s3 = None
+            logger.info('Running in LOCAL mode (no AWS credentials required)')
+        else:
+            import boto3
+            self.sqs = boto3.client('sqs', region_name=self.region)
+            self.s3 = boto3.client('s3', region_name=self.region)
 
         # Load training commands (allow override via env)
         commands_env = os.environ.get('TRAINING_COMMANDS')
@@ -94,31 +107,122 @@ class TrainingWorker:
         self.running = False
 
     def run(self, once=False):
-        """Main loop: poll SQS and process jobs."""
+        """Main loop: poll for jobs and process them."""
         logger.info('Training worker started')
+        logger.info(f'  Mode:        {"LOCAL" if self.local_mode else "SQS/S3"}')
         logger.info(f'  NAS path:    {self.nas_path}')
         logger.info(f'  Studio URL:  {self.studio_url}')
-        logger.info(f'  Queue:       {self.queue_url}')
-        logger.info(f'  Bucket:      {self.bucket}')
+        if not self.local_mode:
+            logger.info(f'  Queue:       {self.queue_url}')
+            logger.info(f'  Bucket:      {self.bucket}')
 
         while self.running:
             try:
-                message = self._poll_message()
-                if message:
-                    self._process_message(message)
-                    if once:
+                if self.local_mode:
+                    job = self._poll_local()
+                    if job:
+                        self._process_local_job(job)
+                        if once:
+                            break
+                    else:
+                        if once:
+                            logger.info('No jobs available, exiting (--once mode)')
+                            break
+                        # Sleep before polling again when no job found
+                        time.sleep(self.poll_interval)
+                else:
+                    message = self._poll_message()
+                    if message:
+                        self._process_message(message)
+                        if once:
+                            break
+                    elif once:
+                        logger.info('No messages available, exiting (--once mode)')
                         break
-                elif once:
-                    logger.info('No messages available, exiting (--once mode)')
-                    break
             except Exception as e:
                 logger.error(f'Unexpected error in main loop: {e}', exc_info=True)
                 time.sleep(5)
 
         logger.info('Training worker stopped')
 
+    # ── Local mode polling ─────────────────────────────────────────────
+
+    def _poll_local(self):
+        """Poll Studio API for the next queued job (local mode)."""
+        try:
+            resp = requests.get(
+                f'{self.studio_url}/api/training/jobs/next',
+                timeout=15
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                job = data.get('job')
+                if job is not None:
+                    config = job.get('config', {})
+                    if isinstance(config, str):
+                        try:
+                            config = json.loads(config)
+                        except (json.JSONDecodeError, TypeError):
+                            config = {}
+                    # Also try config_json field
+                    config_json = job.get('config_json')
+                    if config_json and isinstance(config_json, str):
+                        try:
+                            config = json.loads(config_json)
+                        except (json.JSONDecodeError, TypeError):
+                            pass
+
+                    return {
+                        'job_id': job.get('job_id') or job.get('id'),
+                        'job_type': job.get('job_type') or job.get('type', 'custom'),
+                        's3_uri': job.get('s3_uri') or job.get('data_uri', ''),
+                        'config': config,
+                    }
+            elif resp.status_code == 204:
+                # No jobs available
+                return None
+            else:
+                logger.warning(f'Unexpected status from claim endpoint: {resp.status_code}')
+                return None
+        except requests.exceptions.ConnectionError:
+            logger.warning(f'Could not connect to Studio at {self.studio_url}')
+            return None
+        except Exception as e:
+            logger.error(f'Error polling local jobs: {e}')
+            return None
+
+    def _process_local_job(self, job):
+        """Process a job obtained from local polling."""
+        job_id = job['job_id']
+        job_type = job['job_type']
+        data_uri = job['s3_uri']
+        config = job['config']
+
+        logger.info(f'Claimed job {job_id} (type: {job_type})')
+
+        try:
+            # Resolve data directory (local:// or s3://)
+            job_dir = self._resolve_data_dir(job_id, data_uri)
+
+            # Run training command
+            stdout, stderr = self._run_training(job_id, job_type, job_dir, config)
+
+            # Parse training metrics from output
+            metrics = self._parse_training_metrics(job_type, job_dir, stdout, stderr)
+
+            # Report success with metrics
+            self._report_complete(job_id, config=config, metrics=metrics)
+            logger.info(f'Job {job_id} completed successfully')
+
+        except Exception as e:
+            logger.error(f'Job {job_id} failed: {e}', exc_info=True)
+            self._report_failure(job_id, str(e))
+
+    # ── SQS mode polling ──────────────────────────────────────────────
+
     def _poll_message(self):
         """Long-poll SQS for one message."""
+        from botocore.exceptions import ClientError
         try:
             resp = self.sqs.receive_message(
                 QueueUrl=self.queue_url,
@@ -158,8 +262,8 @@ class TrainingWorker:
             return
 
         try:
-            # Sync data from S3 to local NAS
-            job_dir = self._sync_from_s3(job_id, data_uri)
+            # Resolve data directory (local:// or s3://)
+            job_dir = self._resolve_data_dir(job_id, data_uri)
 
             # Run training command
             stdout, stderr = self._run_training(job_id, job_type, job_dir, config)
@@ -196,8 +300,42 @@ class TrainingWorker:
             logger.warning(f'Could not reach Studio to claim job {job_id}: {e}')
             return True
 
+    # ── Data resolution ───────────────────────────────────────────────
+
+    def _resolve_data_dir(self, job_id, data_uri):
+        """Resolve a data URI to a local directory path.
+
+        Handles:
+          - local:///path/to/data  -> use /path/to/data directly
+          - s3://bucket/prefix     -> sync from S3 to NAS
+        """
+        if data_uri.startswith('local://'):
+            local_path = Path(data_uri[len('local://'):])
+            if not local_path.exists():
+                raise FileNotFoundError(f'Local data directory does not exist: {local_path}')
+            logger.info(f'Using local data directory: {local_path}')
+            return local_path
+
+        if data_uri.startswith('s3://'):
+            return self._sync_from_s3(job_id, data_uri)
+
+        # Fallback: treat as a local path if it looks like one
+        if data_uri.startswith('/'):
+            local_path = Path(data_uri)
+            if local_path.exists():
+                logger.info(f'Using path as local data directory: {local_path}')
+                return local_path
+
+        # Default: try S3 sync
+        return self._sync_from_s3(job_id, data_uri)
+
     def _sync_from_s3(self, job_id, data_uri):
         """Download job data from S3 to local NAS directory."""
+        from botocore.exceptions import ClientError
+
+        if self.s3 is None:
+            raise RuntimeError('S3 client not initialized (running in local mode but got s3:// URI)')
+
         job_dir = self.nas_path / job_id
         job_dir.mkdir(parents=True, exist_ok=True)
 
@@ -233,6 +371,8 @@ class TrainingWorker:
 
         logger.info(f'Synced {file_count} files to {job_dir}')
         return job_dir
+
+    # ── Training execution ────────────────────────────────────────────
 
     def _detect_vibration_files(self, job_dir):
         """Auto-detect vibration/bearing-fault data files and return substitution dict."""
@@ -295,6 +435,7 @@ class TrainingWorker:
             'model_type': config.get('model_type', 'yolov8n'),
             'epochs': str(config.get('epochs', 100)),
             'labels': config.get('labels', ''),
+            'gpu_device': str(config.get('gpu_device', 0)),
         }
 
         # Auto-detect vibration/bearing-fault data files
@@ -336,10 +477,11 @@ class TrainingWorker:
         job_dir = Path(job_dir)
 
         try:
-            if job_type in ('yolo-training', 'yolo'):
+            if job_type in ('yolo-training', 'yolo', 'yolov8_train'):
                 # Parse YOLO results.csv from ultralytics output
                 # Look for results.csv in common locations
                 for results_path in [
+                    job_dir / 'train_run' / 'results.csv',
                     job_dir / 'runs' / 'detect' / 'train' / 'results.csv',
                     job_dir / 'train' / 'results.csv',
                     *job_dir.rglob('results.csv')
@@ -405,6 +547,8 @@ class TrainingWorker:
 
         return metrics if metrics else None
 
+    # ── Reporting ─────────────────────────────────────────────────────
+
     def _report_complete(self, job_id, callback_url=None, config=None, metrics=None):
         """Report job completion to Studio, including optional training metrics."""
         url = callback_url or f'/api/training/jobs/{job_id}/complete'
@@ -434,6 +578,7 @@ class TrainingWorker:
 
     def _delete_message(self, receipt_handle):
         """Delete processed message from SQS."""
+        from botocore.exceptions import ClientError
         try:
             self.sqs.delete_message(
                 QueueUrl=self.queue_url,
@@ -455,12 +600,14 @@ class TrainingWorker:
 
 def main():
     parser = argparse.ArgumentParser(description='Groundtruth Studio Training Worker')
+    parser.add_argument('--local', action='store_true',
+                        help='Run in local mode (poll Studio API instead of SQS, no AWS credentials needed)')
     parser.add_argument('--nas-path', default=None, help=f'Local data directory (default: {DEFAULT_NAS_PATH})')
     parser.add_argument('--studio-url', default=None, help=f'Studio API URL (default: {DEFAULT_STUDIO_URL})')
     parser.add_argument('--region', default=None, help=f'AWS region (default: {DEFAULT_REGION})')
     parser.add_argument('--queue-url', default=None, help='SQS queue URL')
     parser.add_argument('--bucket', default=None, help=f'S3 bucket (default: {DEFAULT_BUCKET})')
-    parser.add_argument('--poll-interval', default=None, type=int, help=f'SQS long poll seconds (default: {DEFAULT_POLL_INTERVAL})')
+    parser.add_argument('--poll-interval', default=None, type=int, help=f'Poll interval seconds (default: {DEFAULT_POLL_INTERVAL})')
     parser.add_argument('--once', action='store_true', help='Process one job and exit')
     parser.add_argument('--verbose', '-v', action='store_true', help='Debug logging')
 
@@ -476,6 +623,7 @@ def main():
         queue_url=args.queue_url,
         bucket=args.bucket,
         poll_interval=args.poll_interval,
+        local_mode=args.local,
     )
 
     worker.run(once=args.once)

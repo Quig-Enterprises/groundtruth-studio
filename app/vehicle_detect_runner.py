@@ -58,6 +58,9 @@ CLASS_CONF_THRESHOLDS = {
     "canoe": 0.10,
     "sailboat": 0.12,
     "jet ski": 0.12,
+    # Decoy classes (low threshold to catch false positives)
+    "flag": 0.10,
+    "animal": 0.10,
 }
 DEFAULT_CONF_THRESHOLD = 0.15
 
@@ -101,10 +104,16 @@ ALL_CLASSES = [
     "canoe",
     "sailboat",
     "jet ski personal watercraft",
+    # Decoy classes (absorb false positives — not submitted as vehicles)
+    "flag banner wind sock",
+    "animal dog deer bird",
 ]
 
 # Index of person class (for filtering pre-screen vs vehicle predictions)
 PERSON_CLASS_ID = 0  # "person" is first in ALL_CLASSES
+
+# Classes excluded from vehicle predictions
+NON_VEHICLE_CLASSES = {"person", "flag", "animal"}
 
 # Map YOLO-World prompt text to clean display names for GT Studio
 VEHICLE_DISPLAY_NAMES = {
@@ -132,6 +141,8 @@ VEHICLE_DISPLAY_NAMES = {
     "canoe": "canoe",
     "sailboat": "sailboat",
     "jet ski personal watercraft": "jet ski",
+    "flag banner wind sock": "flag",
+    "animal dog deer bird": "animal",
 }
 
 
@@ -191,6 +202,142 @@ def _apply_confusion_rules(predictions: list) -> list:
     return predictions
 
 
+def _is_likely_tree(img, bbox, green_threshold=0.55):
+    """Check if a bbox region is predominantly green/brown foliage.
+
+    Crops the bbox from the image, converts to HSV, and counts pixels
+    in the green-foliage and brown-bark color ranges. If the combined
+    ratio exceeds the threshold, this detection is likely a tree.
+
+    Args:
+        img: PIL Image (already loaded for inference)
+        bbox: dict with x, y, width, height
+        green_threshold: fraction of pixels that must be green/brown (default 0.55)
+
+    Returns:
+        True if likely a tree, False otherwise
+    """
+    import numpy as np
+    import cv2
+
+    crop = img.crop((bbox['x'], bbox['y'],
+                     bbox['x'] + bbox['width'],
+                     bbox['y'] + bbox['height']))
+    crop_np = np.array(crop.convert('RGB'))
+    hsv = cv2.cvtColor(crop_np, cv2.COLOR_RGB2HSV)
+
+    total_pixels = hsv.shape[0] * hsv.shape[1]
+    if total_pixels == 0:
+        return False
+
+    # Green foliage: H=35-85, S>40, V>30 (broad green range)
+    green_mask = ((hsv[:,:,0] >= 35) & (hsv[:,:,0] <= 85) &
+                  (hsv[:,:,1] >= 40) & (hsv[:,:,2] >= 30))
+
+    # Brown bark/branches: H=10-25, S>30, V>20
+    brown_mask = ((hsv[:,:,0] >= 10) & (hsv[:,:,0] <= 25) &
+                  (hsv[:,:,1] >= 30) & (hsv[:,:,2] >= 20))
+
+    foliage_ratio = (np.count_nonzero(green_mask) + np.count_nonzero(brown_mask)) / total_pixels
+    return foliage_ratio >= green_threshold
+
+
+# Static object exclusion zones — cached per camera
+_exclusion_zones = {}  # camera_id -> list of (x, y, radius)
+_exclusion_zones_loaded_at = 0  # timestamp of last load
+
+def _load_exclusion_zones():
+    """Load static object exclusion zones from rejection history.
+
+    Queries the database for bbox locations that have been rejected 5+ times
+    on the same camera (rounded to 20px grid). These represent fixed objects
+    like wreaths, signs, etc. that the model keeps misdetecting.
+
+    Cached for 1 hour to avoid repeated DB queries.
+    """
+    global _exclusion_zones, _exclusion_zones_loaded_at
+
+    try:
+        conn = _get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute('''
+                    SELECT v.camera_id,
+                           ROUND(p.bbox_x / 20.0) * 20 as bx,
+                           ROUND(p.bbox_y / 20.0) * 20 as by,
+                           COUNT(*) as rejection_count
+                    FROM ai_predictions p
+                    JOIN videos v ON p.video_id = v.id
+                    WHERE p.review_status IN ('rejected', 'auto_rejected')
+                    AND p.bbox_x IS NOT NULL
+                    AND v.camera_id IS NOT NULL
+                    GROUP BY v.camera_id, bx, by
+                    HAVING COUNT(*) >= 5
+                ''')
+                zones = {}
+                for row in cur.fetchall():
+                    cam = row[0]
+                    if cam not in zones:
+                        zones[cam] = []
+                    zones[cam].append((int(row[1]), int(row[2]), 30))  # 30px radius
+                _exclusion_zones = zones
+                _exclusion_zones_loaded_at = time.time()
+                total = sum(len(v) for v in zones.values())
+                if total > 0:
+                    logger.info(f"Loaded {total} static exclusion zones across {len(zones)} cameras")
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to load exclusion zones: {e}")
+
+
+def _get_camera_id(video_id):
+    """Look up camera_id for a video."""
+    try:
+        conn = _get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT camera_id FROM videos WHERE id = %s", (video_id,))
+                row = cur.fetchone()
+                return row[0] if row else None
+        finally:
+            conn.close()
+    except Exception:
+        return None
+
+
+def _is_in_exclusion_zone(camera_id, bbox):
+    """Check if a bbox center falls within a static object exclusion zone.
+
+    Args:
+        camera_id: Camera identifier string
+        bbox: dict with x, y, width, height
+
+    Returns:
+        True if bbox center is within an exclusion zone
+    """
+    global _exclusion_zones_loaded_at
+
+    if not camera_id:
+        return False
+
+    # Reload zones if stale (every hour)
+    if time.time() - _exclusion_zones_loaded_at > 3600:
+        _load_exclusion_zones()
+
+    zones = _exclusion_zones.get(camera_id)
+    if not zones:
+        return False
+
+    cx = bbox['x'] + bbox['width'] // 2
+    cy = bbox['y'] + bbox['height'] // 2
+
+    for zx, zy, radius in zones:
+        if abs(cx - zx) <= radius and abs(cy - zy) <= radius:
+            return True
+    return False
+
+
 def _cross_class_nms(predictions: list, iou_threshold: float = 0.5) -> list:
     """
     Suppress overlapping detections across different classes.
@@ -241,7 +388,7 @@ def _cross_class_nms(predictions: list, iou_threshold: float = 0.5) -> list:
 def _deduplicate_across_frames(all_detections: list) -> list:
     """Merge detections from different frames that represent the same object.
 
-    Same class + IoU > 0.5 between frames = same object.
+    Same class + (IoU >= 0.35 OR centroid within 40% of bbox size) = same object.
     Keep highest confidence detection, store earliest timestamp.
     """
     if len(all_detections) <= 1:
@@ -272,17 +419,32 @@ def _deduplicate_across_frames(all_detections: list) -> list:
             ix2, iy2 = min(ax2, bx2), min(ay2, by2)
             inter = max(0, ix2 - ix1) * max(0, iy2 - iy1)
 
-            if inter > 0:
-                area_a = box_a['width'] * box_a['height']
-                area_b = box_b['width'] * box_b['height']
-                iou = inter / (area_a + area_b - inter)
+            area_a = box_a['width'] * box_a['height']
+            area_b = box_b['width'] * box_b['height']
+            union = area_a + area_b - inter
+            iou = inter / union if union > 0 else 0.0
 
-                if iou >= 0.5:
-                    # Keep earliest timestamp on the kept (higher confidence) detection
-                    if det['timestamp'] < kept['timestamp']:
-                        kept['timestamp'] = det['timestamp']
-                    is_duplicate = True
-                    break
+            if iou >= 0.35:
+                # Good bbox overlap - same object
+                if det['timestamp'] < kept['timestamp']:
+                    kept['timestamp'] = det['timestamp']
+                is_duplicate = True
+                break
+
+            # Fallback: centroid distance check for moving objects
+            # If centroids are within 40% of the average bbox dimension, likely same object
+            cx_a = box_a['x'] + box_a['width'] / 2
+            cy_a = box_a['y'] + box_a['height'] / 2
+            cx_b = box_b['x'] + box_b['width'] / 2
+            cy_b = box_b['y'] + box_b['height'] / 2
+            avg_size = (box_a['width'] + box_a['height'] + box_b['width'] + box_b['height']) / 4
+            dist = ((cx_a - cx_b) ** 2 + (cy_a - cy_b) ** 2) ** 0.5
+
+            if avg_size > 0 and dist < avg_size * 0.4:
+                if det['timestamp'] < kept['timestamp']:
+                    kept['timestamp'] = det['timestamp']
+                is_duplicate = True
+                break
 
         if not is_duplicate:
             unique.append(det)
@@ -438,6 +600,23 @@ def _has_multiframe_predictions(video_id: int) -> bool:
         return False
 
 
+def _auto_reject_batch(batch_id: str):
+    """Mark all predictions in a batch as auto_rejected."""
+    try:
+        conn = _get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE ai_predictions SET review_status = 'auto_rejected' WHERE batch_id = %s",
+                    (batch_id,)
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        logger.error(f"Failed to auto-reject batch {batch_id}: {e}")
+
+
 def run_vehicle_detection(video_id: int, thumbnail_path: str, force_review: bool = True) -> Optional[Dict]:
     """
     Run YOLO-World pre-screening + vehicle detection on a thumbnail.
@@ -496,7 +675,10 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
         inference_time_ms = (time.time() - start_time) * 1000
 
         vehicle_predictions = []
+        flag_predictions = []
+        animal_predictions = []
         person_count = 0
+        person_bboxes = []
         result = results[0]
 
         if result.boxes is not None and len(result.boxes) > 0:
@@ -521,6 +703,7 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
                 if class_id == PERSON_CLASS_ID:
                     if confidence >= CLASS_CONF_THRESHOLDS.get("person", DEFAULT_CONF_THRESHOLD):
                         person_count += 1
+                        person_bboxes.append(bbox)
                     continue
 
                 # Vehicle detections → submit as predictions
@@ -530,6 +713,38 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
                 # Per-class confidence threshold
                 min_conf = CLASS_CONF_THRESHOLDS.get(class_name, DEFAULT_CONF_THRESHOLD)
                 if confidence < min_conf:
+                    continue
+
+                # Route decoy classes to separate lists
+                if class_name == "flag":
+                    flag_predictions.append({
+                        'prediction_type': 'keyframe',
+                        'confidence': round(confidence, 4),
+                        'timestamp': 0.0,
+                        'scenario': 'flag_detection',
+                        'tags': {
+                            'class': class_name,
+                            'class_id': class_id,
+                            'yolo_world_prompt': raw_class
+                        },
+                        'bbox': bbox,
+                        'inference_time_ms': round(inference_time_ms, 2)
+                    })
+                    continue
+                elif class_name == "animal":
+                    animal_predictions.append({
+                        'prediction_type': 'keyframe',
+                        'confidence': round(confidence, 4),
+                        'timestamp': 0.0,
+                        'scenario': 'animal_detection',
+                        'tags': {
+                            'class': class_name,
+                            'class_id': class_id,
+                            'yolo_world_prompt': raw_class
+                        },
+                        'bbox': bbox,
+                        'inference_time_ms': round(inference_time_ms, 2)
+                    })
                     continue
 
                 vehicle_predictions.append({
@@ -553,10 +768,37 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
         # Apply heuristic rules for commonly confused pairs
         vehicle_predictions = _apply_confusion_rules(vehicle_predictions)
 
+        # Filter tree false positives (HSV color check on bbox crops)
+        pre_tree_vehicle_count = len(vehicle_predictions)
+        vehicle_predictions = [p for p in vehicle_predictions if not _is_likely_tree(img, p['bbox'])]
+        tree_filtered_vehicles = pre_tree_vehicle_count - len(vehicle_predictions)
+
+        pre_tree_person_count = person_count
+        person_bboxes = [b for b in person_bboxes if not _is_likely_tree(img, b)]
+        person_count = len(person_bboxes)
+        tree_filtered_persons = pre_tree_person_count - person_count
+
+        if tree_filtered_vehicles or tree_filtered_persons:
+            logger.info(f"Tree filter video {video_id}: removed {tree_filtered_vehicles} vehicles, {tree_filtered_persons} persons")
+
+        # Filter static object exclusion zones (fixed objects like wreaths, signs)
+        camera_id = _get_camera_id(video_id)
+        if camera_id:
+            pre_zone_vehicles = len(vehicle_predictions)
+            vehicle_predictions = [p for p in vehicle_predictions if not _is_in_exclusion_zone(camera_id, p['bbox'])]
+            pre_zone_persons = person_count
+            person_bboxes = [b for b in person_bboxes if not _is_in_exclusion_zone(camera_id, b)]
+            person_count = len(person_bboxes)
+            zone_filtered_vehicles = pre_zone_vehicles - len(vehicle_predictions)
+            zone_filtered_persons = pre_zone_persons - person_count
+            if zone_filtered_vehicles or zone_filtered_persons:
+                logger.info(f"Exclusion zone filter video {video_id} ({camera_id}): removed {zone_filtered_vehicles} vehicles, {zone_filtered_persons} persons")
+
         vehicle_count = len(vehicle_predictions)
         logger.info(
             f"Pre-screen video {video_id}: {person_count} persons, "
-            f"{vehicle_count} vehicles ({inference_time_ms:.0f}ms)"
+            f"{vehicle_count} vehicles, {len(flag_predictions)} flags, "
+            f"{len(animal_predictions)} animals ({inference_time_ms:.0f}ms)"
         )
 
         # --- Conditional person-face-v1 trigger ---
@@ -604,10 +846,59 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
             # No vehicles found — store a scan marker so we don't re-process this video
             _store_scan_marker(video_id, person_count, inference_time_ms)
 
+        # --- Submit decoy detections ---
+        if flag_predictions:
+            batch_id = f"flag-detect-{int(time.time())}"
+            flag_payload = {
+                'video_id': video_id,
+                'model_name': MODEL_NAME,
+                'model_version': MODEL_VERSION,
+                'model_type': MODEL_TYPE,
+                'batch_id': batch_id,
+                'predictions': flag_predictions,
+                'force_review': False
+            }
+            try:
+                resp = requests.post(
+                    f"{API_BASE_URL}/api/ai/predictions/batch",
+                    json=flag_payload,
+                    headers={'X-Auth-Role': 'admin'},
+                    timeout=30
+                )
+                resp.raise_for_status()
+                _auto_reject_batch(batch_id)
+                logger.info(f"Auto-rejected {len(flag_predictions)} flag detections for video {video_id}")
+            except Exception as e:
+                logger.error(f"Failed to submit flag detections for video {video_id}: {e}")
+
+        if animal_predictions:
+            animal_payload = {
+                'video_id': video_id,
+                'model_name': MODEL_NAME,
+                'model_version': MODEL_VERSION,
+                'model_type': MODEL_TYPE,
+                'batch_id': f"animal-detect-{int(time.time())}",
+                'predictions': animal_predictions,
+                'force_review': force_review
+            }
+            try:
+                resp = requests.post(
+                    f"{API_BASE_URL}/api/ai/predictions/batch",
+                    json=animal_payload,
+                    headers={'X-Auth-Role': 'admin'},
+                    timeout=30
+                )
+                resp.raise_for_status()
+                logger.info(f"Submitted {len(animal_predictions)} animal detections for video {video_id}")
+            except Exception as e:
+                logger.error(f"Failed to submit animal detections for video {video_id}: {e}")
+
         result = {
             'video_id': video_id,
             'persons_prescreened': person_count,
             'vehicles': vehicle_count,
+            'flags': len(flag_predictions),
+            'animals': len(animal_predictions),
             'submitted': len(vehicle_predictions),
             'person_face_triggered': person_count > 0
         }
@@ -717,9 +1008,12 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
         logger.info(f"Multi-frame video {video_id}: sampling {len(sample_times)} frames from {duration:.1f}s video")
 
         all_vehicle_detections = []
+        all_flag_detections = []
+        all_animal_detections = []
         total_person_count = 0
         total_inference_ms = 0.0
         frames_processed = 0
+        mf_camera_id = _get_camera_id(video_id)
 
         for timestamp in sample_times:
             # Seek to frame
@@ -771,7 +1065,8 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
                 # Person pre-screen
                 if class_id == PERSON_CLASS_ID:
                     if confidence >= CLASS_CONF_THRESHOLDS.get("person", DEFAULT_CONF_THRESHOLD):
-                        total_person_count += 1
+                        if not _is_likely_tree(pil_img, bbox) and not _is_in_exclusion_zone(mf_camera_id, bbox):
+                            total_person_count += 1
                     continue
 
                 # Vehicle detection
@@ -780,6 +1075,50 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
 
                 min_conf = CLASS_CONF_THRESHOLDS.get(class_name, DEFAULT_CONF_THRESHOLD)
                 if confidence < min_conf:
+                    continue
+
+                # Route decoy classes to separate lists
+                if class_name == "flag":
+                    all_flag_detections.append({
+                        'prediction_type': 'keyframe',
+                        'confidence': round(confidence, 4),
+                        'timestamp': round(timestamp, 2),
+                        'scenario': 'flag_detection',
+                        'tags': {
+                            'class': class_name,
+                            'class_id': class_id,
+                            'yolo_world_prompt': raw_class,
+                            'source': 'multiframe',
+                            'source_frame_time': round(timestamp, 2)
+                        },
+                        'bbox': bbox,
+                        'inference_time_ms': round(frame_inference_ms, 2)
+                    })
+                    continue
+                elif class_name == "animal":
+                    all_animal_detections.append({
+                        'prediction_type': 'keyframe',
+                        'confidence': round(confidence, 4),
+                        'timestamp': round(timestamp, 2),
+                        'scenario': 'animal_detection',
+                        'tags': {
+                            'class': class_name,
+                            'class_id': class_id,
+                            'yolo_world_prompt': raw_class,
+                            'source': 'multiframe',
+                            'source_frame_time': round(timestamp, 2)
+                        },
+                        'bbox': bbox,
+                        'inference_time_ms': round(frame_inference_ms, 2)
+                    })
+                    continue
+
+                # Tree filter: skip if bbox is predominantly foliage
+                if _is_likely_tree(pil_img, bbox):
+                    continue
+
+                # Static object exclusion zone
+                if _is_in_exclusion_zone(mf_camera_id, bbox):
                     continue
 
                 all_vehicle_detections.append({
@@ -801,7 +1140,8 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
 
         logger.info(
             f"Multi-frame video {video_id}: {frames_processed}/{len(sample_times)} frames processed, "
-            f"{len(all_vehicle_detections)} raw detections, {total_person_count} persons "
+            f"{len(all_vehicle_detections)} vehicles, {len(all_flag_detections)} flags, "
+            f"{len(all_animal_detections)} animals, {total_person_count} persons "
             f"({total_inference_ms:.0f}ms total)"
         )
 
@@ -864,10 +1204,59 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
             # No vehicles found across any frame - store multiframe scan marker
             _store_multiframe_scan_marker(video_id, total_person_count, total_inference_ms, frames_processed)
 
+        # --- Submit decoy detections from multiframe ---
+        if all_flag_detections:
+            batch_id = f"video-multiframe-flag-{int(time.time())}"
+            flag_payload = {
+                'video_id': video_id,
+                'model_name': MODEL_NAME,
+                'model_version': MODEL_VERSION,
+                'model_type': MODEL_TYPE,
+                'batch_id': batch_id,
+                'predictions': all_flag_detections,
+                'force_review': False
+            }
+            try:
+                resp = requests.post(
+                    f"{API_BASE_URL}/api/ai/predictions/batch",
+                    json=flag_payload,
+                    headers={'X-Auth-Role': 'admin'},
+                    timeout=30
+                )
+                resp.raise_for_status()
+                _auto_reject_batch(batch_id)
+                logger.info(f"Multi-frame auto-rejected {len(all_flag_detections)} flag detections for video {video_id}")
+            except Exception as e:
+                logger.error(f"Multi-frame: failed to submit flag detections for video {video_id}: {e}")
+
+        if all_animal_detections:
+            animal_payload = {
+                'video_id': video_id,
+                'model_name': MODEL_NAME,
+                'model_version': MODEL_VERSION,
+                'model_type': MODEL_TYPE,
+                'batch_id': f"video-multiframe-animal-{int(time.time())}",
+                'predictions': all_animal_detections,
+                'force_review': force_review
+            }
+            try:
+                resp = requests.post(
+                    f"{API_BASE_URL}/api/ai/predictions/batch",
+                    json=animal_payload,
+                    headers={'X-Auth-Role': 'admin'},
+                    timeout=30
+                )
+                resp.raise_for_status()
+                logger.info(f"Multi-frame submitted {len(all_animal_detections)} animal detections for video {video_id}")
+            except Exception as e:
+                logger.error(f"Multi-frame: failed to submit animal detections for video {video_id}: {e}")
+
         return {
             'video_id': video_id,
             'persons_prescreened': total_person_count,
             'vehicles': len(vehicle_predictions),
+            'flags': len(all_flag_detections),
+            'animals': len(all_animal_detections),
             'submitted': len(vehicle_predictions),
             'frames_sampled': len(sample_times),
             'frames_processed': frames_processed,
@@ -898,3 +1287,7 @@ def trigger_vehicle_detect(video_id: int, thumbnail_path: str, force_review: boo
     )
     thread.start()
     logger.info(f"Pre-screen triggered in background for video {video_id}")
+
+
+# Load exclusion zones on startup
+_load_exclusion_zones()
