@@ -180,24 +180,387 @@ def get_track_members(track_id):
     return jsonify({'success': True, 'predictions': members, 'count': len(members)})
 
 
+# ── Crossing Line Configuration ───────────────────────────────────────────
+
+@tracks_bp.route('/crossing-line-config')
+def crossing_line_config():
+    """Page for crossing line configuration."""
+    return render_template('crossing_line_config.html')
+
+
+@tracks_bp.route('/api/ai/crossing-lines', methods=['GET'])
+def get_crossing_lines():
+    """List all crossing lines, optionally filtered by camera_id."""
+    try:
+        camera_id = request.args.get('camera_id')
+
+        with get_cursor(commit=False) as cursor:
+            if camera_id:
+                cursor.execute("""
+                    SELECT id, camera_id, line_name, x1, y1, x2, y2,
+                           forward_dx, forward_dy, paired_camera_id, paired_line_id,
+                           lane_mapping_reversed, created_at
+                    FROM camera_crossing_lines
+                    WHERE camera_id = %s
+                    ORDER BY camera_id, line_name
+                """, (camera_id,))
+            else:
+                cursor.execute("""
+                    SELECT id, camera_id, line_name, x1, y1, x2, y2,
+                           forward_dx, forward_dy, paired_camera_id, paired_line_id,
+                           lane_mapping_reversed, created_at
+                    FROM camera_crossing_lines
+                    ORDER BY camera_id, line_name
+                """)
+
+            lines = [dict(row) for row in cursor.fetchall()]
+
+        # Serialize datetime fields
+        for line in lines:
+            if line.get('created_at'):
+                line['created_at'] = line['created_at'].isoformat()
+
+        return jsonify({'success': True, 'lines': lines, 'count': len(lines)})
+    except Exception as e:
+        logger.error("Get crossing lines error: %s", e, exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@tracks_bp.route('/api/ai/crossing-lines/<camera_id>/frame', methods=['GET'])
+def get_camera_frame(camera_id):
+    """Get a sample frame for the given camera."""
+    try:
+        with get_cursor(commit=False) as cursor:
+            cursor.execute("""
+                SELECT v.id, v.thumbnail_path
+                FROM videos v
+                WHERE v.camera_id = %s
+                ORDER BY v.id DESC
+                LIMIT 1
+            """, (camera_id,))
+
+            result = cursor.fetchone()
+            if not result:
+                return jsonify({'success': False, 'error': 'No videos found for camera'}), 404
+
+            video = dict(result)
+
+            if video['thumbnail_path']:
+                thumb_path = video['thumbnail_path']
+                if os.path.isabs(thumb_path):
+                    # Absolute path stored in DB
+                    if os.path.exists(thumb_path):
+                        return send_from_directory(os.path.dirname(thumb_path), os.path.basename(thumb_path))
+                else:
+                    thumbnail_file = os.path.join(THUMBNAIL_DIR, thumb_path)
+                    if os.path.exists(thumbnail_file):
+                        return send_from_directory(THUMBNAIL_DIR, thumb_path)
+
+        return jsonify({'success': False, 'error': 'No thumbnail available'}), 404
+    except Exception as e:
+        logger.error("Get camera frame error: %s", e, exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@tracks_bp.route('/api/ai/crossing-lines', methods=['POST'])
+def create_crossing_line():
+    """Create or update a crossing line."""
+    try:
+        data = request.json or {}
+        camera_id = data.get('camera_id')
+        line_name = data.get('line_name')
+        x1 = data.get('x1')
+        y1 = data.get('y1')
+        x2 = data.get('x2')
+        y2 = data.get('y2')
+        forward_dx = data.get('forward_dx', 1.0)
+        forward_dy = data.get('forward_dy', 0.0)
+
+        if not all([camera_id, line_name, x1 is not None, y1 is not None,
+                    x2 is not None, y2 is not None]):
+            return jsonify({'success': False, 'error': 'Missing required fields'}), 400
+
+        with get_cursor() as cursor:
+            cursor.execute("""
+                INSERT INTO camera_crossing_lines
+                    (camera_id, line_name, x1, y1, x2, y2, forward_dx, forward_dy)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (camera_id, line_name)
+                DO UPDATE SET
+                    x1 = EXCLUDED.x1,
+                    y1 = EXCLUDED.y1,
+                    x2 = EXCLUDED.x2,
+                    y2 = EXCLUDED.y2,
+                    forward_dx = EXCLUDED.forward_dx,
+                    forward_dy = EXCLUDED.forward_dy
+                RETURNING id, camera_id, line_name, x1, y1, x2, y2,
+                          forward_dx, forward_dy, paired_camera_id, paired_line_id,
+                          lane_mapping_reversed, created_at
+            """, (camera_id, line_name, x1, y1, x2, y2, forward_dx, forward_dy))
+
+            line = dict(cursor.fetchone())
+
+        # Serialize datetime
+        if line.get('created_at'):
+            line['created_at'] = line['created_at'].isoformat()
+
+        return jsonify({'success': True, 'line': line})
+    except Exception as e:
+        logger.error("Create crossing line error: %s", e, exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@tracks_bp.route('/api/ai/crossing-lines/<int:line_id>', methods=['DELETE'])
+def delete_crossing_line(line_id):
+    """Delete a crossing line and clear any pairings."""
+    try:
+        with get_cursor() as cursor:
+            # Clear paired_line_id on any line that was paired to this one
+            cursor.execute("""
+                UPDATE camera_crossing_lines
+                SET paired_line_id = NULL, paired_camera_id = NULL
+                WHERE paired_line_id = %s
+            """, (line_id,))
+
+            # Delete the line
+            cursor.execute("""
+                DELETE FROM camera_crossing_lines
+                WHERE id = %s
+            """, (line_id,))
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error("Delete crossing line error: %s", e, exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@tracks_bp.route('/api/ai/crossing-lines/<int:line_id>/pair', methods=['POST'])
+def pair_crossing_lines(line_id):
+    """Pair two crossing lines for cross-camera matching."""
+    try:
+        data = request.json or {}
+        paired_line_id = data.get('paired_line_id')
+        lane_mapping_reversed = data.get('lane_mapping_reversed', False)
+
+        if not paired_line_id:
+            return jsonify({'success': False, 'error': 'paired_line_id required'}), 400
+
+        with get_cursor() as cursor:
+            # Get both lines
+            cursor.execute("""
+                SELECT id, camera_id, line_name
+                FROM camera_crossing_lines
+                WHERE id IN (%s, %s)
+            """, (line_id, paired_line_id))
+
+            lines = [dict(row) for row in cursor.fetchall()]
+            if len(lines) != 2:
+                return jsonify({'success': False, 'error': 'One or both lines not found'}), 404
+
+            line_a = next(l for l in lines if l['id'] == line_id)
+            line_b = next(l for l in lines if l['id'] == paired_line_id)
+
+            # Update both lines to point at each other
+            cursor.execute("""
+                UPDATE camera_crossing_lines
+                SET paired_line_id = %s,
+                    paired_camera_id = %s,
+                    lane_mapping_reversed = %s
+                WHERE id = %s
+                RETURNING id, camera_id, line_name, x1, y1, x2, y2,
+                          forward_dx, forward_dy, paired_camera_id, paired_line_id,
+                          lane_mapping_reversed, created_at
+            """, (paired_line_id, line_b['camera_id'], lane_mapping_reversed, line_id))
+
+            updated_a = dict(cursor.fetchone())
+
+            cursor.execute("""
+                UPDATE camera_crossing_lines
+                SET paired_line_id = %s,
+                    paired_camera_id = %s,
+                    lane_mapping_reversed = %s
+                WHERE id = %s
+                RETURNING id, camera_id, line_name, x1, y1, x2, y2,
+                          forward_dx, forward_dy, paired_camera_id, paired_line_id,
+                          lane_mapping_reversed, created_at
+            """, (line_id, line_a['camera_id'], lane_mapping_reversed, paired_line_id))
+
+            updated_b = dict(cursor.fetchone())
+
+        # Serialize datetime fields
+        for line in [updated_a, updated_b]:
+            if line.get('created_at'):
+                line['created_at'] = line['created_at'].isoformat()
+
+        return jsonify({'success': True, 'line_a': updated_a, 'line_b': updated_b})
+    except Exception as e:
+        logger.error("Pair crossing lines error: %s", e, exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@tracks_bp.route('/api/ai/crossing-lines/<int:line_id>/pair', methods=['DELETE'])
+def unpair_crossing_lines(line_id):
+    """Remove pairing from a crossing line (and its partner)."""
+    try:
+        with get_cursor() as cursor:
+            # Find the partner line
+            cursor.execute("""
+                SELECT paired_line_id FROM camera_crossing_lines WHERE id = %s
+            """, (line_id,))
+            row = cursor.fetchone()
+            if not row:
+                return jsonify({'success': False, 'error': 'Line not found'}), 404
+
+            paired_id = row['paired_line_id']
+
+            # Clear pairing on this line
+            cursor.execute("""
+                UPDATE camera_crossing_lines
+                SET paired_line_id = NULL, paired_camera_id = NULL, lane_mapping_reversed = FALSE
+                WHERE id = %s
+            """, (line_id,))
+
+            # Clear pairing on partner line
+            if paired_id:
+                cursor.execute("""
+                    UPDATE camera_crossing_lines
+                    SET paired_line_id = NULL, paired_camera_id = NULL, lane_mapping_reversed = FALSE
+                    WHERE id = %s
+                """, (paired_id,))
+
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error("Unpair crossing lines error: %s", e, exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@tracks_bp.route('/api/ai/cross-camera/match-spatial', methods=['POST'])
+def cross_camera_match_spatial():
+    """Run crossing-line spatial matcher only."""
+    try:
+        data = request.json or {}
+        entity_type = data.get('entity_type', 'vehicle')
+
+        from crossing_line_matcher import CrossingLineMatcher
+        matcher = CrossingLineMatcher()
+        result = matcher.match_all(entity_type)
+
+        return jsonify({'success': True, **result})
+    except Exception as e:
+        logger.error("Spatial matching error: %s", e, exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@tracks_bp.route('/api/ai/cross-camera/reid-training-pairs', methods=['GET'])
+def get_reid_training_pairs():
+    """Export confirmed spatial matches as image pairs for ReID training."""
+    try:
+        with get_cursor(commit=False) as cursor:
+            cursor.execute("""
+                SELECT
+                    ccl.id as link_id,
+                    ccl.track_a_id,
+                    ccl.track_b_id,
+                    ccl.match_confidence,
+                    ta.representative_prediction_id as pred_a_id,
+                    tb.representative_prediction_id as pred_b_id
+                FROM cross_camera_links ccl
+                JOIN camera_object_tracks ta ON ccl.track_a_id = ta.id
+                JOIN camera_object_tracks tb ON ccl.track_b_id = tb.id
+                WHERE ccl.status IN ('confirmed', 'auto_confirmed')
+                  AND ccl.match_method = 'crossing_line'
+                  AND ta.representative_prediction_id IS NOT NULL
+                  AND tb.representative_prediction_id IS NOT NULL
+                ORDER BY ccl.match_confidence DESC
+            """)
+
+            links = [dict(row) for row in cursor.fetchall()]
+
+            if not links:
+                return jsonify({'success': True, 'pairs': [], 'count': 0})
+
+            # Get prediction thumbnails
+            pred_ids = []
+            for link in links:
+                pred_ids.extend([link['pred_a_id'], link['pred_b_id']])
+
+            cursor.execute("""
+                SELECT id, thumbnail_path
+                FROM ai_predictions
+                WHERE id = ANY(%s)
+            """, (pred_ids,))
+
+            preds = {row['id']: dict(row) for row in cursor.fetchall()}
+
+        # Build pairs
+        pairs = []
+        for link in links:
+            pred_a = preds.get(link['pred_a_id'])
+            pred_b = preds.get(link['pred_b_id'])
+
+            if not pred_a or not pred_b:
+                continue
+
+            image_a = pred_a.get('thumbnail_path')
+            image_b = pred_b.get('thumbnail_path')
+
+            if image_a and image_b:
+                pairs.append({
+                    'link_id': link['link_id'],
+                    'track_a_id': link['track_a_id'],
+                    'track_b_id': link['track_b_id'],
+                    'image_a_path': image_a,
+                    'image_b_path': image_b,
+                    'confidence': float(link['match_confidence']) if link['match_confidence'] else 0.0,
+                })
+
+        return jsonify({'success': True, 'pairs': pairs, 'count': len(pairs)})
+    except Exception as e:
+        logger.error("Get ReID training pairs error: %s", e, exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ── Cross-Camera Entity Tracking ──────────────────────────────────────────
 
 @tracks_bp.route('/api/ai/cross-camera/match', methods=['POST'])
 def cross_camera_match():
-    """Run cross-camera matching between camera pairs."""
+    """Run cross-camera matching: spatial first, then ReID for remaining."""
     data = request.json or {}
     camera_a = data.get('camera_a')
     camera_b = data.get('camera_b')
     entity_type = data.get('entity_type', 'vehicle')
 
+    # Phase 1: Run crossing-line spatial matcher for configured pairs
+    spatial_result = {}
+    spatial_matched_pairs = set()
+    try:
+        from crossing_line_matcher import CrossingLineMatcher
+        spatial_matcher = CrossingLineMatcher()
+        spatial_result = spatial_matcher.match_all(entity_type)
+        # Collect pairs matched spatially to exclude from ReID
+        if spatial_result.get('links_created'):
+            with get_cursor(commit=False) as cursor:
+                cursor.execute("""
+                    SELECT track_a_id, track_b_id FROM cross_camera_links
+                    WHERE match_method = 'crossing_line'
+                """)
+                for row in cursor.fetchall():
+                    spatial_matched_pairs.add((row['track_a_id'], row['track_b_id']))
+    except Exception as e:
+        logger.warning("Spatial matching skipped: %s", e)
+        spatial_result = {'error': str(e)}
+
+    # Phase 2: Run ReID-based matcher for remaining pairs
     from cross_camera_matcher import CrossCameraMatcher
     matcher = CrossCameraMatcher()
+    matcher.exclude_pairs = spatial_matched_pairs
 
     if camera_a and camera_b:
         result = matcher.match_cameras(camera_a, camera_b, entity_type)
     else:
         result = matcher.match_all_pairs(entity_type)
 
+    result['spatial_matching'] = spatial_result
     return jsonify({'success': True, **result})
 
 
@@ -314,6 +677,103 @@ def get_cross_camera_summary():
 @tracks_bp.route('/interpolation-review')
 def interpolation_review():
     return render_template('interpolation_review.html')
+
+
+@tracks_bp.route('/api/interpolation/scan', methods=['POST'])
+def scan_and_trigger_interpolation():
+    """Scan all approved predictions and trigger interpolation for eligible pairs."""
+    try:
+        camera_id = request.json.get('camera_id') if request.json else None
+
+        # Find all approved non-interpolation predictions with valid timestamps
+        from db_connection import get_cursor
+        with get_cursor(commit=False) as cur:
+            conditions = [
+                "p.review_status IN ('approved', 'auto_approved')",
+                "p.timestamp IS NOT NULL",
+                "p.bbox_x IS NOT NULL",
+                "p.bbox_width > 0",
+            ]
+            params = []
+            if camera_id:
+                conditions.append("v.camera_id = %s")
+                params.append(camera_id)
+
+            query = """
+                SELECT p.id, p.video_id, p.timestamp, p.scenario,
+                       p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
+                       p.predicted_tags, p.corrected_tags,
+                       v.camera_id
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                WHERE {conditions}
+                ORDER BY p.video_id, p.timestamp
+            """.format(conditions=' AND '.join(conditions))
+
+            if params:
+                cur.execute(query, params)
+            else:
+                cur.execute(query)
+            preds = [dict(r) for r in cur.fetchall()]
+
+        if not preds:
+            return jsonify({'success': True, 'message': 'No approved predictions found', 'triggered': 0})
+
+        # Group by (video_id, class_name)
+        from collections import defaultdict
+        groups = defaultdict(list)
+        for p in preds:
+            tags = p.get('corrected_tags') or p.get('predicted_tags') or {}
+            if isinstance(tags, str):
+                tags = json.loads(tags)
+            # Skip interpolation-generated predictions
+            if tags.get('source') == 'interpolation':
+                continue
+            class_name = tags.get('class')
+            if not class_name:
+                continue
+            groups[(p['video_id'], class_name)].append(p)
+
+        triggered = 0
+        skipped = 0
+
+        for (video_id, class_name), group_preds in groups.items():
+            # Sort by timestamp
+            group_preds.sort(key=lambda p: float(p['timestamp'] or 0))
+
+            # Check consecutive pairs
+            for i in range(len(group_preds) - 1):
+                pred_a = group_preds[i]
+                pred_b = group_preds[i + 1]
+
+                gap = float(pred_b['timestamp'] or 0) - float(pred_a['timestamp'] or 0)
+                if gap < 2.0 or gap > 120.0:
+                    continue
+
+                # Check no track already exists
+                if db.interpolation_track_exists(pred_a['id'], pred_b['id']):
+                    skipped += 1
+                    continue
+
+                # Trigger in background
+                from interpolation_runner import run_guided_interpolation
+                threading.Thread(
+                    target=run_guided_interpolation,
+                    args=(video_id, pred_a['id'], pred_b['id']),
+                    daemon=True,
+                    name=f"interp-scan-{pred_a['id']}-{pred_b['id']}"
+                ).start()
+                triggered += 1
+
+        return jsonify({
+            'success': True,
+            'triggered': triggered,
+            'skipped_existing': skipped,
+            'groups_scanned': len(groups),
+        })
+    except Exception as e:
+        logger.error("Interpolation scan error: %s", e, exc_info=True)
+        return jsonify({'success': False, 'error': str(e)}), 500
 
 
 @tracks_bp.route('/api/interpolation/tracks', methods=['GET'])

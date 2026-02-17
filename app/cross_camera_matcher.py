@@ -22,14 +22,14 @@ from prediction_grouper import UnionFind
 
 logger = logging.getLogger(__name__)
 
-# Scoring weights
-TEMPORAL_MAX_SCORE = 0.3
-REID_MAX_SCORE = 0.4
-CLASSIFICATION_MATCH_SCORE = 0.2
-CLASSIFICATION_CONFLICT_PENALTY = -0.2
-BBOX_SIZE_MAX_SCORE = 0.1
-MATCH_THRESHOLD = 0.8
-MIN_REID_SIMILARITY = 0.80  # Minimum cosine similarity to count as a ReID match
+# Scoring weights — ReID reduced (weak individual-vehicle signal), temporal+cls boosted
+TEMPORAL_MAX_SCORE = 0.35
+REID_MAX_SCORE = 0.25
+CLASSIFICATION_MATCH_SCORE = 0.25
+CLASSIFICATION_CONFLICT_PENALTY = -0.3
+BBOX_SIZE_MAX_SCORE = 0.15
+MATCH_THRESHOLD = 0.80
+MIN_REID_SIMILARITY = 0.95  # Raised — below 0.95 carries no useful identity signal
 DIRECTION_PENALTY = 0.7  # Multiplier on temporal score when travel direction opposes learned topology
 
 
@@ -40,6 +40,7 @@ class CrossCameraMatcher:
         self.reid_api_url = reid_api_url
         self._topology_cache = {}
         self._embedding_cache = {}
+        self.exclude_pairs = set()  # Set of (track_a_id, track_b_id) to skip (e.g. spatial matches)
 
     # ------------------------------------------------------------------
     # Topology
@@ -210,12 +211,17 @@ class CrossCameraMatcher:
 
         similarity = float(np.dot(emb_a, emb_b))
 
-        if similarity >= 0.90:
+        # Granular tiers in the 0.97-1.0 range where faint identity signal lives
+        if similarity >= 0.99:
             return REID_MAX_SCORE, similarity
+        elif similarity >= 0.985:
+            return REID_MAX_SCORE * 0.85, similarity
+        elif similarity >= 0.98:
+            return REID_MAX_SCORE * 0.70, similarity
+        elif similarity >= 0.975:
+            return REID_MAX_SCORE * 0.55, similarity
         elif similarity >= MIN_REID_SIMILARITY:
-            return REID_MAX_SCORE * 0.7, similarity
-        elif similarity >= 0.7:
-            return REID_MAX_SCORE * 0.2, similarity
+            return REID_MAX_SCORE * 0.35, similarity
         else:
             return 0.0, similarity
 
@@ -296,10 +302,13 @@ class CrossCameraMatcher:
         links_created = 0
         pairs_evaluated = 0
 
-        for ta in tracks_a:
-            best_match = None
-            best_score = 0
+        # Phase 1: Score all valid pairs
+        # best_for_a[a_id] = (score, b_id, match_info)
+        # best_for_b[b_id] = (score, a_id, match_info)
+        best_for_a = {}
+        best_for_b = {}
 
+        for ta in tracks_a:
             for tb in tracks_b:
                 pairs_evaluated += 1
 
@@ -307,16 +316,14 @@ class CrossCameraMatcher:
                 direction_match = None  # None = bidirectional/unknown, no penalty
                 if not is_bidirectional:
                     if topology_ab:
-                        # Topology says A→B, so A should be seen first
                         direction_match = (ta['first_seen'] or 0) <= (tb['first_seen'] or 0)
                     elif topology_ba:
-                        # Topology says B→A, so B should be seen first
                         direction_match = (tb['first_seen'] or 0) <= (ta['first_seen'] or 0)
 
                 # Temporal score
                 temporal = self.compute_temporal_score(ta, tb, topology, direction_match=direction_match)
                 if temporal == 0.0:
-                    continue  # Skip if temporally impossible
+                    continue
 
                 # ReID score
                 reid, reid_sim = self.compute_reid_score(ta['id'], tb['id'])
@@ -324,7 +331,7 @@ class CrossCameraMatcher:
                 # Classification score
                 cls_score, cls_match = self.compute_classification_score(ta, tb)
 
-                # Hard veto: if both tracks have classifications and they conflict, skip
+                # Hard veto: conflicting classifications
                 if cls_match is False:
                     continue
 
@@ -333,26 +340,39 @@ class CrossCameraMatcher:
 
                 total = temporal + reid + cls_score + bbox_score
 
-                if total >= MATCH_THRESHOLD and total > best_score:
-                    best_score = total
-                    best_match = {
-                        'track_b': tb,
-                        'confidence': total,
-                        'reid_similarity': reid_sim,
-                        'temporal_gap': self._compute_gap(ta, tb),
-                        'classification_match': cls_match,
-                        'method': self._determine_method(reid_sim, temporal, cls_match),
-                    }
+                if total < MATCH_THRESHOLD:
+                    continue
 
-            if best_match:
+                match_info = {
+                    'track_a': ta,
+                    'track_b': tb,
+                    'confidence': total,
+                    'reid_similarity': reid_sim,
+                    'temporal_gap': self._compute_gap(ta, tb),
+                    'classification_match': cls_match,
+                    'method': self._determine_method(reid_sim, temporal, cls_match),
+                }
+
+                # Track best match from A's perspective
+                if ta['id'] not in best_for_a or total > best_for_a[ta['id']][0]:
+                    best_for_a[ta['id']] = (total, tb['id'], match_info)
+
+                # Track best match from B's perspective
+                if tb['id'] not in best_for_b or total > best_for_b[tb['id']][0]:
+                    best_for_b[tb['id']] = (total, ta['id'], match_info)
+
+        # Phase 2: Only create links where both sides agree (mutual best-match)
+        for a_id, (score_a, b_id, match_info) in best_for_a.items():
+            if b_id in best_for_b and best_for_b[b_id][1] == a_id:
+                # Mutual best match confirmed
                 created = self._create_link(
-                    ta['id'], best_match['track_b']['id'],
-                    entity_type, best_match
+                    a_id, b_id, entity_type, match_info
                 )
                 if created:
                     links_created += 1
 
-        logger.info("Matching complete: %d links from %d pairs", links_created, pairs_evaluated)
+        logger.info("Matching complete: %d mutual links from %d pairs (%d A-candidates, %d B-candidates)",
+                     links_created, pairs_evaluated, len(best_for_a), len(best_for_b))
         return {'links_created': links_created, 'pairs_evaluated': pairs_evaluated}
 
     def match_all_pairs(self, entity_type='vehicle'):
@@ -828,6 +848,11 @@ class CrossCameraMatcher:
         # Normalize order (smaller ID first)
         if track_a_id > track_b_id:
             track_a_id, track_b_id = track_b_id, track_a_id
+
+        # Skip pairs already matched by a higher-priority method (e.g. crossing lines)
+        if (track_a_id, track_b_id) in self.exclude_pairs:
+            logger.debug("Skipping ReID link %d <-> %d (already matched spatially)", track_a_id, track_b_id)
+            return None
 
         try:
             with get_cursor() as cursor:

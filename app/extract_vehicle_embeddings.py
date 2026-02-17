@@ -2,7 +2,7 @@
 """Batch extract vehicle ReID embeddings for approved predictions.
 
 Crops vehicle bboxes from thumbnails, sends to Vehicle ReID API,
-and stores 512-dim embeddings in the embeddings table.
+and stores 2048-dim embeddings in the embeddings table.
 """
 
 import base64

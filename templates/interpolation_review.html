@@ -13,6 +13,9 @@
         <aside class="track-sidebar" id="track-sidebar">
             <div class="sidebar-header">
                 <h2>Interpolation Tracks</h2>
+                <button class="btn btn-primary" id="btn-scan" onclick="interpReview.scanAndTrigger()" title="Scan approved predictions and generate interpolation tracks">
+                    Scan &amp; Generate
+                </button>
                 <div class="sidebar-filters">
                     <select id="filter-status" onchange="interpReview.filterTracks()">
                         <option value="">All Status</option>

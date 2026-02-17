@@ -703,8 +703,8 @@
                 '</tr></thead><tbody>';
 
             for (const job of jobs) {
-                const submitted = job.submitted_at ? new Date(job.submitted_at + 'Z').toLocaleString() : '-';
-                const completed = job.completed_at ? new Date(job.completed_at + 'Z').toLocaleString() : '-';
+                const submitted = job.submitted_at ? new Date(job.submitted_at).toLocaleString() : '-';
+                const completed = job.completed_at ? new Date(job.completed_at).toLocaleString() : '-';
                 const shortId = job.job_id.substring(0, 8);
                 const errorHtml = job.error_message
                     ? '<br><small style="color:#e74c3c;">' + escapeHtml(job.error_message) + '</small>'
@@ -742,6 +742,7 @@
                 if (!data.success) return;
 
                 const select = document.getElementById('export-config-id');
+                if (!select) return;
                 for (const config of data.configs) {
                     const option = document.createElement('option');
                     option.value = config.id;
@@ -757,6 +758,7 @@
             try {
                 const data = await fetchJSON('/api/vibration/tags');
                 const select = document.getElementById('vibration-tag-filter');
+                if (!select) return;
                 if (data.success && data.tags) {
                     for (const tag of data.tags) {
                         const option = document.createElement('option');
@@ -927,8 +929,8 @@
             if (!job) return;
             currentJob = job;
 
-            const submitted = job.submitted_at ? new Date(job.submitted_at + 'Z').toLocaleString() : '-';
-            const completed = job.completed_at ? new Date(job.completed_at + 'Z').toLocaleString() : '-';
+            const submitted = job.submitted_at ? new Date(job.submitted_at).toLocaleString() : '-';
+            const completed = job.completed_at ? new Date(job.completed_at).toLocaleString() : '-';
 
             let html = '<div class="job-detail-row"><span class="job-detail-label">Job ID:</span><span class="job-detail-value">' + escapeHtml(job.job_id) + '</span></div>';
             html += '<div class="job-detail-row"><span class="job-detail-label">Type:</span><span class="job-detail-value">' + escapeHtml(job.job_type) + '</span></div>';
@@ -1128,7 +1130,7 @@
                 html += '<div style="font-size:11px;font-weight:600;color:#555;margin-bottom:6px;">Metrics History</div>';
 
                 data.metrics.forEach(m => {
-                    const date = m.recorded_at ? new Date(m.recorded_at + 'Z').toLocaleDateString() : '-';
+                    const date = m.recorded_at ? new Date(m.recorded_at).toLocaleDateString() : '-';
                     const acc = m.accuracy != null ? (m.accuracy * 100).toFixed(1) + '%' : '-';
                     const loss = m.loss != null ? m.loss.toFixed(4) : '-';
                     const epochs = m.epochs || '-';

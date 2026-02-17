@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crossing Line Configuration - Groundtruth Studio</title>
+    <link rel="stylesheet" href="/static/css/style.css">
+    <style>
+        .page-header {
+            padding: 2rem 2rem 1rem;
+            background: #1a1a1a;
+            border-bottom: 1px solid #333;
+        }
+
+        .page-header h1 {
+            margin: 0 0 0.5rem;
+            color: #eee;
+            font-size: 2rem;
+        }
+
+        .page-header p {
+            margin: 0;
+            color: #aaa;
+            font-size: 0.95rem;
+        }
+
+        .config-container {
+            display: flex;
+            gap: 1.5rem;
+            padding: 2rem;
+            min-height: calc(100vh - 200px);
+        }
+
+        .canvas-panel {
+            flex: 0 0 65%;
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 1.5rem;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .controls-panel {
+            flex: 0 0 calc(35% - 1.5rem);
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 1.5rem;
+            overflow-y: auto;
+            max-height: calc(100vh - 200px);
+        }
+
+        .canvas-wrapper {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: #1a1a1a;
+            border-radius: 4px;
+            margin-top: 1rem;
+            position: relative;
+        }
+
+        #line-canvas {
+            max-width: 100%;
+            max-height: 100%;
+            border: 1px solid #444;
+            cursor: crosshair;
+        }
+
+        #line-canvas.draw-mode-active {
+            cursor: crosshair;
+            border-color: #4CAF50;
+        }
+
+        .control-group {
+            margin-bottom: 1.5rem;
+        }
+
+        .control-group label {
+            display: block;
+            margin-bottom: 0.5rem;
+            color: #eee;
+            font-size: 0.9rem;
+            font-weight: 500;
+        }
+
+        .control-group input,
+        .control-group select {
+            width: 100%;
+            padding: 0.6rem;
+            background: #1a1a1a;
+            border: 1px solid #444;
+            border-radius: 4px;
+            color: #eee;
+            font-size: 0.9rem;
+        }
+
+        .control-group input:focus,
+        .control-group select:focus {
+            outline: none;
+            border-color: #4CAF50;
+        }
+
+        .btn {
+            padding: 0.7rem 1.2rem;
+            border: none;
+            border-radius: 4px;
+            font-size: 0.9rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            background: #45a049;
+        }
+
+        .btn-secondary {
+            background: #555;
+            color: white;
+        }
+
+        .btn-secondary:hover:not(:disabled) {
+            background: #666;
+        }
+
+        .btn-danger {
+            background: #e74c3c;
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            background: #c0392b;
+        }
+
+        .btn-toggle {
+            width: 100%;
+        }
+
+        .btn-toggle.active {
+            background: #4CAF50;
+            color: white;
+        }
+
+        .direction-selector {
+            display: flex;
+            gap: 0.5rem;
+            margin-top: 0.5rem;
+        }
+
+        .direction-selector .btn {
+            flex: 1;
+        }
+
+        .section-title {
+            font-size: 1.1rem;
+            font-weight: 600;
+            color: #4CAF50;
+            margin: 1.5rem 0 1rem;
+            padding-bottom: 0.5rem;
+            border-bottom: 1px solid #333;
+        }
+
+        .line-list {
+            margin-top: 1rem;
+        }
+
+        .line-item {
+            background: #1a1a1a;
+            padding: 0.8rem;
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .line-info {
+            flex: 1;
+        }
+
+        .line-name {
+            font-weight: 500;
+            color: #eee;
+            margin-bottom: 0.3rem;
+        }
+
+        .line-coords {
+            font-size: 0.8rem;
+            color: #aaa;
+            font-family: monospace;
+        }
+
+        .line-status {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-right: 0.5rem;
+        }
+
+        .line-status.paired {
+            background: #4CAF50;
+        }
+
+        .line-status.unpaired {
+            background: #555;
+        }
+
+        .line-actions {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .btn-small {
+            padding: 0.4rem 0.8rem;
+            font-size: 0.8rem;
+        }
+
+        .pair-selector {
+            display: flex;
+            gap: 0.5rem;
+            margin-bottom: 0.5rem;
+        }
+
+        .pair-selector select {
+            flex: 1;
+        }
+
+        .pair-option {
+            margin-top: 0.5rem;
+        }
+
+        .pair-option input[type="checkbox"] {
+            width: auto;
+            margin-right: 0.5rem;
+        }
+
+        .pair-option label {
+            display: inline;
+            font-weight: normal;
+            cursor: pointer;
+        }
+
+        .pair-list {
+            margin-top: 1rem;
+        }
+
+        .pair-item {
+            background: #1a1a1a;
+            padding: 0.8rem;
+            border-radius: 4px;
+            margin-bottom: 0.5rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .pair-info {
+            flex: 1;
+            font-size: 0.85rem;
+            color: #eee;
+        }
+
+        .pair-cameras {
+            color: #4CAF50;
+            font-weight: 500;
+        }
+
+        .pair-reversed {
+            color: #f39c12;
+            font-size: 0.75rem;
+            margin-left: 0.5rem;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+            font-style: italic;
+        }
+
+        .canvas-placeholder {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+            color: #666;
+            font-size: 1.1rem;
+            height: 100%;
+            background: repeating-linear-gradient(
+                0deg,
+                #1a1a1a,
+                #1a1a1a 20px,
+                #222 20px,
+                #222 21px
+            ),
+            repeating-linear-gradient(
+                90deg,
+                #1a1a1a,
+                #1a1a1a 20px,
+                #222 20px,
+                #222 21px
+            );
+        }
+
+        @media (max-width: 1024px) {
+            .config-container {
+                flex-direction: column;
+            }
+
+            .canvas-panel,
+            .controls-panel {
+                flex: 1 1 auto;
+                max-height: none;
+            }
+
+            .canvas-wrapper {
+                min-height: 400px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <nav class="site-nav" id="site-nav">
+        <div class="nav-brand">
+            <a href="/">Groundtruth Studio</a>
+            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
+                <span class="hamburger-icon"></span>
+            </button>
+        </div>
+        <div class="nav-links" id="nav-links">
+            <a href="/" class="nav-link">Video Library</a>
+            <a href="/add-content" class="nav-link">Add Content</a>
+            <a href="/camera-topology" class="nav-link">Camera Topology</a>
+            <a href="/cross-camera-tracks" class="nav-link">Cross-Camera Tracks</a>
+            <a href="/crossing-line-config" class="nav-link active">Crossing Lines</a>
+            <a href="/analytics" class="nav-link">Analytics</a>
+            <a href="/settings" class="nav-link">Settings</a>
+        </div>
+    </nav>
+
+    <div class="page-header">
+        <h1>Crossing Line Configuration</h1>
+        <p>Define virtual lines on camera frames to track object movements and establish cross-camera spatial relationships</p>
+    </div>
+
+    <div class="config-container">
+        <!-- Left Panel: Canvas -->
+        <div class="canvas-panel">
+            <div class="control-group">
+                <label for="camera-select">Camera</label>
+                <select id="camera-select">
+                    <option value="">Select a camera...</option>
+                </select>
+            </div>
+
+            <div class="canvas-wrapper" id="canvas-wrapper">
+                <canvas id="line-canvas" width="1280" height="720"></canvas>
+            </div>
+        </div>
+
+        <!-- Right Panel: Controls -->
+        <div class="controls-panel">
+            <div class="section-title">Draw Line</div>
+
+            <div class="control-group">
+                <label for="line-name">Line Name</label>
+                <input type="text" id="line-name" placeholder="e.g., Exit North">
+            </div>
+
+            <div class="control-group">
+                <button id="draw-mode-btn" class="btn btn-secondary btn-toggle">
+                    Enable Draw Mode
+                </button>
+            </div>
+
+            <div id="direction-selector" class="control-group" style="display: none;">
+                <label>Select Forward Direction</label>
+                <div class="direction-selector">
+                    <button id="direction-a-btn" class="btn btn-secondary btn-small">← Direction A</button>
+                    <button id="direction-b-btn" class="btn btn-secondary btn-small">Direction B →</button>
+                </div>
+            </div>
+
+            <div class="control-group">
+                <button id="save-line-btn" class="btn btn-primary" disabled>Save Line</button>
+            </div>
+
+            <div class="section-title">Lines on This Camera</div>
+            <div id="lines-list" class="line-list">
+                <div class="empty-state">No lines defined yet</div>
+            </div>
+
+            <div class="section-title">Pair Lines (Cross-Camera)</div>
+
+            <div class="pair-selector">
+                <select id="pair-line-a">
+                    <option value="">Line A...</option>
+                </select>
+                <select id="pair-line-b">
+                    <option value="">Line B...</option>
+                </select>
+            </div>
+
+            <div class="pair-option">
+                <input type="checkbox" id="pair-reversed">
+                <label for="pair-reversed">Lane mapping reversed</label>
+            </div>
+
+            <div class="control-group">
+                <button id="pair-lines-btn" class="btn btn-primary">Pair Lines</button>
+            </div>
+
+            <div class="section-title">Existing Pairs</div>
+            <div id="pairs-list" class="pair-list">
+                <div class="empty-state">No line pairs defined yet</div>
+            </div>
+
+            <div class="section-title">Spatial Matching</div>
+            <div class="control-group">
+                <button id="run-spatial-match-btn" class="btn btn-secondary">Run Spatial Match</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/gt-utils.js"></script>
+    <script src="/static/js/crossing_line_config.js"></script>
+</body>
+</html>

@@ -676,8 +676,10 @@ CREATE TABLE IF NOT EXISTS cross_camera_links (
     reid_similarity REAL,
     temporal_gap_seconds REAL,
     classification_match BOOLEAN,
-    status VARCHAR(20) DEFAULT 'auto' CHECK (status IN ('auto', 'confirmed', 'rejected')),
+    status VARCHAR(20) DEFAULT 'auto' CHECK (status IN ('auto', 'confirmed', 'rejected', 'auto_confirmed')),
     confirmed_by VARCHAR(100),
+    lane_distance REAL,
+    crossing_line_id INTEGER,
     created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
     UNIQUE(track_a_id, track_b_id)
 );
@@ -685,6 +687,26 @@ CREATE INDEX IF NOT EXISTS idx_xcam_track_a ON cross_camera_links(track_a_id);
 CREATE INDEX IF NOT EXISTS idx_xcam_track_b ON cross_camera_links(track_b_id);
 CREATE INDEX IF NOT EXISTS idx_xcam_entity ON cross_camera_links(entity_type);
 CREATE INDEX IF NOT EXISTS idx_xcam_status ON cross_camera_links(status);
+
+-- Camera crossing lines (for spatial-temporal cross-camera matching)
+CREATE TABLE IF NOT EXISTS camera_crossing_lines (
+    id SERIAL PRIMARY KEY,
+    camera_id TEXT NOT NULL,
+    line_name VARCHAR(100) NOT NULL,
+    x1 INTEGER NOT NULL,
+    y1 INTEGER NOT NULL,
+    x2 INTEGER NOT NULL,
+    y2 INTEGER NOT NULL,
+    forward_dx REAL NOT NULL DEFAULT 1.0,
+    forward_dy REAL NOT NULL DEFAULT 0.0,
+    paired_camera_id TEXT,
+    paired_line_id INTEGER REFERENCES camera_crossing_lines(id) ON DELETE SET NULL,
+    lane_mapping_reversed BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(camera_id, line_name)
+);
+CREATE INDEX IF NOT EXISTS idx_crossing_lines_camera ON camera_crossing_lines(camera_id);
+CREATE INDEX IF NOT EXISTS idx_crossing_lines_paired ON camera_crossing_lines(paired_line_id);
 """
 
 
@@ -741,7 +763,7 @@ def verify_schema():
         'content_libraries', 'content_library_items', 'interpolation_tracks',
         'identities', 'embeddings', 'associations', 'tracks', 'sightings',
         'camera_topology_learned', 'violations', 'visits', 'prediction_groups',
-        'camera_object_tracks', 'cross_camera_links'
+        'camera_object_tracks', 'cross_camera_links', 'camera_crossing_lines'
     ]
 
     with get_cursor(commit=False) as cursor:
@@ -1094,6 +1116,56 @@ def run_migrations():
 
             # Migration: Add rejection_reason to cross_camera_links
             cursor.execute("ALTER TABLE cross_camera_links ADD COLUMN IF NOT EXISTS rejection_reason VARCHAR(100)")
+
+            # Migration: Create camera_crossing_lines table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS camera_crossing_lines (
+                    id SERIAL PRIMARY KEY,
+                    camera_id TEXT NOT NULL,
+                    line_name VARCHAR(100) NOT NULL,
+                    x1 INTEGER NOT NULL,
+                    y1 INTEGER NOT NULL,
+                    x2 INTEGER NOT NULL,
+                    y2 INTEGER NOT NULL,
+                    forward_dx REAL NOT NULL DEFAULT 1.0,
+                    forward_dy REAL NOT NULL DEFAULT 0.0,
+                    paired_camera_id TEXT,
+                    paired_line_id INTEGER REFERENCES camera_crossing_lines(id) ON DELETE SET NULL,
+                    lane_mapping_reversed BOOLEAN DEFAULT FALSE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    UNIQUE(camera_id, line_name)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_crossing_lines_camera ON camera_crossing_lines(camera_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_crossing_lines_paired ON camera_crossing_lines(paired_line_id)")
+            logger.info("Camera crossing lines table ready")
+
+            # Migration: Add 'auto_confirmed' to cross_camera_links status CHECK
+            try:
+                cursor.execute("""
+                    SELECT conname FROM pg_constraint
+                    WHERE conrelid = 'cross_camera_links'::regclass
+                      AND contype = 'c'
+                      AND consrc LIKE '%%status%%'
+                """)
+                xcam_constraint = cursor.fetchone()
+                if xcam_constraint:
+                    cname = xcam_constraint['conname']
+                    cursor.execute("SELECT consrc FROM pg_constraint WHERE conname = %s", (cname,))
+                    src_row = cursor.fetchone()
+                    if src_row and 'auto_confirmed' not in (src_row.get('consrc') or ''):
+                        cursor.execute(f"ALTER TABLE cross_camera_links DROP CONSTRAINT {cname}")
+                        cursor.execute("""
+                            ALTER TABLE cross_camera_links ADD CONSTRAINT cross_camera_links_status_check
+                            CHECK (status IN ('auto', 'confirmed', 'rejected', 'auto_confirmed'))
+                        """)
+                        logger.info("Updated cross_camera_links status CHECK to include 'auto_confirmed'")
+            except Exception as e:
+                logger.warning(f"cross_camera_links status constraint migration note: {e}")
+
+            # Migration: Add spatial match columns to cross_camera_links
+            cursor.execute("ALTER TABLE cross_camera_links ADD COLUMN IF NOT EXISTS lane_distance REAL")
+            cursor.execute("ALTER TABLE cross_camera_links ADD COLUMN IF NOT EXISTS crossing_line_id INTEGER")
 
             # Migration: Add 'processing' to review_status CHECK constraint
             # Allows predictions to be held back from review until automated processing completes

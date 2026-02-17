@@ -644,19 +644,20 @@ class TrackBuilder:
                 results['unmatched'] += len(partition_preds)
                 continue
 
+            max_gap = self._get_temporal_gap(cam_id)
+
             for pred in partition_preds:
                 pred_box = {
                     'x': pred['bbox_x'], 'y': pred['bbox_y'],
                     'width': pred['bbox_width'], 'height': pred['bbox_height']
                 }
+                pred_epoch = pred['upload_date'].timestamp() if pred.get('upload_date') else None
 
                 best_track = None
                 best_iou = 0
 
                 for track in existing_tracks:
                     # Check temporal relevance
-                    max_gap = self._get_temporal_gap(cam_id)
-                    pred_epoch = pred['upload_date'].timestamp() if pred.get('upload_date') else None
                     if pred_epoch is not None and track.get('last_seen') is not None:
                         if abs(pred_epoch - track['last_seen']) > max_gap:
                             continue

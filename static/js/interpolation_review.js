@@ -292,6 +292,39 @@ const interpReview = {
         }
     },
 
+    async scanAndTrigger() {
+        const btn = document.getElementById('btn-scan');
+        const origText = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Scanning...';
+
+        try {
+            const resp = await fetch('/api/interpolation/scan', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({})
+            });
+            const data = await resp.json();
+            if (data.success) {
+                const msg = data.triggered > 0
+                    ? `Triggered ${data.triggered} interpolation(s). Refresh in a moment to see results.`
+                    : 'No new eligible pairs found.';
+                alert(msg);
+                // Refresh track list after a short delay
+                if (data.triggered > 0) {
+                    setTimeout(() => this.loadTracks(), 3000);
+                }
+            } else {
+                alert('Scan failed: ' + (data.error || 'Unknown error'));
+            }
+        } catch (err) {
+            alert('Scan error: ' + err.message);
+        } finally {
+            btn.disabled = false;
+            btn.textContent = origText;
+        }
+    },
+
     setupKeyboardNav() {
         document.addEventListener('keydown', (e) => {
             if (!this.currentTrack || !this.currentFrames.length) return;
