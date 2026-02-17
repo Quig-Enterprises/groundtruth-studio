@@ -1,5 +1,5 @@
 from datetime import datetime
-from flask import Blueprint, request, jsonify, render_template, g
+from flask import Blueprint, request, jsonify, render_template, redirect, g
 from psycopg2 import extras
 from db_connection import get_cursor, get_connection
 import services
@@ -350,8 +350,14 @@ def suggest_track_links():
 
 @persons_bp.route('/camera-topology')
 def camera_topology_viewer():
-    """Camera topology visualization interface"""
-    return render_template('camera_topology.html')
+    """Legacy route — redirect to camera management."""
+    return redirect('/camera-management')
+
+
+@persons_bp.route('/camera-management')
+def camera_management_viewer():
+    """Camera management interface — topology, locations, and aliases"""
+    return render_template('camera_management.html')
 
 
 # ── Multi-Entity Detection: Identities ───────────────────────────

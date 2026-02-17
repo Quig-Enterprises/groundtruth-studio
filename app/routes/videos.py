@@ -19,6 +19,26 @@ logger = logging.getLogger(__name__)
 CLIPS_DIR = BASE_DIR / 'clips'
 CLIPS_DIR.mkdir(exist_ok=True)
 
+# Legacy path prefix that may exist in old database records
+_LEGACY_PREFIXES = ['/var/www/html/groundtruth-studio/downloads/', '/var/www/html/groundtruth-studio/thumbnails/']
+
+def _resolve_video_path(filename):
+    """Resolve a filename from the DB to an actual disk path and normalized name.
+    Handles absolute legacy paths, new absolute paths, and relative filenames.
+    Returns (disk_path: Path, normalized_name: str)."""
+    if not filename:
+        return None, filename
+    # Strip legacy absolute prefixes to just the basename
+    stripped = False
+    for prefix in _LEGACY_PREFIXES:
+        if filename.startswith(prefix):
+            filename = filename[len(prefix):]
+            stripped = True
+            break
+    if not stripped and filename.startswith(str(DOWNLOAD_DIR) + '/'):
+        filename = filename[len(str(DOWNLOAD_DIR)) + 1:]
+    return DOWNLOAD_DIR / filename, filename
+
 
 @videos_bp.route('/api/client-log', methods=['POST'])
 def client_log():
@@ -64,6 +84,10 @@ def get_videos():
         # Detect EcoEye imports
         is_ecoeye = original_url.startswith('ecoeye://')
         has_video_file = not filename.endswith('.placeholder')
+        # Normalize legacy absolute paths
+        if has_video_file and filename:
+            _, normalized = _resolve_video_path(filename)
+            video['filename'] = normalized
 
         video['is_ecoeye_import'] = is_ecoeye
         video['has_video_file'] = has_video_file
@@ -178,13 +202,13 @@ def get_video(video_id):
     if not video:
         return jsonify({'success': False, 'error': 'Video not found'}), 404
 
-    # Add has_video_file flag
+    # Add has_video_file flag (normalize legacy absolute paths)
     filename = video.get('filename', '') or ''
     has_video_file = bool(filename and not filename.endswith('.placeholder'))
     if has_video_file:
-        # Also check if file actually exists on disk
-        video_path = DOWNLOAD_DIR / filename
-        has_video_file = video_path.exists()
+        video_path, normalized = _resolve_video_path(filename)
+        has_video_file = video_path.exists() if video_path else False
+        video['filename'] = normalized
     video['has_video_file'] = has_video_file
 
     # Add is_ecoeye_import flag

@@ -56,6 +56,37 @@
         });
     }
 
+    // ===== Dropdown Toggles =====
+
+    function initDropdownToggles() {
+        var toggles = document.querySelectorAll('.nav-dropdown-toggle');
+        toggles.forEach(function(toggle) {
+            toggle.addEventListener('click', function(e) {
+                e.preventDefault();
+                e.stopPropagation();
+                var dropdown = toggle.closest('.nav-dropdown');
+                var wasOpen = dropdown.classList.contains('open');
+                // Close all other dropdowns
+                document.querySelectorAll('.nav-dropdown.open').forEach(function(d) {
+                    d.classList.remove('open');
+                });
+                // Toggle this one
+                if (!wasOpen) {
+                    dropdown.classList.add('open');
+                }
+            });
+        });
+
+        // Close dropdowns when clicking outside
+        document.addEventListener('click', function(e) {
+            if (!e.target.closest('.nav-dropdown')) {
+                document.querySelectorAll('.nav-dropdown.open').forEach(function(d) {
+                    d.classList.remove('open');
+                });
+            }
+        });
+    }
+
     // ===== Active Link Detection =====
 
     function setActiveNavLink() {
@@ -77,10 +108,12 @@
     if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', function() {
             initHamburgerNav();
+            initDropdownToggles();
             setActiveNavLink();
         });
     } else {
         initHamburgerNav();
+        initDropdownToggles();
         setActiveNavLink();
     }
 })();

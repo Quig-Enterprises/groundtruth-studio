@@ -2539,7 +2539,7 @@ class ScenarioWorkflow {
         // Build the crop display: full frame with bbox + cropped enlargement
         cropContainer.textContent = '';
         const frameData = this._savedFrameData || this.extractedFrameData;
-        const bbox = this._savedBBox;
+        // bbox already declared above (line ~2487)
 
         if (frameData && bbox) {
             // Create a container with two views side by side

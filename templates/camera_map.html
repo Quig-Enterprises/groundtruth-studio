@@ -1,0 +1,1083 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Map - Groundtruth Studio</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        /* ============================================================
+           LAYOUT: Full-viewport map with collapsible sidebar
+           ============================================================ */
+        * { box-sizing: border-box; }
+
+        html, body {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            background: #1a1a1a;
+            color: #e0e0e0;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        }
+
+        .map-app {
+            display: flex;
+            height: 100vh;
+            width: 100vw;
+            position: relative;
+        }
+
+        /* ============================================================
+           SIDEBAR
+           ============================================================ */
+        .sidebar {
+            width: 300px;
+            min-width: 300px;
+            background: #1e1e1e;
+            border-right: 1px solid #333;
+            display: flex;
+            flex-direction: column;
+            z-index: 500;
+            transition: transform 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+                        min-width 0.28s cubic-bezier(0.4, 0, 0.2, 1),
+                        width 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+            overflow: hidden;
+        }
+
+        .sidebar.collapsed {
+            width: 48px;
+            min-width: 48px;
+        }
+
+        .sidebar.collapsed .sidebar-content {
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        .sidebar-toggle {
+            position: absolute;
+            top: 50%;
+            right: -14px;
+            transform: translateY(-50%);
+            width: 28px;
+            height: 28px;
+            background: #2a2a2a;
+            border: 1px solid #444;
+            border-radius: 50%;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10;
+            color: #aaa;
+            font-size: 11px;
+            transition: background 0.2s, color 0.2s;
+            flex-shrink: 0;
+        }
+
+        .sidebar-toggle:hover {
+            background: #3a3a3a;
+            color: #fff;
+        }
+
+        .sidebar-header {
+            padding: 14px 16px 12px;
+            border-bottom: 1px solid #2e2e2e;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .sidebar-header-icon {
+            width: 32px;
+            height: 32px;
+            background: rgba(76, 175, 80, 0.15);
+            border: 1px solid rgba(76, 175, 80, 0.3);
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .sidebar-header-icon svg {
+            width: 16px;
+            height: 16px;
+            fill: #4CAF50;
+        }
+
+        .sidebar-header-text {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .sidebar-header-text h2 {
+            margin: 0;
+            font-size: 15px;
+            font-weight: 600;
+            color: #f0f0f0;
+            white-space: nowrap;
+        }
+
+        .sidebar-header-text a.back-link {
+            display: block;
+            font-size: 11px;
+            color: #666;
+            text-decoration: none;
+            margin-top: 1px;
+            transition: color 0.2s;
+        }
+
+        .sidebar-header-text a.back-link:hover {
+            color: #4CAF50;
+        }
+
+        .sidebar-content {
+            flex: 1;
+            overflow-y: auto;
+            overflow-x: hidden;
+            transition: opacity 0.2s;
+        }
+
+        .sidebar-content::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .sidebar-content::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .sidebar-content::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 2px;
+        }
+
+        /* Search bar */
+        .sidebar-search {
+            padding: 10px 12px;
+            border-bottom: 1px solid #2a2a2a;
+            flex-shrink: 0;
+        }
+
+        .sidebar-search input {
+            width: 100%;
+            padding: 7px 10px 7px 30px;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 5px;
+            color: #ddd;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='14' height='14' viewBox='0 0 24 24' fill='none' stroke='%23666' stroke-width='2'%3E%3Ccircle cx='11' cy='11' r='8'/%3E%3Cpath d='m21 21-4.35-4.35'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: 9px center;
+        }
+
+        .sidebar-search input:focus {
+            border-color: #4CAF50;
+        }
+
+        /* Camera list sections */
+        .camera-section {
+            border-bottom: 1px solid #252525;
+        }
+
+        .camera-section-header {
+            padding: 10px 12px 8px;
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            cursor: pointer;
+            user-select: none;
+        }
+
+        .camera-section-title {
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: #666;
+        }
+
+        .camera-section-count {
+            font-size: 11px;
+            background: #2a2a2a;
+            color: #888;
+            padding: 1px 7px;
+            border-radius: 10px;
+            font-weight: 500;
+        }
+
+        .camera-section-body {
+            padding: 0 8px 8px;
+        }
+
+        /* Individual camera items */
+        .camera-item {
+            padding: 9px 10px;
+            border-radius: 5px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 9px;
+            transition: background 0.15s;
+            margin-bottom: 2px;
+            flex-wrap: wrap;
+        }
+
+        .camera-item-thumb {
+            width: 100%;
+            height: 56px;
+            object-fit: cover;
+            border-radius: 4px;
+            background: #111;
+            order: -1;
+        }
+
+        .camera-item:hover {
+            background: #252525;
+        }
+
+        .camera-item.active {
+            background: #1e2e1e;
+            border-left: 2px solid #4CAF50;
+            padding-left: 8px;
+        }
+
+        .camera-color-dot {
+            width: 10px;
+            height: 10px;
+            border-radius: 50%;
+            flex-shrink: 0;
+            box-shadow: 0 0 0 1px rgba(255,255,255,0.1);
+        }
+
+        .camera-item-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .camera-item-name {
+            font-size: 13px;
+            color: #ddd;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            font-weight: 500;
+        }
+
+        .camera-item-sub {
+            font-size: 11px;
+            color: #666;
+            margin-top: 1px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .camera-item-action {
+            flex-shrink: 0;
+        }
+
+        .btn-place {
+            padding: 4px 10px;
+            background: rgba(76, 175, 80, 0.15);
+            border: 1px solid rgba(76, 175, 80, 0.35);
+            color: #4CAF50;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.15s, border-color 0.15s;
+            white-space: nowrap;
+        }
+
+        .btn-place:hover {
+            background: rgba(76, 175, 80, 0.28);
+            border-color: rgba(76, 175, 80, 0.6);
+        }
+
+        .btn-place.placing {
+            background: rgba(255, 165, 0, 0.15);
+            border-color: rgba(255, 165, 0, 0.5);
+            color: #FFA500;
+            animation: pulse-placing 1.2s ease-in-out infinite;
+        }
+
+        @keyframes pulse-placing {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.6; }
+        }
+
+        .camera-item-empty {
+            padding: 14px 10px;
+            color: #555;
+            font-size: 12px;
+            text-align: center;
+            font-style: italic;
+        }
+
+        /* ============================================================
+           MAP CONTAINER
+           ============================================================ */
+        .map-wrapper {
+            flex: 1;
+            position: relative;
+            overflow: hidden;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+            background: #1a1a1a;
+        }
+
+        /* Override Leaflet dark defaults */
+        .leaflet-container {
+            background: #1a1a1a;
+        }
+
+        .leaflet-control-zoom a,
+        .leaflet-control-layers-toggle {
+            background-color: #2a2a2a !important;
+            color: #ddd !important;
+            border-color: #444 !important;
+        }
+
+        .leaflet-control-zoom a:hover,
+        .leaflet-control-layers-toggle:hover {
+            background-color: #3a3a3a !important;
+            color: #fff !important;
+        }
+
+        .leaflet-control-layers {
+            background: #2a2a2a !important;
+            border-color: #444 !important;
+            color: #ddd !important;
+        }
+
+        .leaflet-control-layers label {
+            color: #ddd !important;
+        }
+
+        .leaflet-control-attribution {
+            background: rgba(30,30,30,0.8) !important;
+            color: #666 !important;
+        }
+
+        .leaflet-control-attribution a {
+            color: #888 !important;
+        }
+
+        /* Placement mode cursor */
+        #map.placing-mode {
+            cursor: crosshair !important;
+        }
+
+        /* Placement mode banner */
+        .placement-banner {
+            position: absolute;
+            top: 12px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(255, 165, 0, 0.92);
+            color: #111;
+            padding: 8px 18px;
+            border-radius: 20px;
+            font-size: 13px;
+            font-weight: 600;
+            z-index: 600;
+            display: none;
+            pointer-events: none;
+            white-space: nowrap;
+            box-shadow: 0 2px 12px rgba(0,0,0,0.4);
+        }
+
+        .placement-banner.visible {
+            display: block;
+        }
+
+        /* ============================================================
+           CONTEXT MENU
+           ============================================================ */
+        .context-menu {
+            position: fixed;
+            background: #252525;
+            border: 1px solid #3a3a3a;
+            border-radius: 6px;
+            padding: 4px 0;
+            z-index: 2000;
+            min-width: 160px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.5);
+            display: none;
+        }
+
+        .context-menu.visible {
+            display: block;
+        }
+
+        .context-menu-item {
+            padding: 9px 16px;
+            font-size: 13px;
+            color: #ddd;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: background 0.1s;
+        }
+
+        .context-menu-item:hover {
+            background: #333;
+            color: #fff;
+        }
+
+        .context-menu-item svg {
+            width: 14px;
+            height: 14px;
+            opacity: 0.7;
+        }
+
+        /* ============================================================
+           DETAIL PANEL (slides in from right)
+           ============================================================ */
+        .detail-panel {
+            position: absolute;
+            top: 0;
+            right: 0;
+            bottom: 0;
+            width: 300px;
+            background: #1e1e1e;
+            border-left: 1px solid #2e2e2e;
+            z-index: 600;
+            transform: translateX(100%);
+            transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .detail-panel.open {
+            transform: translateX(0);
+        }
+
+        .detail-panel-header {
+            padding: 14px 16px 12px;
+            border-bottom: 1px solid #2a2a2a;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-shrink: 0;
+        }
+
+        .detail-panel-title {
+            flex: 1;
+            font-size: 14px;
+            font-weight: 600;
+            color: #f0f0f0;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .detail-panel-close {
+            width: 28px;
+            height: 28px;
+            background: transparent;
+            border: none;
+            color: #666;
+            cursor: pointer;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            border-radius: 4px;
+            transition: color 0.2s, background 0.2s;
+            flex-shrink: 0;
+            line-height: 1;
+        }
+
+        .detail-panel-close:hover {
+            background: #333;
+            color: #fff;
+        }
+
+        .detail-panel-body {
+            flex: 1;
+            overflow-y: auto;
+            padding: 14px 16px;
+        }
+
+        .detail-panel-body::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .detail-panel-body::-webkit-scrollbar-thumb {
+            background: #444;
+            border-radius: 2px;
+        }
+
+        /* Form fields inside detail panel */
+        .detail-field {
+            margin-bottom: 16px;
+        }
+
+        .detail-field label {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.07em;
+            color: #666;
+            margin-bottom: 6px;
+        }
+
+        .detail-field label .value-display {
+            font-size: 12px;
+            font-weight: 600;
+            color: #4CAF50;
+            letter-spacing: 0;
+            text-transform: none;
+        }
+
+        .detail-field input[type="text"],
+        .detail-field textarea {
+            width: 100%;
+            padding: 8px 10px;
+            background: #111;
+            border: 1px solid #333;
+            border-radius: 5px;
+            color: #ddd;
+            font-size: 13px;
+            outline: none;
+            transition: border-color 0.2s;
+            resize: vertical;
+        }
+
+        .detail-field input[type="text"]:focus,
+        .detail-field textarea:focus {
+            border-color: #4CAF50;
+        }
+
+        .detail-field textarea {
+            min-height: 70px;
+            font-family: inherit;
+        }
+
+        /* Sliders */
+        .detail-field input[type="range"] {
+            width: 100%;
+            height: 4px;
+            appearance: none;
+            -webkit-appearance: none;
+            background: #333;
+            border-radius: 2px;
+            outline: none;
+            cursor: pointer;
+        }
+
+        .detail-field input[type="range"]::-webkit-slider-thumb {
+            appearance: none;
+            -webkit-appearance: none;
+            width: 16px;
+            height: 16px;
+            background: #4CAF50;
+            border-radius: 50%;
+            cursor: pointer;
+            transition: transform 0.1s, box-shadow 0.1s;
+            box-shadow: 0 0 0 3px rgba(76,175,80,0.15);
+        }
+
+        .detail-field input[type="range"]::-webkit-slider-thumb:hover {
+            transform: scale(1.2);
+            box-shadow: 0 0 0 5px rgba(76,175,80,0.2);
+        }
+
+        .detail-field input[type="range"]::-moz-range-thumb {
+            width: 16px;
+            height: 16px;
+            background: #4CAF50;
+            border: none;
+            border-radius: 50%;
+            cursor: pointer;
+        }
+
+        /* Color presets */
+        .color-presets {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+        }
+
+        .color-preset {
+            width: 26px;
+            height: 26px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid transparent;
+            transition: transform 0.15s, border-color 0.15s;
+            flex-shrink: 0;
+        }
+
+        .color-preset:hover {
+            transform: scale(1.15);
+        }
+
+        .color-preset.active {
+            border-color: #fff;
+            transform: scale(1.15);
+            box-shadow: 0 0 0 3px rgba(255,255,255,0.15);
+        }
+
+        /* Panel action buttons */
+        .detail-actions {
+            padding: 12px 16px;
+            border-top: 1px solid #2a2a2a;
+            display: flex;
+            gap: 8px;
+            flex-shrink: 0;
+        }
+
+        .btn-save {
+            flex: 1;
+            padding: 9px 14px;
+            background: #4CAF50;
+            color: #fff;
+            border: none;
+            border-radius: 5px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s, transform 0.1s;
+        }
+
+        .btn-save:hover {
+            background: #43a047;
+        }
+
+        .btn-save:active {
+            transform: scale(0.97);
+        }
+
+        .btn-save:disabled {
+            background: #444;
+            color: #888;
+            cursor: not-allowed;
+        }
+
+        .btn-delete {
+            padding: 9px 14px;
+            background: transparent;
+            color: #e57373;
+            border: 1px solid #4a2222;
+            border-radius: 5px;
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background 0.2s, border-color 0.2s;
+        }
+
+        .btn-delete:hover {
+            background: rgba(229, 115, 115, 0.1);
+            border-color: #e57373;
+        }
+
+        /* Divider */
+        .detail-divider {
+            border: none;
+            border-top: 1px solid #252525;
+            margin: 16px 0;
+        }
+
+        /* Coordinates read-only display */
+        .coords-display {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+
+        .coord-box {
+            background: #111;
+            border: 1px solid #2a2a2a;
+            border-radius: 5px;
+            padding: 7px 10px;
+        }
+
+        .coord-box .coord-label {
+            font-size: 10px;
+            color: #555;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+        }
+
+        .coord-box .coord-val {
+            font-size: 12px;
+            font-family: monospace;
+            color: #aaa;
+            margin-top: 2px;
+        }
+
+        /* Save feedback */
+        .save-feedback {
+            display: none;
+            font-size: 12px;
+            color: #4CAF50;
+            text-align: center;
+            padding: 4px 0;
+        }
+
+        .save-feedback.visible {
+            display: block;
+        }
+
+        /* ============================================================
+           READ-ONLY OVERLAY (when can_write is false)
+           ============================================================ */
+        .readonly-badge {
+            position: absolute;
+            bottom: 16px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(30,30,30,0.88);
+            border: 1px solid #444;
+            color: #888;
+            padding: 6px 14px;
+            border-radius: 16px;
+            font-size: 12px;
+            z-index: 600;
+            pointer-events: none;
+            display: none;
+        }
+
+        /* ============================================================
+           LOADING STATE
+           ============================================================ */
+        .map-loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #555;
+            font-size: 14px;
+            z-index: 400;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .map-loading-spinner {
+            width: 20px;
+            height: 20px;
+            border: 2px solid #333;
+            border-top-color: #4CAF50;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        /* ============================================================
+           MOBILE: sidebar becomes overlay
+           ============================================================ */
+        @media (max-width: 767px) {
+            .sidebar {
+                position: absolute;
+                left: 0;
+                top: 0;
+                bottom: 0;
+                z-index: 700;
+                transform: translateX(0);
+                box-shadow: 4px 0 20px rgba(0,0,0,0.5);
+            }
+
+            .sidebar.collapsed {
+                transform: translateX(-260px);
+                width: 300px;
+                min-width: 300px;
+            }
+
+            .sidebar-toggle {
+                right: -34px;
+                width: 34px;
+                height: 34px;
+            }
+
+            .detail-panel {
+                width: 100%;
+                top: auto;
+                bottom: 0;
+                height: 80vh;
+                transform: translateY(100%);
+                border-left: none;
+                border-top: 1px solid #2e2e2e;
+            }
+
+            .detail-panel.open {
+                transform: translateY(0);
+            }
+        }
+
+        /* ============================================================
+           CUSTOM LEAFLET MARKER STYLES
+           ============================================================ */
+        .camera-marker-icon {
+            background: transparent;
+            border: none;
+        }
+
+        .camera-marker-svg {
+            overflow: visible;
+        }
+
+        .camera-marker-svg .marker-ring {
+            transition: r 0.2s;
+        }
+
+        @keyframes marker-pulse {
+            0% { r: 10; opacity: 0.6; }
+            70% { r: 18; opacity: 0; }
+            100% { r: 18; opacity: 0; }
+        }
+
+        .camera-marker-svg.selected .pulse-ring {
+            animation: marker-pulse 1.5s ease-out infinite;
+        }
+
+        /* Rotation handle */
+        .rotation-handle {
+            cursor: grab;
+        }
+
+        .rotation-handle:active {
+            cursor: grabbing;
+        }
+
+        /* ============================================================
+           LAYER CONTROL DARK OVERRIDES
+           ============================================================ */
+        .leaflet-control-layers-expanded {
+            background: #252525 !important;
+            color: #ddd !important;
+            border-color: #444 !important;
+            padding: 8px 12px !important;
+        }
+
+        .leaflet-control-layers-separator {
+            border-top-color: #444 !important;
+        }
+
+        .leaflet-bar a {
+            background-color: #2a2a2a !important;
+            color: #ccc !important;
+            border-bottom-color: #3a3a3a !important;
+        }
+
+        .leaflet-bar a:hover {
+            background-color: #383838 !important;
+            color: #fff !important;
+        }
+
+    </style>
+</head>
+<body>
+    <!-- Pass server-side variables to JS -->
+    <script>
+        var CAN_WRITE = {{ 'true' if can_write else 'false' }};
+        var USER_ROLE = "{{ user_role }}";
+    </script>
+
+    <div class="map-app">
+        <!-- ============ SIDEBAR ============ -->
+        <div class="sidebar" id="sidebar">
+            <div style="position:relative; flex-shrink:0;">
+                <div class="sidebar-header">
+                    <div class="sidebar-header-icon">
+                        <svg viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                            <path d="M17 10.5V7c0-.55-.45-1-1-1H4c-.55 0-1 .45-1 1v10c0 .55.45 1 1 1h12c.55 0 1-.45 1-1v-3.5l4 4v-11l-4 4z"/>
+                        </svg>
+                    </div>
+                    <div class="sidebar-header-text">
+                        <h2>Camera Map</h2>
+                        <a href="/" class="back-link">← Back to Studio</a>
+                    </div>
+                </div>
+                <button class="sidebar-toggle" id="sidebar-toggle" title="Toggle sidebar">&#x203A;</button>
+            </div>
+
+            <div class="sidebar-content" id="sidebar-content">
+                <div class="sidebar-search">
+                    <input type="text" id="camera-search" placeholder="Search cameras..." autocomplete="off">
+                </div>
+
+                <!-- Unplaced cameras -->
+                <div class="camera-section">
+                    <div class="camera-section-header">
+                        <span class="camera-section-title">Unplaced</span>
+                        <span class="camera-section-count" id="unplaced-count">0</span>
+                    </div>
+                    <div class="camera-section-body" id="unplaced-list">
+                        <div class="camera-item-empty">Loading...</div>
+                    </div>
+                </div>
+
+                <!-- Placed cameras -->
+                <div class="camera-section">
+                    <div class="camera-section-header">
+                        <span class="camera-section-title">Placed</span>
+                        <span class="camera-section-count" id="placed-count">0</span>
+                    </div>
+                    <div class="camera-section-body" id="placed-list">
+                        <div class="camera-item-empty">Loading...</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============ MAP ============ -->
+        <div class="map-wrapper">
+            <div id="map"></div>
+
+            <!-- Placement mode banner -->
+            <div class="placement-banner" id="placement-banner">
+                Click map to place camera &nbsp;&bull;&nbsp; <kbd style="font-size:11px; background:rgba(0,0,0,0.25); padding:1px 5px; border-radius:3px;">Esc</kbd> to cancel
+            </div>
+
+            <!-- Loading indicator -->
+            <div class="map-loading" id="map-loading">
+                <div class="map-loading-spinner"></div>
+                <span>Loading placements...</span>
+            </div>
+
+            <!-- Read-only badge -->
+            <div class="readonly-badge" id="readonly-badge">View only</div>
+
+            <!-- Context menu -->
+            <div class="context-menu" id="context-menu">
+                <div class="context-menu-item" id="ctx-add-camera">
+                    <svg viewBox="0 0 24 24" fill="currentColor"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z"/></svg>
+                    Add camera here
+                </div>
+            </div>
+
+            <!-- Detail panel -->
+            <div class="detail-panel" id="detail-panel">
+                <div class="detail-panel-header">
+                    <div class="detail-panel-title" id="detail-title">Camera</div>
+                    <button class="detail-panel-close" id="detail-close" title="Close">&#x2715;</button>
+                </div>
+                <div class="detail-panel-body">
+                    <!-- Camera Preview -->
+                    <div class="detail-preview" id="detail-preview" style="display:none;">
+                        <img id="preview-img" src="" alt="Camera preview" style="width:100%; border-radius:6px; margin-bottom:12px; max-height:200px; object-fit:cover; background:#111;">
+                        <div style="font-size:11px; color:#888; margin-bottom:12px; margin-top:-8px;" id="preview-caption"></div>
+                    </div>
+                    <div class="detail-field">
+                        <label>Camera Name</label>
+                        <input type="text" id="detail-name" placeholder="Enter camera name..." />
+                    </div>
+
+                    <div class="detail-field">
+                        <label>
+                            Bearing
+                            <span class="value-display"><span id="detail-bearing-val">0</span>&deg;</span>
+                        </label>
+                        <input type="range" id="detail-bearing" min="0" max="360" step="1" value="0">
+                    </div>
+
+                    <div class="detail-field">
+                        <label>
+                            Field of View
+                            <span class="value-display"><span id="detail-fov-val">60</span>&deg;</span>
+                        </label>
+                        <input type="range" id="detail-fov" min="10" max="170" step="1" value="60">
+                    </div>
+
+                    <div class="detail-field">
+                        <label>
+                            Range
+                            <span class="value-display"><span id="detail-range-val">50</span>m</span>
+                        </label>
+                        <input type="range" id="detail-range" min="5" max="200" step="1" value="50">
+                    </div>
+
+                    <div class="detail-field">
+                        <label>Color</label>
+                        <div class="color-presets" id="color-presets">
+                            <div class="color-preset" data-color="#4CAF50" style="background:#4CAF50" title="Green"></div>
+                            <div class="color-preset" data-color="#2196F3" style="background:#2196F3" title="Blue"></div>
+                            <div class="color-preset" data-color="#F44336" style="background:#F44336" title="Red"></div>
+                            <div class="color-preset" data-color="#FF9800" style="background:#FF9800" title="Orange"></div>
+                            <div class="color-preset" data-color="#9C27B0" style="background:#9C27B0" title="Purple"></div>
+                            <div class="color-preset" data-color="#FFEB3B" style="background:#FFEB3B" title="Yellow"></div>
+                            <div class="color-preset" data-color="#00BCD4" style="background:#00BCD4" title="Cyan"></div>
+                            <div class="color-preset" data-color="#FF5722" style="background:#FF5722" title="Deep Orange"></div>
+                        </div>
+                    </div>
+
+                    <!-- PTZ Mode -->
+                    <div class="detail-field" id="ptz-toggle-group">
+                        <label style="text-transform:none; letter-spacing:0; font-size:13px; font-weight:500; color:#ddd; cursor:pointer;">
+                            <input type="checkbox" id="input-ptz" style="margin-right:6px; accent-color:#4CAF50;">
+                            PTZ Camera
+                        </label>
+                    </div>
+                    <div class="detail-field" id="ptz-range-group" style="display:none;">
+                        <label>
+                            Pan Range
+                            <span class="value-display"><span id="ptz-range-val">180</span>&deg;</span>
+                        </label>
+                        <input type="range" id="input-ptz-range" min="30" max="360" value="180" step="5">
+                    </div>
+                    <div class="detail-field" id="indoor-toggle-group">
+                        <label style="text-transform:none; letter-spacing:0; font-size:13px; font-weight:500; color:#ddd; cursor:pointer;">
+                            <input type="checkbox" id="input-indoor" style="margin-right:6px; accent-color:#4CAF50;">
+                            Indoor Camera
+                        </label>
+                    </div>
+
+                    <hr class="detail-divider">
+
+                    <div class="detail-field">
+                        <label>Location</label>
+                        <div class="coords-display">
+                            <div class="coord-box">
+                                <div class="coord-label">Lat</div>
+                                <div class="coord-val" id="detail-lat">—</div>
+                            </div>
+                            <div class="coord-box">
+                                <div class="coord-label">Lng</div>
+                                <div class="coord-val" id="detail-lng">—</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="detail-field">
+                        <label>Notes</label>
+                        <textarea id="detail-notes" placeholder="Optional description or notes..."></textarea>
+                    </div>
+
+                    <div class="save-feedback" id="save-feedback">Saved.</div>
+                </div>
+
+                <div class="detail-actions" id="detail-actions">
+                    <button class="btn-save" id="btn-save">Save</button>
+                    <button class="btn-delete" id="btn-delete">Delete</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script src="{{ static_v('js/camera_map.js') }}"></script>
+</body>
+</html>

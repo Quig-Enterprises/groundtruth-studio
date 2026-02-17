@@ -7,20 +7,40 @@
     </div>
     <div class="nav-links" id="nav-links">
         <a href="/" class="nav-link">Video Library</a>
-        <a href="/add-content" class="nav-link">Add Content</a>
-        <a href="/person-manager" class="nav-link">Person Manager</a>
-        <a href="/camera-topology" class="nav-link">Camera Topology</a>
-        <a href="/model-training" class="nav-link">Model Training</a>
-        <a href="/prediction-review" class="nav-link">AI Review</a>
-        <a href="/vehicle-metrics" class="nav-link">Vehicle Metrics</a>
-        <a href="/interpolation-review" class="nav-link">Track Review</a>
-        <a href="/review" class="nav-link">Quick Review</a>
-        <a href="/cross-camera-review" class="nav-link">Cross-Camera</a>
-        <a href="/crossing-line-config" class="nav-link">Crossing Lines</a>
-        <a href="/sync-settings" class="nav-link">Sync Settings</a>
-        <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
-        <a href="/vibration-export" class="nav-link">Vibration Export</a>
-        <a href="/location-export" class="nav-link">Location Export</a>
-        <a href="/tag-manager" class="nav-link">Tag Manager</a>
+        <div class="nav-dropdown">
+            <button class="nav-link nav-dropdown-toggle">Review <span class="dropdown-arrow">&#9662;</span></button>
+            <div class="nav-dropdown-menu">
+                <a href="/prediction-review" class="nav-link">AI Review</a>
+                <a href="/review" class="nav-link">Quick Review</a>
+                <a href="/interpolation-review" class="nav-link">Track Review</a>
+                <a href="/cross-camera-review" class="nav-link">Cross-Camera</a>
+            </div>
+        </div>
+        <div class="nav-dropdown">
+            <button class="nav-link nav-dropdown-toggle">AI &amp; Training <span class="dropdown-arrow">&#9662;</span></button>
+            <div class="nav-dropdown-menu">
+                <a href="/model-training" class="nav-link">Model Training</a>
+                <a href="/vehicle-metrics" class="nav-link">Vehicle Metrics</a>
+                <a href="/crossing-line-config" class="nav-link">Crossing Lines</a>
+            </div>
+        </div>
+        <div class="nav-dropdown">
+            <button class="nav-link nav-dropdown-toggle">Content &amp; Cameras <span class="dropdown-arrow">&#9662;</span></button>
+            <div class="nav-dropdown-menu">
+                <a href="/add-content" class="nav-link">Add Content</a>
+                <a href="/camera-management" class="nav-link">Camera Management</a>
+                <a href="/camera-map" class="nav-link">Camera Map</a>
+                <a href="/person-manager" class="nav-link">Person Manager</a>
+                <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
+            </div>
+        </div>
+        <div class="nav-dropdown">
+            <button class="nav-link nav-dropdown-toggle">Export &amp; Settings <span class="dropdown-arrow">&#9662;</span></button>
+            <div class="nav-dropdown-menu">
+                <a href="/vibration-export" class="nav-link">Vibration Export</a>
+                <a href="/location-export" class="nav-link">Location Export</a>
+                <a href="/sync-settings" class="nav-link">Sync Settings</a>
+            </div>
+        </div>
     </div>
 </nav>

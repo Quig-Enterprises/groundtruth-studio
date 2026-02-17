@@ -19,7 +19,9 @@ that high-confidence spatial matches are locked in first.
 """
 
 import logging
+import os
 
+import cv2
 import numpy as np
 
 from db_connection import get_cursor
@@ -208,12 +210,68 @@ class CrossingLineMatcher:
 
         first = rows[0]
         last = rows[-1]
-        dx = last['cx'] - first['cx']
-        dy = last['cy'] - first['cy']
+        dx = float(last['cx'] - first['cx'])
+        dy = float(last['cy'] - first['cy'])
         length = np.sqrt(dx * dx + dy * dy)
-        if length < 1e-6:
+
+        # Require meaningful displacement — at least 5% of frame diagonal.
+        # Parked cars with multi-member tracks have tiny jitter (~30-50px
+        # over hours) that should not be treated as direction of travel.
+        min_displacement = 0.05 * np.sqrt(1920 ** 2 + 1080 ** 2)  # ~110px
+        if length < min_displacement:
             return None
         return (dx / length, dy / length)
+
+    def _get_path_time(self, track):
+        """Get the midpoint timestamp from Frigate path_data.
+
+        This is far more accurate than first_seen/last_seen which are often
+        stored as the same rounded epoch value for all tracks in a batch.
+
+        Returns:
+            (start_time, mid_time, end_time) tuple, or None if no path_data.
+        """
+        with get_cursor(commit=False) as cursor:
+            cursor.execute("""
+                SELECT v.metadata
+                FROM ai_predictions p
+                JOIN videos v ON v.id = p.video_id
+                WHERE p.camera_object_track_id = %s
+                  AND v.metadata IS NOT NULL
+                LIMIT 1
+            """, (track['id'],))
+            row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        metadata = row['metadata']
+        if not isinstance(metadata, dict):
+            return None
+
+        path_data = metadata.get('path_data')
+        if not path_data or not isinstance(path_data, list) or len(path_data) < 1:
+            return None
+
+        try:
+            # path_data format: [[[cx, cy], timestamp], ...]
+            first_entry = path_data[0]
+            last_entry = path_data[-1]
+
+            if isinstance(first_entry[0], (list, tuple)):
+                t_start = first_entry[1]
+                t_end = last_entry[1]
+            else:
+                # Flat format — no timestamps available
+                return None
+        except (IndexError, TypeError):
+            return None
+
+        if not isinstance(t_start, (int, float)) or not isinstance(t_end, (int, float)):
+            return None
+
+        t_mid = (t_start + t_end) / 2.0
+        return (t_start, t_mid, t_end)
 
     def _direction_from_path_data(self, track):
         """Extract travel direction from Frigate path_data stored in video metadata.
@@ -260,11 +318,21 @@ class CrossingLineMatcher:
             if isinstance(first_entry[0], (list, tuple)):
                 first_cx, first_cy = first_entry[0][0], first_entry[0][1]
                 last_cx, last_cy = last_entry[0][0], last_entry[0][1]
+                t_start = first_entry[1]
+                t_end = last_entry[1]
             else:
                 first_cx, first_cy = first_entry[0], first_entry[1]
                 last_cx, last_cy = last_entry[0], last_entry[1]
+                t_start = t_end = 0
         except (IndexError, TypeError):
             return None
+
+        # Require minimum path duration (0.5s) to filter out jitter on
+        # parked vehicles that barely pass displacement thresholds
+        if isinstance(t_start, (int, float)) and isinstance(t_end, (int, float)):
+            duration = t_end - t_start
+            if duration < 0.5:
+                return None
 
         # Convert normalised coords to pixel space using video dimensions
         vid_w = row.get('width') or 1920
@@ -273,8 +341,8 @@ class CrossingLineMatcher:
         dy = (last_cy - first_cy) * vid_h
         length = np.sqrt(dx * dx + dy * dy)
 
-        # Require minimum displacement (at least ~2% of frame diagonal)
-        min_displacement = 0.02 * np.sqrt(vid_w ** 2 + vid_h ** 2)
+        # Require minimum displacement (at least ~5% of frame diagonal)
+        min_displacement = 0.05 * np.sqrt(vid_w ** 2 + vid_h ** 2)
         if length < min_displacement:
             return None
 
@@ -303,6 +371,135 @@ class CrossingLineMatcher:
         if abs(dot) < 1e-6:
             return None
         return dot > 0
+
+    # ------------------------------------------------------------------
+    # ReID embeddings (pre-computed, stored in DB)
+    # ------------------------------------------------------------------
+
+    def _load_embeddings(self, track_ids):
+        """Bulk-load ReID embeddings for a list of track IDs.
+
+        Returns dict: track_id -> np.float32[2048] (L2-normalised).
+        Averages multiple embeddings per track if present.
+        """
+        if not track_ids:
+            return {}
+
+        embeddings = {}
+        with get_cursor(commit=False) as cursor:
+            # Use ANY() for efficient bulk lookup
+            cursor.execute("""
+                SELECT e.source_image_path, e.vector
+                FROM embeddings e
+                WHERE e.embedding_type = 'vehicle_appearance'
+                  AND e.vector IS NOT NULL
+            """)
+            # Index by track_id extracted from source_image_path
+            # Format: prediction_{pred_id}_track_{track_id}_crop
+            track_id_set = set(track_ids)
+            track_vectors = {}  # track_id -> list of vectors
+            for row in cursor:
+                path = row['source_image_path'] or ''
+                # Extract track_id from the path
+                if '_track_' in path:
+                    try:
+                        part = path.split('_track_')[1]
+                        tid = int(part.split('_')[0])
+                    except (IndexError, ValueError):
+                        continue
+                    if tid in track_id_set:
+                        vec = row['vector']
+                        if vec is not None and len(vec) > 0:
+                            if tid not in track_vectors:
+                                track_vectors[tid] = []
+                            track_vectors[tid].append(np.array(vec, dtype=np.float32))
+
+        # Average and normalise per track
+        for tid, vecs in track_vectors.items():
+            if vecs:
+                mean_vec = np.mean(vecs, axis=0)
+                norm = np.linalg.norm(mean_vec)
+                if norm > 1e-6:
+                    embeddings[tid] = mean_vec / norm
+
+        return embeddings
+
+    @staticmethod
+    def _reid_similarity(emb_a, emb_b):
+        """Cosine similarity between two L2-normalised embedding vectors."""
+        if emb_a is None or emb_b is None:
+            return None
+        return float(np.dot(emb_a, emb_b))
+
+    # ------------------------------------------------------------------
+    # Color histogram comparison
+    # ------------------------------------------------------------------
+
+    THUMBNAIL_DIR = '/opt/groundtruth-studio/thumbnails'
+
+    def _load_color_histograms(self, tracks):
+        """Compute HSV color histograms for vehicle crops.
+
+        Returns dict: track_id -> normalised HSV histogram (flattened).
+        """
+        histograms = {}
+        for t in tracks:
+            hist = self._compute_crop_histogram(t)
+            if hist is not None:
+                histograms[t['id']] = hist
+        return histograms
+
+    def _compute_crop_histogram(self, track):
+        """Crop the vehicle bbox from thumbnail and compute HSV histogram."""
+        # Find the thumbnail path for this track's anchor prediction
+        with get_cursor(commit=False) as cursor:
+            cursor.execute("""
+                SELECT v.thumbnail_path, p.bbox_x, p.bbox_y,
+                       p.bbox_width, p.bbox_height
+                FROM ai_predictions p
+                JOIN videos v ON v.id = p.video_id
+                WHERE p.camera_object_track_id = %s
+                ORDER BY p.id
+                LIMIT 1
+            """, (track['id'],))
+            row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        row = dict(row)
+        thumb_path = row['thumbnail_path']
+        if not thumb_path or not os.path.isfile(thumb_path):
+            return None
+
+        img = cv2.imread(thumb_path)
+        if img is None:
+            return None
+
+        # Crop to bbox
+        x = max(0, int(row['bbox_x'] or 0))
+        y = max(0, int(row['bbox_y'] or 0))
+        w = max(1, int(row['bbox_width'] or 1))
+        h = max(1, int(row['bbox_height'] or 1))
+        crop = img[y:y+h, x:x+w]
+
+        if crop.size == 0:
+            return None
+
+        # Convert to HSV and compute histogram
+        hsv = cv2.cvtColor(crop, cv2.COLOR_BGR2HSV)
+        # H: 16 bins (0-180), S: 8 bins (0-256), V: 4 bins (0-256)
+        hist = cv2.calcHist([hsv], [0, 1, 2], None,
+                            [16, 8, 4], [0, 180, 0, 256, 0, 256])
+        hist = cv2.normalize(hist, hist).flatten()
+        return hist
+
+    @staticmethod
+    def _color_similarity(hist_a, hist_b):
+        """Compare two HSV histograms using correlation."""
+        if hist_a is None or hist_b is None:
+            return None
+        return float(cv2.compareHist(hist_a, hist_b, cv2.HISTCMP_CORREL))
 
     # ------------------------------------------------------------------
     # Scoring
@@ -424,9 +621,11 @@ class CrossingLineMatcher:
     # ------------------------------------------------------------------
 
     # Scoring for direction-based matching (direction is a hard pre-filter)
-    DIRECTION_TEMPORAL_WEIGHT = 0.60
-    DIRECTION_SIZE_WEIGHT = 0.40
-    DIRECTION_MATCH_THRESHOLD = 0.45
+    DIRECTION_TEMPORAL_WEIGHT = 0.30
+    DIRECTION_REID_WEIGHT = 0.30
+    DIRECTION_COLOR_WEIGHT = 0.20
+    DIRECTION_SIZE_WEIGHT = 0.20
+    DIRECTION_MATCH_THRESHOLD = 0.40
 
     def match_camera_pair_by_direction(self, cam_a, cam_b, entity_type='vehicle'):
         """Match tracks across a camera pair using path_data direction.
@@ -452,9 +651,71 @@ class CrossingLineMatcher:
         if not tracks_a or not tracks_b:
             return []
 
-        # Compute directions for all tracks
-        dirs_a = {t['id']: self.compute_direction(t) for t in tracks_a}
-        dirs_b = {t['id']: self.compute_direction(t) for t in tracks_b}
+        # Filter out stationary objects: tracks whose observation span
+        # (last_seen - first_seen) vastly exceeds the expected transit time
+        # are parked/stationary and should not be matched with transiting vehicles.
+        max_span = max(60.0, topo['max_transit_seconds'] * 4)
+
+        def _is_transiting(t):
+            fs = t.get('first_seen') or 0
+            ls = t.get('last_seen') or 0
+            span = ls - fs
+            return span <= max_span
+
+        tracks_a = [t for t in tracks_a if _is_transiting(t)]
+        tracks_b = [t for t in tracks_b if _is_transiting(t)]
+
+        if not tracks_a or not tracks_b:
+            return []
+
+        # Exclude tracks that already have a confirmed cross-camera link
+        # (they're settled — no need to re-match).
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(
+                "SELECT track_a_id, track_b_id FROM cross_camera_links "
+                "WHERE status = 'confirmed'")
+            confirmed_ids = set()
+            for row in cursor:
+                confirmed_ids.add(row['track_a_id'])
+                confirmed_ids.add(row['track_b_id'])
+
+        tracks_a = [t for t in tracks_a if t['id'] not in confirmed_ids]
+        tracks_b = [t for t in tracks_b if t['id'] not in confirmed_ids]
+
+        if not tracks_a or not tracks_b:
+            return []
+
+        # Compute directions and path timestamps for all tracks
+        dirs_a = {}
+        dirs_b = {}
+        path_times = {}  # track_id -> (start, mid, end)
+
+        for t in tracks_a:
+            dirs_a[t['id']] = self.compute_direction(t)
+            pt = self._get_path_time(t)
+            if pt:
+                path_times[t['id']] = pt
+
+        for t in tracks_b:
+            dirs_b[t['id']] = self.compute_direction(t)
+            pt = self._get_path_time(t)
+            if pt:
+                path_times[t['id']] = pt
+
+        # Pre-load ReID embeddings and color histograms for all tracks
+        all_ids = [t['id'] for t in tracks_a] + [t['id'] for t in tracks_b]
+        reid_embeddings = self._load_embeddings(all_ids)
+        color_histograms = self._load_color_histograms(tracks_a + tracks_b)
+        logger.info(
+            "Loaded %d ReID embeddings, %d color histograms for %d tracks",
+            len(reid_embeddings), len(color_histograms), len(all_ids))
+
+        # Bundle precomputed data for scoring
+        precomputed = {
+            'path_times': path_times,
+            'reid': reid_embeddings,
+            'color': color_histograms,
+        }
 
         # Group by direction sign (dx > 0 vs dx < 0)
         # Tracks without direction go into a separate "unknown" group
@@ -480,34 +741,127 @@ class CrossingLineMatcher:
             cam_b, len(groups_b['positive']), len(groups_b['negative']),
             len(groups_b['unknown']))
 
-        all_matches = []
-
-        # Match ONLY within same-direction buckets.
         # Tracks without known direction are excluded — direction is
         # the primary discriminator and without it we can't be confident.
-        for bucket in ('positive', 'negative'):
-            bucket_a = groups_a[bucket]
-            bucket_b = groups_b[bucket]
-            if not bucket_a or not bucket_b:
-                continue
 
-            matches = self._mutual_best_match(bucket_a, bucket_b, topo, bucket)
-            all_matches.extend(matches)
+        # Auto-detect camera direction relationship.
+        # Cameras may face the same or opposite directions. A vehicle
+        # going east has positive dx on one camera but may have negative
+        # dx on the other if the cameras face ~180° apart.
+        #
+        # Try both pairings and pick whichever produces more matches:
+        #   Same-facing:     positive↔positive, negative↔negative
+        #   Opposite-facing: positive↔negative, negative↔positive
+
+        same_facing_matches = []
+        for bucket in ('positive', 'negative'):
+            a_tracks = groups_a[bucket]
+            b_tracks = groups_b[bucket]
+            if a_tracks and b_tracks:
+                same_facing_matches.extend(
+                    self._mutual_best_match(a_tracks, b_tracks, topo, bucket,
+                                            precomputed))
+
+        opposite_facing_matches = []
+        opposite_map = {'positive': 'negative', 'negative': 'positive'}
+        for bucket_a, bucket_b in opposite_map.items():
+            a_tracks = groups_a[bucket_a]
+            b_tracks = groups_b[bucket_b]
+            if a_tracks and b_tracks:
+                opposite_facing_matches.extend(
+                    self._mutual_best_match(a_tracks, b_tracks, topo,
+                                            f'{bucket_a}_opp', precomputed))
+
+        # Pick the pairing that produces more matches (and higher avg score)
+        def _quality(matches):
+            if not matches:
+                return (0, 0.0)
+            avg = sum(m['score_info']['total'] for m in matches) / len(matches)
+            return (len(matches), avg)
+
+        same_q = _quality(same_facing_matches)
+        opp_q = _quality(opposite_facing_matches)
+
+        if opp_q > same_q:
+            all_matches = opposite_facing_matches
+            facing = 'opposite'
+        else:
+            all_matches = same_facing_matches
+            facing = 'same'
 
         logger.info(
-            "Direction matching %s <-> %s: %d matches "
-            "(%d/%d with known direction)",
-            cam_a, cam_b, len(all_matches), known_a, known_b)
+            "Direction matching %s <-> %s: %d matches (%s-facing cameras) "
+            "[same=%d opp=%d] (%d/%d with known direction)",
+            cam_a, cam_b, len(all_matches), facing,
+            same_q[0], opp_q[0], known_a, known_b)
+
+        # Also match unknown-direction tracks, split by TEMPORAL ORDER
+        # to prevent cross-direction matches.  On a two-lane road, vehicles
+        # going one way appear on cam_a first, the other way on cam_b first.
+        # We run two rounds: one for "a appears before b" pairs, one for
+        # "b appears before a" pairs.  The scoring function rejects pairs
+        # with the wrong temporal sign via the direction_bucket name.
+        already_matched_a = {m['track_a_id'] for m in all_matches}
+        already_matched_b = {m['track_b_id'] for m in all_matches}
+
+        unknown_a = [t for t in groups_a['unknown']
+                     if t['id'] not in already_matched_a]
+        unknown_b = [t for t in groups_b['unknown']
+                     if t['id'] not in already_matched_b]
+        all_b_remaining = [t for t in tracks_b
+                           if t['id'] not in already_matched_b]
+        all_a_remaining = [t for t in tracks_a
+                           if t['id'] not in already_matched_a]
+
+        # Round 1: unknown_a appearing BEFORE cam_b candidates (a_first)
+        # Round 2: unknown_a appearing AFTER cam_b candidates (b_first)
+        # The bucket name 'unknown_a_first' / 'unknown_b_first' tells the
+        # scoring function to reject pairs with the wrong temporal sign.
+        for temporal_bucket in ('unknown_a_first', 'unknown_b_first'):
+            ua = [t for t in unknown_a if t['id'] not in already_matched_a]
+            ub = [t for t in all_b_remaining if t['id'] not in already_matched_b]
+            if ua and ub:
+                matches = self._mutual_best_match(
+                    ua, ub, topo, temporal_bucket, precomputed)
+                all_matches.extend(matches)
+                already_matched_a.update(m['track_a_id'] for m in matches)
+                already_matched_b.update(m['track_b_id'] for m in matches)
+
+        # Remaining unknown_b against remaining all_a (same split)
+        for temporal_bucket in ('unknown_a_first', 'unknown_b_first'):
+            ua = [t for t in all_a_remaining if t['id'] not in already_matched_a]
+            ub = [t for t in unknown_b if t['id'] not in already_matched_b]
+            if ub and ua:
+                matches = self._mutual_best_match(
+                    ua, ub, topo, temporal_bucket, precomputed)
+                all_matches.extend(matches)
+                already_matched_a.update(m['track_a_id'] for m in matches)
+                already_matched_b.update(m['track_b_id'] for m in matches)
+
+        logger.info(
+            "Total matches %s <-> %s: %d (incl. %d unknown-direction)",
+            cam_a, cam_b, len(all_matches),
+            len(all_matches) - (same_q[0] if facing == 'same' else opp_q[0]))
 
         return all_matches
 
-    def _score_direction_pair(self, track_a, track_b, topology, direction_bucket):
+    def _score_direction_pair(self, track_a, track_b, topology,
+                              direction_bucket, precomputed=None):
         """Score a pair for direction-based matching (no crossing lines).
+
+        Uses path_data midpoint timestamps for temporal scoring, ReID embeddings
+        and color histograms as visual tiebreakers, plus size similarity.
 
         Returns dict with 'total' and component scores, or total=0 on rejection.
         """
+        precomputed = precomputed or {}
+        path_times = precomputed.get('path_times', {})
+        reid_embs = precomputed.get('reid', {})
+        color_hists = precomputed.get('color', {})
+
         zero = {
             'total': 0.0, 'temporal_score': 0.0, 'size_score': 0.0,
+            'reid_score': 0.0, 'color_score': 0.0, 'reid_similarity': None,
             'direction_bucket': direction_bucket,
             'temporal_gap': None, 'rejected': None,
         }
@@ -519,41 +873,64 @@ class CrossingLineMatcher:
             zero['rejected'] = 'classification_mismatch'
             return zero
 
-        # Temporal gap
-        a_end = track_a.get('last_seen') or 0
-        b_start = track_b.get('first_seen') or 0
-        a_start = track_a.get('first_seen') or 0
-        b_end = track_b.get('last_seen') or 0
-
-        gap_a_to_b = b_start - a_end
-        gap_b_to_a = a_start - b_end
-        gap = min(gap_a_to_b, gap_b_to_a)
+        # Temporal gap — prefer path_data timestamps (sub-second accuracy)
+        pt_a = path_times.get(track_a['id'])
+        pt_b = path_times.get(track_b['id'])
 
         max_transit = topology['max_transit_seconds']
-        avg_transit = topology.get('avg_transit_seconds') or max_transit / 2.0
+
+        if pt_a and pt_b:
+            signed_gap = pt_b[1] - pt_a[1]
+        else:
+            a_start = track_a.get('first_seen') or 0
+            b_start = track_b.get('first_seen') or 0
+            signed_gap = b_start - a_start
+
+        gap = abs(signed_gap)
+
+        # For unknown-direction matching, enforce temporal order to prevent
+        # cross-direction matches.  'unknown_a_first' requires track_a
+        # appears before track_b (signed_gap > 0); 'unknown_b_first' is
+        # the reverse.
+        if direction_bucket == 'unknown_a_first' and signed_gap < 0:
+            zero['rejected'] = 'temporal_order_mismatch'
+            return zero
+        if direction_bucket == 'unknown_b_first' and signed_gap > 0:
+            zero['rejected'] = 'temporal_order_mismatch'
+            return zero
 
         if gap > max_transit:
             zero['rejected'] = 'temporal_gap_exceeded'
             zero['temporal_gap'] = round(gap, 1)
             return zero
 
-        first_seen_gap = abs(a_start - b_start)
-        if gap <= 0 and first_seen_gap > max_transit:
-            zero['rejected'] = 'temporal_gap_exceeded'
-            zero['temporal_gap'] = round(first_seen_gap, 1)
-            return zero
+        # -- Temporal score (continuous decay) --
+        temporal_score = self.DIRECTION_TEMPORAL_WEIGHT * max(
+            0.0, 1.0 - (gap / max_transit))
 
-        # Temporal score
-        if gap <= 0 and first_seen_gap <= max_transit:
-            temporal_score = self.DIRECTION_TEMPORAL_WEIGHT
-        elif gap <= avg_transit * 1.5:
-            temporal_score = self.DIRECTION_TEMPORAL_WEIGHT * 0.9
-        elif gap <= max_transit:
-            temporal_score = self.DIRECTION_TEMPORAL_WEIGHT * 0.6
+        # -- ReID similarity score --
+        emb_a = reid_embs.get(track_a['id'])
+        emb_b = reid_embs.get(track_b['id'])
+        reid_sim = self._reid_similarity(emb_a, emb_b)
+        if reid_sim is not None:
+            # Fine-tuned model: matches ~0.67, non-matches ~0.24
+            # Map: 0.20 → 0, 0.70 → full weight
+            reid_score = self.DIRECTION_REID_WEIGHT * max(
+                0.0, min(1.0, (reid_sim - 0.20) / 0.50))
         else:
-            temporal_score = 0.0
+            reid_score = 0.0
 
-        # Size similarity
+        # -- Color histogram similarity --
+        hist_a = color_hists.get(track_a['id'])
+        hist_b = color_hists.get(track_b['id'])
+        color_sim = self._color_similarity(hist_a, hist_b)
+        if color_sim is not None:
+            # Correlation ranges from -1 to 1; map 0.0→0, 1.0→full weight
+            color_score = self.DIRECTION_COLOR_WEIGHT * max(0.0, color_sim)
+        else:
+            color_score = 0.0
+
+        # -- Size similarity --
         area_a = (track_a['avg_bbox_width'] or 0) * (track_a['avg_bbox_height'] or 0)
         area_b = (track_b['avg_bbox_width'] or 0) * (track_b['avg_bbox_height'] or 0)
         if area_a > 0 and area_b > 0:
@@ -562,25 +939,50 @@ class CrossingLineMatcher:
         else:
             size_score = 0.0
 
-        total = temporal_score + size_score
+        total = temporal_score + reid_score + color_score + size_score
 
         return {
             'total': round(total, 4),
             'temporal_score': round(temporal_score, 4),
+            'reid_score': round(reid_score, 4),
+            'color_score': round(color_score, 4),
             'size_score': round(size_score, 4),
+            'reid_similarity': round(reid_sim, 4) if reid_sim is not None else None,
             'direction_bucket': direction_bucket,
             'temporal_gap': round(gap, 1),
             'rejected': None,
         }
 
-    def _mutual_best_match(self, tracks_a, tracks_b, topology, direction_bucket):
-        """Mutual best-match within a direction bucket."""
+    def _mutual_best_match(self, tracks_a, tracks_b, topology, direction_bucket,
+                           precomputed=None):
+        """Mutual best-match within a direction bucket.
+
+        Skips pairs that have already been rejected by a human reviewer,
+        so those tracks can find different partners.
+        """
+        # Load rejected pairs to skip (normalised: smaller id first)
+        if not hasattr(self, '_rejected_pairs'):
+            self._rejected_pairs = set()
+            with get_cursor(commit=False) as cursor:
+                cursor.execute(
+                    "SELECT track_a_id, track_b_id FROM cross_camera_links "
+                    "WHERE status = 'rejected'")
+                for row in cursor:
+                    a, b = row['track_a_id'], row['track_b_id']
+                    self._rejected_pairs.add((min(a, b), max(a, b)))
+
         best_for_a = {}
         best_for_b = {}
 
         for ta in tracks_a:
             for tb in tracks_b:
-                info = self._score_direction_pair(ta, tb, topology, direction_bucket)
+                # Skip previously rejected pairs
+                pair_key = (min(ta['id'], tb['id']), max(ta['id'], tb['id']))
+                if pair_key in self._rejected_pairs:
+                    continue
+
+                info = self._score_direction_pair(ta, tb, topology,
+                                                  direction_bucket, precomputed)
                 if info['total'] < self.DIRECTION_MATCH_THRESHOLD:
                     continue
 
@@ -756,14 +1158,20 @@ class CrossingLineMatcher:
         }
 
     def _get_all_topology_pairs(self):
-        """Get all camera pairs from learned topology."""
+        """Get unique camera pairs from learned topology.
+
+        Deduplicates (A,B) and (B,A) by keeping the pair with the
+        smaller camera_a value first.
+        """
         with get_cursor(commit=False) as cursor:
             cursor.execute("""
-                SELECT DISTINCT camera_a, camera_b
+                SELECT DISTINCT
+                    LEAST(camera_a, camera_b) AS cam_lo,
+                    GREATEST(camera_a, camera_b) AS cam_hi
                 FROM camera_topology_learned
-                ORDER BY camera_a, camera_b
+                ORDER BY cam_lo, cam_hi
             """)
-            return [(r['camera_a'], r['camera_b']) for r in cursor.fetchall()]
+            return [(r['cam_lo'], r['cam_hi']) for r in cursor.fetchall()]
 
     # ------------------------------------------------------------------
     # Link creation
@@ -794,7 +1202,7 @@ class CrossingLineMatcher:
                          temporal_gap_seconds, classification_match,
                          status, lane_distance, crossing_line_id)
                     VALUES (%s, %s, %s,
-                            %s, %s, NULL,
+                            %s, %s, %s,
                             %s, %s,
                             %s, %s, %s)
                     ON CONFLICT (track_a_id, track_b_id) DO UPDATE SET
@@ -802,15 +1210,23 @@ class CrossingLineMatcher:
                             cross_camera_links.match_confidence,
                             EXCLUDED.match_confidence),
                         match_method       = EXCLUDED.match_method,
+                        reid_similarity    = COALESCE(EXCLUDED.reid_similarity,
+                                                      cross_camera_links.reid_similarity),
                         temporal_gap_seconds = EXCLUDED.temporal_gap_seconds,
                         classification_match = EXCLUDED.classification_match,
-                        status             = EXCLUDED.status,
+                        -- Never overwrite user-reviewed statuses
+                        status             = CASE
+                            WHEN cross_camera_links.status IN ('confirmed', 'rejected')
+                            THEN cross_camera_links.status
+                            ELSE EXCLUDED.status
+                        END,
                         lane_distance      = EXCLUDED.lane_distance,
                         crossing_line_id   = EXCLUDED.crossing_line_id
                     RETURNING id
                 """, (
                     track_a_id, track_b_id, entity_type,
                     round(confidence, 4), method,
+                    match_info.get('reid_similarity'),
                     match_info.get('temporal_gap'),
                     self._classification_match_for(track_a_id, track_b_id),
                     status,
