@@ -72,33 +72,12 @@ function init() {
  */
 async function loadCameras() {
     try {
-        // Fetch cameras from crossing lines
+        // Fetch cameras and existing lines from crossing-lines endpoint
         const linesResponse = await fetch('/api/ai/crossing-lines');
         const linesData = await linesResponse.json();
-        const camerasFromLines = new Set();
 
-        if (linesData.lines) {
-            linesData.lines.forEach(line => {
-                if (line.camera_id) {
-                    camerasFromLines.add(line.camera_id);
-                }
-            });
-        }
-
-        // Fetch cameras from tracks
-        const tracksResponse = await fetch('/api/ai/tracks/summary');
-        const tracksData = await tracksResponse.json();
-        const camerasFromTracks = new Set();
-
-        if (tracksData.cameras) {
-            tracksData.cameras.forEach(cam => {
-                camerasFromTracks.add(cam.camera_id);
-            });
-        }
-
-        // Combine all cameras
-        const allCameras = new Set([...camerasFromLines, ...camerasFromTracks]);
-        const sortedCameras = Array.from(allCameras).sort();
+        // API returns cameras list from tracks table
+        const sortedCameras = linesData.cameras || [];
 
         // Populate dropdown - clear first
         while (elements.cameraSelect.firstChild) {
@@ -341,7 +320,14 @@ function resetDrawingState() {
  * Handle canvas click
  */
 function handleCanvasClick(e) {
-    if (!state.drawMode || !state.selectedCamera) return;
+    if (!state.selectedCamera) {
+        showNotification('Please select a camera first', 'info');
+        return;
+    }
+    if (!state.drawMode) {
+        showNotification("Click 'Enable Draw Mode' to start drawing", 'info');
+        return;
+    }
 
     const frameCoords = canvasToFrame(e.clientX, e.clientY);
 
@@ -773,6 +759,21 @@ function drawCanvas() {
         drawPlaceholder(ctx, width, height, 'No frame available for this camera');
     }
 
+    // Draw "enable draw mode" overlay when frame loaded but draw mode is off
+    if (state.frameImage && !state.drawMode) {
+        const barHeight = 44;
+        const barY = (height - barHeight) / 2;
+        ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+        ctx.fillRect(0, barY, width, barHeight);
+        ctx.fillStyle = '#ffffff';
+        ctx.font = 'bold 15px sans-serif';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText("Click 'Enable Draw Mode' to start drawing", width / 2, barY + barHeight / 2);
+        ctx.textAlign = 'start';
+        ctx.textBaseline = 'alphabetic';
+    }
+
     // Draw saved lines (green)
     state.lines.forEach(line => {
         const p1 = frameToCanvas(line.x1, line.y1);
@@ -934,14 +935,37 @@ function onResize() {
  * Show notification
  */
 function showNotification(message, type = 'info') {
-    // Use gt-utils if available
-    if (typeof window.showNotification === 'function') {
-        window.showNotification(message, type);
-        return;
-    }
+    const colors = {
+        success: { bg: '#4CAF50', border: '#388E3C' },
+        error:   { bg: '#f44336', border: '#c62828' },
+        info:    { bg: '#2196F3', border: '#1565C0' }
+    };
+    const scheme = colors[type] || colors.info;
 
-    // Fallback to console
-    console.log(`[${type.toUpperCase()}] ${message}`);
+    const toast = document.createElement('div');
+    toast.textContent = message;
+    Object.assign(toast.style, {
+        position: 'fixed',
+        top: '16px',
+        left: '50%',
+        transform: 'translateX(-50%)',
+        background: scheme.bg,
+        border: '1px solid ' + scheme.border,
+        color: '#fff',
+        padding: '10px 20px',
+        borderRadius: '4px',
+        fontSize: '14px',
+        fontWeight: '500',
+        boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+        zIndex: '99999',
+        pointerEvents: 'none',
+        whiteSpace: 'nowrap'
+    });
+
+    document.body.appendChild(toast);
+    setTimeout(() => {
+        if (toast.parentNode) toast.parentNode.removeChild(toast);
+    }, 3000);
 }
 
 /**
