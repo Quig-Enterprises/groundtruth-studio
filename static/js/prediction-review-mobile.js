@@ -24,6 +24,7 @@ var ReviewApp = {
     skippedIds: new Set(),
     imageCache: {},
     activeFilter: 'all',
+    _scenarioFilterMap: { 'plates': 'license_plate', 'boat_reg': 'boat_registration' },
     queueData: null,
     _maskIdCounter: 0,
     classifyMode: false,
@@ -60,6 +61,7 @@ var ReviewApp = {
         'vehicle_detection': 'Is there a vehicle inside the bounding box? The box should tightly enclose the entire vehicle.',
         'boat_detection': 'Is there a boat inside the bounding box? The box should enclose the full vessel including hull and cabin.',
         'license_plate': 'Is there a legible license plate inside the bounding box? The plate text should be readable.',
+        'boat_registration': 'Is there a visible boat registration number/name inside the bounding box?',
         'animal_detection': 'Is there an animal inside the bounding box? The box should tightly wrap the animal.',
         'object_detection': 'Is there a recognizable object inside the bounding box? The box should tightly wrap the detected item.'
     },
@@ -394,6 +396,8 @@ var ReviewApp = {
                         }
                         if (self.classifyMode) {
                             self.loadClassifyQueueSummary();
+                        } else if (self._scenarioFilterMap[self.activeFilter]) {
+                            self.loadQueueSummary();
                         } else {
                             // Update summary counts from cached data
                             if (self.queueData) {
@@ -484,6 +488,10 @@ var ReviewApp = {
         var self = this;
         var url = '/api/ai/predictions/review-queue/summary';
         if (this.groupedMode) url += '?grouped=1';
+        // Add scenario filter if active
+        if (this._scenarioFilterMap[this.activeFilter]) {
+            url += (url.indexOf('?') >= 0 ? '&' : '?') + 'scenario=' + this._scenarioFilterMap[this.activeFilter];
+        }
         fetch(url)
             .then(function(resp) { return resp.json(); })
             .then(function(data) {
@@ -790,6 +798,10 @@ var ReviewApp = {
         }
         if (videoId) {
             url += '&video_id=' + encodeURIComponent(videoId);
+        }
+        // Add scenario filter if active
+        if (this._scenarioFilterMap[this.activeFilter]) {
+            url += '&scenario=' + this._scenarioFilterMap[this.activeFilter];
         }
 
         fetch(url)
@@ -1106,6 +1118,8 @@ var ReviewApp = {
         'prescreen_scan':         '#6366F1', // indigo
         'animal_detection':       '#10B981', // green
         'flag_detection':         '#6B7280', // gray
+        'license_plate':          '#EF4444', // red
+        'boat_registration':      '#0EA5E9', // sky blue
     },
 
     getScenarioColor: function(scenario) {

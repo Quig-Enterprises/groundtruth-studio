@@ -329,6 +329,22 @@ def get_prediction(prediction_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@predictions_bp.route('/api/ai/predictions/<int:prediction_id>/children', methods=['GET'])
+def get_prediction_children(prediction_id):
+    """Get child predictions (plates, registrations) linked to a parent entity prediction."""
+    try:
+        children = db.get_child_predictions(prediction_id)
+        return jsonify({
+            'success': True,
+            'parent_id': prediction_id,
+            'children': children,
+            'count': len(children)
+        })
+    except Exception as e:
+        logger.error(f"Error fetching child predictions for {prediction_id}: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @predictions_bp.route('/api/ai/predictions/<int:prediction_id>/review', methods=['POST'])
 def review_prediction(prediction_id):
     """Approve, reject, or correct a prediction"""
@@ -350,6 +366,13 @@ def review_prediction(prediction_id):
         if not updated:
             return jsonify({'success': False, 'error': 'Prediction not found'}), 404
 
+        # Cascade rejection to child predictions (plates, registrations)
+        cascaded_count = 0
+        if action == 'reject':
+            cascaded_count = db.cascade_reject_children(prediction_id, reviewed_by=reviewer)
+            if cascaded_count > 0:
+                logger.info(f"Cascade-rejected {cascaded_count} child predictions for parent {prediction_id}")
+
         annotation_id = None
         if action in ('approve', 'correct'):
             annotation_id = db.approve_prediction_to_annotation(prediction_id)
@@ -367,7 +390,8 @@ def review_prediction(prediction_id):
             'success': True,
             'prediction_id': prediction_id,
             'review_status': updated['review_status'],
-            'annotation_id': annotation_id
+            'annotation_id': annotation_id,
+            'cascaded_children': cascaded_count
         })
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -471,11 +495,12 @@ def get_review_queue():
         limit = request.args.get('limit', 50, type=int)
         offset = request.args.get('offset', 0, type=int)
         grouped = request.args.get('grouped', '').lower() in ('1', 'true', 'yes')
+        scenario = request.args.get('scenario')
 
         if grouped:
-            predictions = db.get_grouped_review_queue(video_id, min_confidence, max_confidence, limit, offset)
+            predictions = db.get_grouped_review_queue(video_id, min_confidence, max_confidence, limit, offset, scenario=scenario)
         else:
-            predictions = db.get_review_queue(video_id, model_name, min_confidence, max_confidence, limit, offset)
+            predictions = db.get_review_queue(video_id, model_name, min_confidence, max_confidence, limit, offset, scenario=scenario)
 
         # Serialize for JSON (handle datetime, Decimal, etc.)
         for p in predictions:
@@ -495,10 +520,11 @@ def get_review_queue_summary():
     """Get summary of pending predictions by video for queue entry screen"""
     try:
         grouped = request.args.get('grouped', '').lower() in ('1', 'true', 'yes')
+        scenario = request.args.get('scenario')
         if grouped:
-            summary = db.get_grouped_review_queue_summary()
+            summary = db.get_grouped_review_queue_summary(scenario=scenario)
         else:
-            summary = db.get_review_queue_summary()
+            summary = db.get_review_queue_summary(scenario=scenario)
         for s in summary:
             for key in ['avg_confidence', 'min_confidence']:
                 if key in s and s[key] is not None:
@@ -537,6 +563,21 @@ def batch_review_predictions():
         if len(reviews) > 100:
             return jsonify({'success': False, 'error': 'Maximum 100 reviews per batch'}), 400
         results = db.batch_review_predictions(reviews, reviewer)
+
+        # Cascade rejection to children for any rejected predictions in the batch
+        total_cascaded = 0
+        for review in reviews:
+            if review.get('action') == 'reject':
+                prediction_id = review.get('prediction_id')
+                if prediction_id:
+                    cascaded = db.cascade_reject_children(prediction_id, reviewed_by=reviewer)
+                    if cascaded > 0:
+                        total_cascaded += cascaded
+                        logger.info(f"Cascade-rejected {cascaded} child predictions for parent {prediction_id}")
+
+        if total_cascaded > 0:
+            results['cascaded_children'] = total_cascaded
+
         return jsonify({'success': True, **results})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500

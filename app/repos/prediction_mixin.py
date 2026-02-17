@@ -38,8 +38,8 @@ class PredictionMixin:
                     INSERT INTO ai_predictions
                     (video_id, model_name, model_version, prediction_type, confidence,
                      timestamp, start_time, end_time, bbox_x, bbox_y, bbox_width, bbox_height,
-                     scenario, predicted_tags, batch_id, inference_time_ms, review_status)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     scenario, predicted_tags, batch_id, inference_time_ms, review_status, parent_prediction_id)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 ''', (
                     video_id, model_name, model_version,
@@ -51,11 +51,38 @@ class PredictionMixin:
                     extras.Json(pred.get('tags', {})),
                     batch_id,
                     pred.get('inference_time_ms'),
-                    initial_status
+                    initial_status,
+                    pred.get('parent_prediction_id')
                 ))
                 result = cursor.fetchone()
                 ids.append(result['id'])
         return ids
+
+    def get_child_predictions(self, parent_id: int) -> List[Dict]:
+        """Get child predictions linked to a parent entity prediction."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT p.*, v.filename as video_filename, v.title as video_title
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                WHERE p.parent_prediction_id = %s
+                ORDER BY p.confidence DESC
+            ''', (parent_id,))
+            return [dict(row) for row in cursor.fetchall()]
+
+    def cascade_reject_children(self, parent_id: int, reviewed_by: str = 'cascade') -> int:
+        """When a parent entity is rejected, auto-reject its child predictions."""
+        with get_cursor() as cursor:
+            cursor.execute('''
+                UPDATE ai_predictions
+                SET review_status = 'auto_rejected',
+                    reviewed_by = %s,
+                    reviewed_at = NOW(),
+                    review_notes = 'Auto-rejected: parent entity was rejected'
+                WHERE parent_prediction_id = %s
+                  AND review_status NOT IN ('rejected', 'auto_rejected')
+            ''', (reviewed_by, parent_id))
+            return cursor.rowcount
 
     def get_pending_predictions(self, video_id: int = None, model_name: str = None,
                                  limit: int = 100, offset: int = 0) -> List[Dict]:
@@ -242,7 +269,7 @@ class PredictionMixin:
             return cursor.rowcount > 0
 
     def get_review_queue(self, video_id=None, model_name=None, min_confidence=None,
-                         max_confidence=None, limit=50, offset=0):
+                         max_confidence=None, limit=50, offset=0, scenario=None):
         """Get pending predictions for mobile review queue, with thumbnail paths."""
         with get_cursor(commit=False) as cursor:
             conditions = ["p.review_status = 'pending'"]
@@ -259,6 +286,9 @@ class PredictionMixin:
             if max_confidence is not None:
                 conditions.append("p.confidence <= %s")
                 params.append(max_confidence)
+            if scenario:
+                conditions.append("p.scenario = %s")
+                params.append(scenario)
             where = " AND ".join(conditions)
             params.extend([limit, offset])
             cursor.execute(f'''
@@ -276,9 +306,15 @@ class PredictionMixin:
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def get_review_queue_summary(self):
+    def get_review_queue_summary(self, scenario=None):
         """Get summary of pending predictions grouped by video for review queue entry screen."""
         with get_cursor(commit=False) as cursor:
+            conditions = ["p.review_status = 'pending'", "p.confidence >= 0.10"]
+            params = []
+            if scenario:
+                conditions.append("p.scenario = %s")
+                params.append(scenario)
+            where_clause = " AND ".join(conditions)
             cursor.execute('''
                 SELECT v.id as video_id, v.title as video_title, v.thumbnail_path,
                        COUNT(*) as pending_count,
@@ -289,10 +325,10 @@ class PredictionMixin:
                        MIN(p.confidence) as min_confidence
                 FROM ai_predictions p
                 JOIN videos v ON p.video_id = v.id
-                WHERE p.review_status = 'pending' AND p.confidence >= 0.10
+                WHERE ''' + where_clause + '''
                 GROUP BY v.id, v.title, v.thumbnail_path
                 ORDER BY pending_count DESC
-            ''')
+            ''', params)
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
@@ -689,7 +725,7 @@ class PredictionMixin:
             return len(group_ids)
 
     def get_grouped_review_queue(self, video_id=None, min_confidence=None,
-                                  max_confidence=None, limit=50, offset=0):
+                                  max_confidence=None, limit=50, offset=0, scenario=None):
         """Get review queue with grouped predictions collapsed into single entries."""
         with get_cursor(commit=False) as cursor:
             # Build conditions for both grouped and ungrouped
@@ -717,6 +753,11 @@ class PredictionMixin:
                 group_params.append(max_confidence)
                 ungrouped_conditions.append("p.confidence <= %s")
                 ungrouped_params.append(max_confidence)
+            if scenario:
+                group_conditions.append("p.scenario = %s")
+                group_params.append(scenario)
+                ungrouped_conditions.append("p.scenario = %s")
+                ungrouped_params.append(scenario)
 
             group_where = " AND ".join(group_conditions)
             ungrouped_where = " AND ".join(ungrouped_conditions)
@@ -757,9 +798,17 @@ class PredictionMixin:
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
 
-    def get_grouped_review_queue_summary(self):
+    def get_grouped_review_queue_summary(self, scenario=None):
         """Get summary with groups counted as single items per video."""
         with get_cursor(commit=False) as cursor:
+            scenario_filter_grouped = ""
+            scenario_filter_ungrouped = ""
+            params = []
+            if scenario:
+                scenario_filter_grouped = " AND p.scenario = %s"
+                scenario_filter_ungrouped = " AND p.scenario = %s"
+                params = [scenario, scenario]  # once for each UNION part
+
             cursor.execute("""
                 SELECT video_id, video_title, thumbnail_path,
                        SUM(item_count) as pending_count,
@@ -776,7 +825,7 @@ class PredictionMixin:
                     FROM prediction_groups pg
                     JOIN ai_predictions p ON p.id = pg.representative_prediction_id
                     JOIN videos v ON p.video_id = v.id
-                    WHERE pg.review_status = 'pending'
+                    WHERE pg.review_status = 'pending'""" + scenario_filter_grouped + """
 
                     UNION ALL
 
@@ -788,11 +837,11 @@ class PredictionMixin:
                     JOIN videos v ON p.video_id = v.id
                     WHERE p.review_status = 'pending'
                       AND p.prediction_group_id IS NULL
-                      AND p.confidence >= 0.10
+                      AND p.confidence >= 0.10""" + scenario_filter_ungrouped + """
                 ) combined
                 GROUP BY video_id, video_title, thumbnail_path
                 ORDER BY pending_count DESC
-            """)
+            """, params)
             rows = cursor.fetchall()
             result = []
             for r in rows:

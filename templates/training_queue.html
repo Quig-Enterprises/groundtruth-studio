@@ -446,29 +446,7 @@
 <body>
     <script src="/static/js/gt-utils.js"></script>
     <script src="/static/js/responsive-utils.js"></script>
-    <nav class="site-nav" id="site-nav">
-        <div class="nav-brand">
-            <a href="/">Groundtruth Studio</a>
-            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
-                <span class="hamburger-icon"></span>
-            </button>
-        </div>
-        <div class="nav-links" id="nav-links">
-            <a href="/" class="nav-link">Video Library</a>
-            <a href="/add-content" class="nav-link">Add Content</a>
-            <a href="/person-manager" class="nav-link">Person Manager</a>
-            <a href="/camera-topology" class="nav-link">Camera Topology</a>
-            <a href="/model-training" class="nav-link">Model Training</a>
-            <a href="/prediction-review" class="nav-link">AI Review</a>
-            <a href="/vehicle-metrics" class="nav-link">Vehicle Metrics</a>
-            <a href="/review" class="nav-link">Quick Review</a>
-            <a href="/sync-settings" class="nav-link">Sync Settings</a>
-            <a href="/ecoeye-preview" class="nav-link">EcoEye Preview</a>
-            <a href="/vibration-export" class="nav-link">Vibration Export</a>
-            <a href="/location-export" class="nav-link">Location Export</a>
-            <a href="/tag-manager" class="nav-link">Tag Manager</a>
-        </div>
-    </nav>
+    {% include 'partials/nav.html' %}
     <div class="tq-container">
         <div class="tq-header">
             <div>

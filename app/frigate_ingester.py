@@ -155,14 +155,15 @@ class FrigateEventIngester:
         # Capture in background to not block MQTT
         thread = threading.Thread(
             target=self._capture_event_snapshot,
-            args=(camera, label, score, event_id, has_snapshot),
+            args=(camera, label, score, event_id, has_snapshot, data),
             daemon=True,
             name=f"capture-{event_id[:8]}"
         )
         thread.start()
 
     def _capture_event_snapshot(self, camera: str, label: str, score: float,
-                                 event_id: str, has_snapshot: bool):
+                                 event_id: str, has_snapshot: bool,
+                                 event_data: dict = None):
         """Fetch and ingest a snapshot for a Frigate event."""
         try:
             # Try event snapshot first (best quality, cropped to detection area)
@@ -212,6 +213,38 @@ class FrigateEventIngester:
             # Create title
             title = f"{camera} - {label} ({score:.0%}) {timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
 
+            # Build rich metadata from the full Frigate event data
+            evt = event_data or {}
+            evt_data = evt.get('data', {})
+            metadata = {
+                'source': 'frigate',
+                'frigate_event_id': event_id,
+                'frigate_camera': camera,
+                'frigate_label': label,
+                'frigate_score': score,
+                # Temporal data
+                'start_time': evt.get('start_time'),
+                'end_time': evt.get('end_time'),
+                # Trajectory — centroid path [[cx, cy], timestamp] for direction of travel
+                'path_data': evt_data.get('path_data'),
+                # Frigate's position and detection data
+                'frigate_box': evt_data.get('box'),
+                'frigate_region': evt_data.get('region'),
+                'frigate_top_score': evt_data.get('top_score'),
+                # Speed and direction (may be populated in future Frigate versions)
+                'average_estimated_speed': evt_data.get('average_estimated_speed'),
+                'velocity_angle': evt_data.get('velocity_angle'),
+                # Clip availability
+                'has_clip': evt.get('has_clip', False),
+                # Sub-classification (make/model/color if configured)
+                'sub_label': evt.get('sub_label'),
+                # Zone data
+                'zones': evt.get('zones', []),
+                'entered_zones': evt.get('entered_zones', []),
+            }
+            # Strip None values to keep metadata clean
+            metadata = {k: v for k, v in metadata.items() if v is not None}
+
             # Add to database
             video_id = self.db.add_video(
                 filename=filename,
@@ -222,13 +255,7 @@ class FrigateEventIngester:
                 file_size=len(image_bytes),
                 camera_id=camera,
                 notes=f"Frigate alert: {label} (score={score:.2f}, event={event_id[:12]})",
-                metadata={
-                    'frigate_event_id': event_id,
-                    'frigate_camera': camera,
-                    'frigate_label': label,
-                    'frigate_score': score,
-                    'source': 'frigate'
-                }
+                metadata=metadata
             )
 
             # Trigger our YOLO-World pipeline for detailed classification

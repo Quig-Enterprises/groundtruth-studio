@@ -406,23 +406,7 @@
     </style>
 </head>
 <body>
-    <nav class="site-nav" id="site-nav">
-        <div class="nav-brand">
-            <a href="/">Groundtruth Studio</a>
-            <button class="hamburger-btn" id="hamburger-btn" aria-label="Toggle navigation" aria-expanded="false">
-                <span class="hamburger-icon"></span>
-            </button>
-        </div>
-        <div class="nav-links" id="nav-links">
-            <a href="/" class="nav-link">Video Library</a>
-            <a href="/add-content" class="nav-link">Add Content</a>
-            <a href="/camera-topology" class="nav-link">Camera Topology</a>
-            <a href="/cross-camera-tracks" class="nav-link">Cross-Camera Tracks</a>
-            <a href="/crossing-line-config" class="nav-link active">Crossing Lines</a>
-            <a href="/analytics" class="nav-link">Analytics</a>
-            <a href="/settings" class="nav-link">Settings</a>
-        </div>
-    </nav>
+    {% include 'partials/nav.html' %}
 
     <div class="page-header">
         <h1>Crossing Line Configuration</h1>

@@ -215,12 +215,18 @@ def get_crossing_lines():
 
             lines = [dict(row) for row in cursor.fetchall()]
 
+            # Also fetch all cameras that have tracks (for the UI camera selector)
+            cursor.execute("""
+                SELECT DISTINCT camera_id FROM camera_object_tracks ORDER BY camera_id
+            """)
+            cameras = [row['camera_id'] for row in cursor.fetchall()]
+
         # Serialize datetime fields
         for line in lines:
             if line.get('created_at'):
                 line['created_at'] = line['created_at'].isoformat()
 
-        return jsonify({'success': True, 'lines': lines, 'count': len(lines)})
+        return jsonify({'success': True, 'lines': lines, 'count': len(lines), 'cameras': cameras})
     except Exception as e:
         logger.error("Get crossing lines error: %s", e, exc_info=True)
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -468,7 +474,7 @@ def get_reid_training_pairs():
                 JOIN camera_object_tracks ta ON ccl.track_a_id = ta.id
                 JOIN camera_object_tracks tb ON ccl.track_b_id = tb.id
                 WHERE ccl.status IN ('confirmed', 'auto_confirmed')
-                  AND ccl.match_method = 'crossing_line'
+                  AND ccl.match_method IN ('direction', 'crossing_line')
                   AND ta.representative_prediction_id IS NOT NULL
                   AND tb.representative_prediction_id IS NOT NULL
                 ORDER BY ccl.match_confidence DESC
@@ -538,11 +544,11 @@ def cross_camera_match():
         spatial_matcher = CrossingLineMatcher()
         spatial_result = spatial_matcher.match_all(entity_type)
         # Collect pairs matched spatially to exclude from ReID
-        if spatial_result.get('links_created'):
+        if spatial_result.get('total_links_created'):
             with get_cursor(commit=False) as cursor:
                 cursor.execute("""
                     SELECT track_a_id, track_b_id FROM cross_camera_links
-                    WHERE match_method = 'crossing_line'
+                    WHERE match_method IN ('direction', 'crossing_line')
                 """)
                 for row in cursor.fetchall():
                     spatial_matched_pairs.add((row['track_a_id'], row['track_b_id']))

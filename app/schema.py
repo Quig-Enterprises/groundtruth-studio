@@ -1195,6 +1195,19 @@ def run_migrations():
             except Exception as e:
                 logger.warning(f"review_status constraint migration note: {e}")
 
+            # Migration: Add parent_prediction_id to ai_predictions (for two-stage detection: plate/reg linked to parent entity)
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'ai_predictions' AND column_name = 'parent_prediction_id'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("""
+                    ALTER TABLE ai_predictions ADD COLUMN parent_prediction_id BIGINT
+                    REFERENCES ai_predictions(id) ON DELETE SET NULL
+                """)
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_parent ON ai_predictions(parent_prediction_id)")
+                logger.info("Added parent_prediction_id to ai_predictions")
+
         logger.info("Migrations completed successfully")
     except Exception as e:
         logger.error(f"Migration error: {e}")

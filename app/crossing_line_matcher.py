@@ -6,10 +6,13 @@ Each crossing line defines a spatial gate on a camera view; paired lines on
 different cameras represent the same physical boundary seen from two angles.
 
 Scoring combines:
-1. Lane proximity   (0.45) -- projection along the crossing line
+1. Lane proximity   (0.50) -- projection along the crossing line
 2. Temporal gap     (0.35) -- departure-to-arrival vs learned topology
-3. Size similarity  (0.10) -- bbox area ratio
-4. Direction match  (0.10) -- travel direction consistent with line normals
+3. Size similarity  (0.15) -- bbox area ratio
+
+Direction of travel is a HARD FILTER: if both tracks have known direction
+(from Frigate path_data or multi-frame bbox movement) and they disagree,
+the pair is rejected outright.
 
 This module is intended to run BEFORE the ReID-based CrossCameraMatcher so
 that high-confidence spatial matches are locked in first.
@@ -26,10 +29,9 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Scoring weights
 # ---------------------------------------------------------------------------
-LANE_WEIGHT = 0.45
+LANE_WEIGHT = 0.50
 TEMPORAL_WEIGHT = 0.35
-SIZE_WEIGHT = 0.10
-DIRECTION_BONUS = 0.10
+SIZE_WEIGHT = 0.15
 
 MATCH_THRESHOLD = 0.55
 
@@ -171,14 +173,23 @@ class CrossingLineMatcher:
     # ------------------------------------------------------------------
 
     def compute_direction(self, track):
-        """Compute normalised travel direction for a multi-member track.
+        """Compute normalised travel direction for a track.
 
-        Queries ai_predictions ordered by timestamp and uses bbox centroid
-        movement from first to last prediction.
+        Tries these sources in order:
+        1. Frigate path_data from the video's metadata (most common — 86%
+           of Frigate events have meaningful path displacement).
+        2. Multi-frame bbox centroid movement from ai_predictions (works
+           for tracks with member_count > 1).
 
         Returns:
             (dx, dy) normalised direction vector, or None if undetermined.
         """
+        # --- Source 1: Frigate path_data from video metadata ---
+        direction = self._direction_from_path_data(track)
+        if direction is not None:
+            return direction
+
+        # --- Source 2: multi-member bbox movement ---
         if (track.get('member_count') or 1) <= 1:
             return None
 
@@ -202,6 +213,71 @@ class CrossingLineMatcher:
         length = np.sqrt(dx * dx + dy * dy)
         if length < 1e-6:
             return None
+        return (dx / length, dy / length)
+
+    def _direction_from_path_data(self, track):
+        """Extract travel direction from Frigate path_data stored in video metadata.
+
+        path_data is a list of [[cx, cy], timestamp] entries in normalised
+        coordinates (0-1).  We compute direction from first to last centroid.
+
+        The chain is: track → ai_predictions → video → metadata.path_data
+
+        Returns:
+            (dx, dy) normalised direction vector in pixel-space (converted
+            from normalised coords using the video dimensions), or None.
+        """
+        with get_cursor(commit=False) as cursor:
+            # Get the video associated with this track's anchor prediction
+            cursor.execute("""
+                SELECT DISTINCT v.metadata, v.width, v.height
+                FROM ai_predictions p
+                JOIN videos v ON v.id = p.video_id
+                WHERE p.camera_object_track_id = %s
+                  AND v.metadata IS NOT NULL
+                LIMIT 1
+            """, (track['id'],))
+            row = cursor.fetchone()
+
+        if row is None:
+            return None
+
+        metadata = row['metadata']
+        if not isinstance(metadata, dict):
+            return None
+
+        path_data = metadata.get('path_data')
+        if not path_data or not isinstance(path_data, list) or len(path_data) < 2:
+            return None
+
+        # path_data format: [[cx, cy], timestamp] — normalised 0-1 coords
+        # Extract first and last centroids
+        try:
+            first_entry = path_data[0]
+            last_entry = path_data[-1]
+
+            # Each entry is [cx, cy] or [[cx, cy], timestamp]
+            if isinstance(first_entry[0], (list, tuple)):
+                first_cx, first_cy = first_entry[0][0], first_entry[0][1]
+                last_cx, last_cy = last_entry[0][0], last_entry[0][1]
+            else:
+                first_cx, first_cy = first_entry[0], first_entry[1]
+                last_cx, last_cy = last_entry[0], last_entry[1]
+        except (IndexError, TypeError):
+            return None
+
+        # Convert normalised coords to pixel space using video dimensions
+        vid_w = row.get('width') or 1920
+        vid_h = row.get('height') or 1080
+        dx = (last_cx - first_cx) * vid_w
+        dy = (last_cy - first_cy) * vid_h
+        length = np.sqrt(dx * dx + dy * dy)
+
+        # Require minimum displacement (at least ~2% of frame diagonal)
+        min_displacement = 0.02 * np.sqrt(vid_w ** 2 + vid_h ** 2)
+        if length < min_displacement:
+            return None
+
         return (dx / length, dy / length)
 
     @staticmethod
@@ -242,7 +318,7 @@ class CrossingLineMatcher:
         """
         zero = {
             'total': 0.0, 'lane_score': 0.0, 'temporal_score': 0.0,
-            'size_score': 0.0, 'direction_score': 0.0,
+            'size_score': 0.0, 'direction_agreed': None,
             'lane_distance': None, 'temporal_gap': None,
             'rejected': None,
         }
@@ -315,34 +391,217 @@ class CrossingLineMatcher:
         else:
             size_score = 0.0
 
-        # -- Direction bonus --
+        # -- Direction HARD FILTER --
+        # If both tracks have known direction and they disagree, reject.
         dir_a = self.compute_direction(track_a)
         dir_b = self.compute_direction(track_b)
         match_a = self.compute_direction_match(dir_a, line_a)
         match_b = self.compute_direction_match(dir_b, line_b)
 
-        direction_score = 0.0
+        direction_agreed = None  # None = unknown, True = same, False = opposite
         if match_a is not None and match_b is not None:
-            # Both tracks have direction info.  Consistent means both
-            # forward or both reverse relative to their paired lines.
-            if match_a == match_b:
-                direction_score = DIRECTION_BONUS
+            direction_agreed = (match_a == match_b)
+            if not direction_agreed:
+                zero['rejected'] = 'direction_mismatch'
+                zero['temporal_gap'] = round(gap, 1)
+                return zero
 
-        total = lane_score + temporal_score + size_score + direction_score
+        total = lane_score + temporal_score + size_score
 
         return {
             'total': round(total, 4),
             'lane_score': round(lane_score, 4),
             'temporal_score': round(temporal_score, 4),
             'size_score': round(size_score, 4),
-            'direction_score': round(direction_score, 4),
+            'direction_agreed': direction_agreed,
             'lane_distance': round(lane_distance, 4),
             'temporal_gap': round(gap, 1),
             'rejected': None,
         }
 
     # ------------------------------------------------------------------
-    # Per-pair matching
+    # Direction-based matching (primary method — no crossing lines needed)
+    # ------------------------------------------------------------------
+
+    # Scoring for direction-based matching (direction is a hard pre-filter)
+    DIRECTION_TEMPORAL_WEIGHT = 0.60
+    DIRECTION_SIZE_WEIGHT = 0.40
+    DIRECTION_MATCH_THRESHOLD = 0.45
+
+    def match_camera_pair_by_direction(self, cam_a, cam_b, entity_type='vehicle'):
+        """Match tracks across a camera pair using path_data direction.
+
+        Direction of travel determines the lane on a two-lane road:
+        positive dx = one direction, negative dx = the other.  Tracks are
+        grouped by direction and only matched within the same group.
+
+        Within each direction group, scoring uses temporal proximity and
+        size similarity with mutual best-match.
+
+        Returns:
+            list of dicts with track_a_id, track_b_id, score_info.
+        """
+        # Topology
+        topo = self._get_topology(cam_a, cam_b) or self._get_topology(cam_b, cam_a)
+        if topo is None:
+            logger.warning("No topology between %s and %s", cam_a, cam_b)
+            return []
+
+        tracks_a = self.get_approved_tracks(cam_a, entity_type)
+        tracks_b = self.get_approved_tracks(cam_b, entity_type)
+        if not tracks_a or not tracks_b:
+            return []
+
+        # Compute directions for all tracks
+        dirs_a = {t['id']: self.compute_direction(t) for t in tracks_a}
+        dirs_b = {t['id']: self.compute_direction(t) for t in tracks_b}
+
+        # Group by direction sign (dx > 0 vs dx < 0)
+        # Tracks without direction go into a separate "unknown" group
+        def direction_bucket(d):
+            if d is None:
+                return 'unknown'
+            return 'positive' if d[0] > 0 else 'negative'
+
+        groups_a = {'positive': [], 'negative': [], 'unknown': []}
+        groups_b = {'positive': [], 'negative': [], 'unknown': []}
+
+        for t in tracks_a:
+            groups_a[direction_bucket(dirs_a[t['id']])].append(t)
+        for t in tracks_b:
+            groups_b[direction_bucket(dirs_b[t['id']])].append(t)
+
+        known_a = len(groups_a['positive']) + len(groups_a['negative'])
+        known_b = len(groups_b['positive']) + len(groups_b['negative'])
+        logger.info(
+            "Direction groups %s: +%d -%d ?%d | %s: +%d -%d ?%d",
+            cam_a, len(groups_a['positive']), len(groups_a['negative']),
+            len(groups_a['unknown']),
+            cam_b, len(groups_b['positive']), len(groups_b['negative']),
+            len(groups_b['unknown']))
+
+        all_matches = []
+
+        # Match ONLY within same-direction buckets.
+        # Tracks without known direction are excluded — direction is
+        # the primary discriminator and without it we can't be confident.
+        for bucket in ('positive', 'negative'):
+            bucket_a = groups_a[bucket]
+            bucket_b = groups_b[bucket]
+            if not bucket_a or not bucket_b:
+                continue
+
+            matches = self._mutual_best_match(bucket_a, bucket_b, topo, bucket)
+            all_matches.extend(matches)
+
+        logger.info(
+            "Direction matching %s <-> %s: %d matches "
+            "(%d/%d with known direction)",
+            cam_a, cam_b, len(all_matches), known_a, known_b)
+
+        return all_matches
+
+    def _score_direction_pair(self, track_a, track_b, topology, direction_bucket):
+        """Score a pair for direction-based matching (no crossing lines).
+
+        Returns dict with 'total' and component scores, or total=0 on rejection.
+        """
+        zero = {
+            'total': 0.0, 'temporal_score': 0.0, 'size_score': 0.0,
+            'direction_bucket': direction_bucket,
+            'temporal_gap': None, 'rejected': None,
+        }
+
+        # Hard filter: classification mismatch
+        cls_a = self._get_vehicle_subtype(track_a)
+        cls_b = self._get_vehicle_subtype(track_b)
+        if cls_a is not None and cls_b is not None and cls_a != cls_b:
+            zero['rejected'] = 'classification_mismatch'
+            return zero
+
+        # Temporal gap
+        a_end = track_a.get('last_seen') or 0
+        b_start = track_b.get('first_seen') or 0
+        a_start = track_a.get('first_seen') or 0
+        b_end = track_b.get('last_seen') or 0
+
+        gap_a_to_b = b_start - a_end
+        gap_b_to_a = a_start - b_end
+        gap = min(gap_a_to_b, gap_b_to_a)
+
+        max_transit = topology['max_transit_seconds']
+        avg_transit = topology.get('avg_transit_seconds') or max_transit / 2.0
+
+        if gap > max_transit:
+            zero['rejected'] = 'temporal_gap_exceeded'
+            zero['temporal_gap'] = round(gap, 1)
+            return zero
+
+        first_seen_gap = abs(a_start - b_start)
+        if gap <= 0 and first_seen_gap > max_transit:
+            zero['rejected'] = 'temporal_gap_exceeded'
+            zero['temporal_gap'] = round(first_seen_gap, 1)
+            return zero
+
+        # Temporal score
+        if gap <= 0 and first_seen_gap <= max_transit:
+            temporal_score = self.DIRECTION_TEMPORAL_WEIGHT
+        elif gap <= avg_transit * 1.5:
+            temporal_score = self.DIRECTION_TEMPORAL_WEIGHT * 0.9
+        elif gap <= max_transit:
+            temporal_score = self.DIRECTION_TEMPORAL_WEIGHT * 0.6
+        else:
+            temporal_score = 0.0
+
+        # Size similarity
+        area_a = (track_a['avg_bbox_width'] or 0) * (track_a['avg_bbox_height'] or 0)
+        area_b = (track_b['avg_bbox_width'] or 0) * (track_b['avg_bbox_height'] or 0)
+        if area_a > 0 and area_b > 0:
+            size_ratio = min(area_a, area_b) / max(area_a, area_b)
+            size_score = self.DIRECTION_SIZE_WEIGHT * size_ratio
+        else:
+            size_score = 0.0
+
+        total = temporal_score + size_score
+
+        return {
+            'total': round(total, 4),
+            'temporal_score': round(temporal_score, 4),
+            'size_score': round(size_score, 4),
+            'direction_bucket': direction_bucket,
+            'temporal_gap': round(gap, 1),
+            'rejected': None,
+        }
+
+    def _mutual_best_match(self, tracks_a, tracks_b, topology, direction_bucket):
+        """Mutual best-match within a direction bucket."""
+        best_for_a = {}
+        best_for_b = {}
+
+        for ta in tracks_a:
+            for tb in tracks_b:
+                info = self._score_direction_pair(ta, tb, topology, direction_bucket)
+                if info['total'] < self.DIRECTION_MATCH_THRESHOLD:
+                    continue
+
+                score = info['total']
+                if ta['id'] not in best_for_a or score > best_for_a[ta['id']][0]:
+                    best_for_a[ta['id']] = (score, tb['id'], info)
+                if tb['id'] not in best_for_b or score > best_for_b[tb['id']][0]:
+                    best_for_b[tb['id']] = (score, ta['id'], info)
+
+        matches = []
+        for a_id, (score_a, b_id, info) in best_for_a.items():
+            if b_id in best_for_b and best_for_b[b_id][1] == a_id:
+                matches.append({
+                    'track_a_id': a_id,
+                    'track_b_id': b_id,
+                    'score_info': info,
+                })
+        return matches
+
+    # ------------------------------------------------------------------
+    # Crossing-line matching (MOTHBALLED — kept for future use)
     # ------------------------------------------------------------------
 
     def match_crossing_line_pair(self, line_a, line_b, entity_type='vehicle'):
@@ -413,10 +672,54 @@ class CrossingLineMatcher:
     # ------------------------------------------------------------------
 
     def match_all(self, entity_type='vehicle'):
-        """Run crossing-line matching for every paired line.
+        """Run spatial matching for all topology-connected camera pairs.
+
+        Primary method: direction-based matching using Frigate path_data.
+        Crossing-line matching is mothballed but available via
+        match_all_crossing_lines().
 
         Returns:
             dict with total_links_created, per_pair results.
+        """
+        # Get all camera pairs from topology
+        camera_pairs = self._get_all_topology_pairs()
+        total_links = 0
+        per_pair = []
+
+        for cam_a, cam_b in camera_pairs:
+            matches = self.match_camera_pair_by_direction(
+                cam_a, cam_b, entity_type)
+            pair_links = 0
+
+            for m in matches:
+                link_id = self.create_link(
+                    m['track_a_id'], m['track_b_id'], entity_type,
+                    m['score_info'],
+                )
+                if link_id is not None:
+                    pair_links += 1
+
+            total_links += pair_links
+            per_pair.append({
+                'camera_a': cam_a,
+                'camera_b': cam_b,
+                'matches_found': len(matches),
+                'links_created': pair_links,
+            })
+
+        logger.info("Direction-based matching complete: %d total links "
+                     "across %d camera pairs", total_links, len(camera_pairs))
+
+        return {
+            'total_links_created': total_links,
+            'camera_pairs_processed': len(camera_pairs),
+            'per_pair': per_pair,
+        }
+
+    def match_all_crossing_lines(self, entity_type='vehicle'):
+        """Run crossing-line matching for every paired line (MOTHBALLED).
+
+        Kept for future use (intrusion detection, multi-lane roads).
         """
         pairs = self.get_paired_crossing_lines()
         total_links = 0
@@ -431,6 +734,7 @@ class CrossingLineMatcher:
                     m['track_a_id'], m['track_b_id'], entity_type,
                     m['score_info'],
                     crossing_line_id=line_a['id'],
+                    method='crossing_line',
                 )
                 if link_id is not None:
                     pair_links += 1
@@ -445,22 +749,29 @@ class CrossingLineMatcher:
                 'links_created': pair_links,
             })
 
-        logger.info("Crossing-line matching complete: %d total links created "
-                     "across %d line pairs", total_links, len(pairs))
-
         return {
             'total_links_created': total_links,
             'line_pairs_processed': len(pairs),
             'per_pair': per_pair,
         }
 
+    def _get_all_topology_pairs(self):
+        """Get all camera pairs from learned topology."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute("""
+                SELECT DISTINCT camera_a, camera_b
+                FROM camera_topology_learned
+                ORDER BY camera_a, camera_b
+            """)
+            return [(r['camera_a'], r['camera_b']) for r in cursor.fetchall()]
+
     # ------------------------------------------------------------------
     # Link creation
     # ------------------------------------------------------------------
 
     def create_link(self, track_a_id, track_b_id, entity_type, match_info,
-                    crossing_line_id=None):
-        """Create a cross_camera_links record for a crossing-line match.
+                    crossing_line_id=None, method='direction'):
+        """Create a cross_camera_links record for a spatial match.
 
         Normalises order (smaller ID first), same as CrossCameraMatcher.
 
@@ -483,7 +794,7 @@ class CrossingLineMatcher:
                          temporal_gap_seconds, classification_match,
                          status, lane_distance, crossing_line_id)
                     VALUES (%s, %s, %s,
-                            %s, 'crossing_line', NULL,
+                            %s, %s, NULL,
                             %s, %s,
                             %s, %s, %s)
                     ON CONFLICT (track_a_id, track_b_id) DO UPDATE SET
@@ -499,7 +810,7 @@ class CrossingLineMatcher:
                     RETURNING id
                 """, (
                     track_a_id, track_b_id, entity_type,
-                    round(confidence, 4),
+                    round(confidence, 4), method,
                     match_info.get('temporal_gap'),
                     self._classification_match_for(track_a_id, track_b_id),
                     status,
@@ -509,7 +820,7 @@ class CrossingLineMatcher:
                 row = cursor.fetchone()
                 return row['id'] if row else None
         except Exception as e:
-            logger.error("Error creating crossing-line link %d <-> %d: %s",
+            logger.error("Error creating spatial link %d <-> %d: %s",
                          track_a_id, track_b_id, e)
             return None
 

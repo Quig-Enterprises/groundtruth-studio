@@ -197,6 +197,46 @@ const annotationScenarios = {
         tags: {}
     },
 
+    // AI-detected license plate (two-stage: detected on vehicle crops)
+    'license_plate': {
+        label: 'License Plate Detection',
+        description: 'AI-detected license plate bounding box on vehicle',
+        category: 'Vehicle Activity',
+        requiresBoundingBox: true,
+        allowEventBoundaries: false,
+        allowDynamicSteps: false,
+        steps: [
+            {
+                id: 'license_plate',
+                label: 'License Plate',
+                prompt: 'Bounding box around detected license plate',
+                optional: false,
+                notVisibleOption: false
+            }
+        ],
+        tags: {}
+    },
+
+    // AI-detected boat registration mark (two-stage: detected on boat crops)
+    'boat_registration': {
+        label: 'Boat Registration Detection',
+        description: 'AI-detected boat registration number bounding box',
+        category: 'Vessel Activity',
+        requiresBoundingBox: true,
+        allowEventBoundaries: false,
+        allowDynamicSteps: false,
+        steps: [
+            {
+                id: 'boat_registration',
+                label: 'Boat Registration',
+                prompt: 'Bounding box around detected boat registration number',
+                optional: false,
+                notVisibleOption: false
+            }
+        ],
+        tags: {}
+    },
+
     // Vehicle identification
     'vehicle_identification': {
         label: 'Vehicle Identification',
@@ -772,8 +812,8 @@ const annotationScenarios = {
 
 // Organize scenarios by category for better UI
 const scenarioCategories = {
-    'Vessel Activity': ['loading_boat_trailer', 'boat_operating_water'],
-    'Vehicle Activity': ['vehicle_identification', 'trailer_identification'],
+    'Vessel Activity': ['loading_boat_trailer', 'boat_operating_water', 'boat_registration'],
+    'Vehicle Activity': ['vehicle_identification', 'trailer_identification', 'license_plate'],
     'Person Activity': ['person_identification'],
     'Environmental': ['environmental_conditions', 'camera_quality', 'location_context'],
     'Compliance': ['compliance_violation'],
