@@ -7,6 +7,13 @@ from psycopg2 import extras
 
 from db_connection import get_cursor, get_connection
 
+VEHICLE_CLASSES = {
+    'sedan', 'pickup truck', 'suv', 'minivan', 'van', 'tractor', 'atv', 'utv',
+    'snowmobile', 'golf cart', 'motorcycle', 'trailer', 'bus', 'semi truck',
+    'dump truck', 'rowboat', 'fishing boat', 'speed boat', 'pontoon boat',
+    'kayak', 'canoe', 'sailboat', 'jet ski', 'person'
+}
+
 
 class PredictionMixin:
     """AI prediction CRUD, review, classification, and grouping methods."""
@@ -383,6 +390,39 @@ class PredictionMixin:
                 ann_id = self.approve_prediction_to_annotation(review['prediction_id'])
                 if ann_id:
                     results['annotation_ids'].append(ann_id)
+        # Create hard negative annotations for rejected predictions where actual_class
+        # is NOT a known vehicle class (i.e., the detection was truly a non-vehicle object)
+        for review in reviews:
+            if review.get('action') == 'reject' and review.get('actual_class'):
+                actual_class = review['actual_class']
+                if actual_class.lower() in VEHICLE_CLASSES:
+                    continue
+                pred_id = review['prediction_id']
+                pred = self.get_prediction_by_id(pred_id)
+                if not pred:
+                    continue
+                with get_cursor() as cursor:
+                    cursor.execute('''
+                        INSERT INTO keyframe_annotations
+                        (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
+                         activity_tag, is_negative, reviewed, source, source_prediction_id, comment)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE, TRUE, %s, %s, %s)
+                        RETURNING id
+                    ''', (
+                        pred['video_id'], pred['timestamp'],
+                        pred['bbox_x'], pred['bbox_y'], pred['bbox_width'], pred['bbox_height'],
+                        pred['scenario'],
+                        'hard_negative',
+                        pred_id,
+                        f'Hard negative: rejected as {actual_class}'
+                    ))
+                    row = cursor.fetchone()
+                    if row:
+                        annotation_id = row['id']
+                        cursor.execute(
+                            'UPDATE ai_predictions SET created_annotation_id = %s WHERE id = %s',
+                            (annotation_id, pred_id)
+                        )
         return results
 
     def get_classification_queue(self, video_id=None, limit=50, offset=0, include_pending=False):

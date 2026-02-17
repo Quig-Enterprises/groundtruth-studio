@@ -87,6 +87,8 @@ CREATE TABLE IF NOT EXISTS keyframe_annotations (
     is_negative BOOLEAN DEFAULT FALSE,
     comment TEXT,
     reviewed BOOLEAN DEFAULT FALSE,
+    source TEXT,
+    source_prediction_id INTEGER,
     created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (video_id) REFERENCES videos(id) ON DELETE CASCADE
 );
@@ -300,10 +302,27 @@ CREATE TABLE IF NOT EXISTS camera_locations (
     reference_image_path TEXT,
     latitude REAL,
     longitude REAL,
+    bearing REAL DEFAULT 0,
+    fov_angle REAL DEFAULT 90,
+    fov_range REAL DEFAULT 30,
+    map_color VARCHAR(20) DEFAULT '#4CAF50',
+    is_ptz BOOLEAN DEFAULT FALSE,
+    ptz_pan_range REAL DEFAULT 180,
     created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE(camera_id)
 );
+
+-- Camera aliases (maps alternate IDs like Unifi IDs to primary MAC-based camera_id)
+CREATE TABLE IF NOT EXISTS camera_aliases (
+    id SERIAL PRIMARY KEY,
+    alias_id TEXT NOT NULL UNIQUE,
+    primary_camera_id TEXT NOT NULL,
+    alias_type VARCHAR(50),
+    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_camera_aliases_alias ON camera_aliases(alias_id);
+CREATE INDEX IF NOT EXISTS idx_camera_aliases_primary ON camera_aliases(primary_camera_id);
 
 -- Training jobs table
 CREATE TABLE IF NOT EXISTS training_jobs (
@@ -1207,6 +1226,36 @@ def run_migrations():
                 """)
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_parent ON ai_predictions(parent_prediction_id)")
                 logger.info("Added parent_prediction_id to ai_predictions")
+
+            # Migration: Add camera map placement fields to camera_locations
+            map_columns = [
+                ("bearing", "REAL DEFAULT 0"),
+                ("fov_angle", "REAL DEFAULT 90"),
+                ("fov_range", "REAL DEFAULT 30"),
+                ("map_color", "VARCHAR(20) DEFAULT '#4CAF50'"),
+                ("is_ptz", "BOOLEAN DEFAULT FALSE"),
+                ("ptz_pan_range", "REAL DEFAULT 180"),
+                ("is_indoor", "BOOLEAN DEFAULT FALSE"),
+            ]
+            for col_name, col_type in map_columns:
+                cursor.execute(f"""
+                    ALTER TABLE camera_locations ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                """)
+            logger.info("Camera map placement columns ready")
+
+            # Migration: Create camera_aliases table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS camera_aliases (
+                    id SERIAL PRIMARY KEY,
+                    alias_id TEXT NOT NULL UNIQUE,
+                    primary_camera_id TEXT NOT NULL,
+                    alias_type VARCHAR(50),
+                    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_camera_aliases_alias ON camera_aliases(alias_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_camera_aliases_primary ON camera_aliases(primary_camera_id)")
+            logger.info("Camera aliases table ready")
 
         logger.info("Migrations completed successfully")
     except Exception as e:

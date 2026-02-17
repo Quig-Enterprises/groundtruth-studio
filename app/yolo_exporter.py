@@ -213,12 +213,15 @@ class YOLOExporter:
         total_annotations = 0
         train_count = 0
         val_count = 0
+        negative_frame_count = 0
 
         # Collect annotations grouped by frame (video_id + timestamp)
         # Each unique frame gets one image file with all its bboxes in one label file
-        frame_groups = {}  # key: (video_id, timestamp) -> {video: dict, annotations: [list]}
+        frame_groups = {}  # key: (video_id, timestamp) -> {video: dict, positive: [list], negative: [list]}
 
-        for video_id in video_ids:
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            for video_id in video_ids:
                 cursor.execute('SELECT * FROM videos WHERE id = %s', (video_id,))
                 video = dict(cursor.fetchone())
 
@@ -237,15 +240,24 @@ class YOLOExporter:
                         continue
                     if not config['include_ai_generated'] and ann.get('reviewed') == 0:
                         continue
-                    if not config['include_negative_examples'] and ann.get('is_negative'):
+
+                    is_neg = ann.get('is_negative', False)
+
+                    # Skip negatives if config says not to include them
+                    if not config['include_negative_examples'] and is_neg:
                         continue
-                    if ann['activity_tag'] not in config['class_mapping']:
+
+                    # Positive annotations must have a known class; negatives don't need one
+                    if not is_neg and ann['activity_tag'] not in config['class_mapping']:
                         continue
 
                     key = (video_id, ann['timestamp'])
                     if key not in frame_groups:
-                        frame_groups[key] = {'video': video, 'annotations': []}
-                    frame_groups[key]['annotations'].append(ann)
+                        frame_groups[key] = {'video': video, 'positive': [], 'negative': []}
+                    if is_neg:
+                        frame_groups[key]['negative'].append(ann)
+                    else:
+                        frame_groups[key]['positive'].append(ann)
 
         # Shuffle frames and split into train/val
         all_frames = list(frame_groups.items())
@@ -263,7 +275,6 @@ class YOLOExporter:
             labels_dir = export_dir / split / 'labels'
 
             video = group['video']
-            anns = group['annotations']
             video_path = self.videos_dir / video['filename']
             thumbnail_path = Path(video['thumbnail_path']) if video.get('thumbnail_path') else None
             frame = None
@@ -312,10 +323,11 @@ class YOLOExporter:
 
             cv2.imwrite(str(images_dir / frame_filename), frame)
 
-            # Write ALL annotations for this frame into one label file
+            # Write label file: positive bboxes only; empty file for negative-only frames
             label_filename = frame_filename.replace('.jpg', '.txt')
+            positive_anns = group['positive']
             with open(labels_dir / label_filename, 'w') as f:
-                for ann in anns:
+                for ann in positive_anns:
                     class_id = config['class_mapping'][ann['activity_tag']]
                     x_center = (ann['bbox_x'] + ann['bbox_width'] / 2) / img_width
                     y_center = (ann['bbox_y'] + ann['bbox_height'] / 2) / img_height
@@ -323,6 +335,8 @@ class YOLOExporter:
                     h_norm = ann['bbox_height'] / img_height
                     f.write(f"{class_id} {x_center:.6f} {y_center:.6f} {w_norm:.6f} {h_norm:.6f}\n")
                     total_annotations += 1
+            if not positive_anns:
+                negative_frame_count += 1
 
             total_frames += 1
             if split == 'val':
@@ -367,6 +381,7 @@ names:
 - Total Videos: {len(video_ids)}
 - Total Frames: {total_frames} (train: {train_count}, val: {val_count})
 - Total Annotations: {total_annotations}
+- Negative Frames (hard negatives): {negative_frame_count}
 
 ## Class Mapping
 
@@ -410,7 +425,9 @@ python train.py --data {yaml_path.absolute()} --weights yolov5s.pt --epochs 100
         with open(readme_path, 'w') as f:
             f.write(readme_content)
 
-            # Log export
+        # Log export
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
             cursor.execute('''
                 INSERT INTO yolo_export_logs
                 (export_config_id, export_path, video_count, annotation_count, export_format)
@@ -434,6 +451,7 @@ python train.py --data {yaml_path.absolute()} --weights yolov5s.pt --epochs 100
             'annotation_count': total_annotations,
             'train_count': train_count,
             'val_count': val_count,
+            'negative_frame_count': negative_frame_count,
             'class_mapping': config['class_mapping']
         }
 
