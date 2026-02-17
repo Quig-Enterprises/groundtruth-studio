@@ -49,12 +49,12 @@ def create_or_update_camera_location():
                 INSERT INTO camera_locations (camera_id, camera_name, location_name, location_description, site_name, latitude, longitude)
                 VALUES (%s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (camera_id) DO UPDATE SET
-                    camera_name = COALESCE(EXCLUDED.camera_name, camera_locations.camera_name),
+                    camera_name = EXCLUDED.camera_name,
                     location_name = EXCLUDED.location_name,
-                    location_description = COALESCE(EXCLUDED.location_description, camera_locations.location_description),
-                    site_name = COALESCE(EXCLUDED.site_name, camera_locations.site_name),
-                    latitude = COALESCE(EXCLUDED.latitude, camera_locations.latitude),
-                    longitude = COALESCE(EXCLUDED.longitude, camera_locations.longitude),
+                    location_description = EXCLUDED.location_description,
+                    site_name = EXCLUDED.site_name,
+                    latitude = EXCLUDED.latitude,
+                    longitude = EXCLUDED.longitude,
                     updated_date = CURRENT_TIMESTAMP
                 RETURNING id
             ''', (
