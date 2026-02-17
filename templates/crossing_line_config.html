@@ -314,6 +314,80 @@
             );
         }
 
+        .instructions-box {
+            background: #1e2a1e;
+            border: 1px solid #2d4a2d;
+            border-radius: 6px;
+            padding: 1rem 1.2rem;
+            margin-bottom: 1.2rem;
+            font-size: 0.85rem;
+            line-height: 1.5;
+            color: #c0d0c0;
+        }
+
+        .instructions-box summary {
+            cursor: pointer;
+            list-style: none;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+
+        .instructions-box summary::-webkit-details-marker {
+            display: none;
+        }
+
+        .instructions-box summary::before {
+            content: '▶';
+            font-size: 0.7rem;
+            transition: transform 0.2s;
+        }
+
+        .instructions-box[open] summary::before {
+            transform: rotate(90deg);
+        }
+
+        .instructions-box[open] summary {
+            margin-bottom: 0.8rem;
+        }
+
+        .instructions-box strong {
+            color: #8bc38b;
+        }
+
+        .instructions-box .step-number {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+            line-height: 20px;
+            text-align: center;
+            border-radius: 50%;
+            background: #4CAF50;
+            color: #fff;
+            font-size: 0.75rem;
+            font-weight: 600;
+            margin-right: 6px;
+            flex-shrink: 0;
+        }
+
+        .instructions-box .step {
+            display: flex;
+            align-items: flex-start;
+            margin-bottom: 0.4rem;
+        }
+
+        .instructions-box .step:last-child {
+            margin-bottom: 0;
+        }
+
+        .section-hint {
+            font-size: 0.8rem;
+            color: #888;
+            margin-top: -0.3rem;
+            margin-bottom: 0.8rem;
+            line-height: 1.4;
+        }
+
         @media (max-width: 1024px) {
             .config-container {
                 flex-direction: column;
@@ -365,6 +439,21 @@
                 </select>
             </div>
 
+            <details class="instructions-box">
+                <summary><strong>What is a crossing line?</strong></summary>
+                Imagine a line <strong>painted on the road</strong>, perpendicular to the lane markings, stretching from
+                one edge of the road to the other. You're tracing where that painted line appears in this
+                camera's view. On the paired camera, you trace the <strong>same painted line</strong> as seen from that angle.
+                <br><br>
+                When a vehicle drives over that line, the system records <strong>which lane</strong> it was in and <strong>when</strong>
+                it crossed. Because both cameras see the same painted line, the same vehicle will cross it in
+                both views within seconds &mdash; and the system matches them automatically.
+                <br><br>
+                <strong>Perspective:</strong> The cameras are side-mounted, so the road appears in perspective.
+                The painted line won't look straight or horizontal &mdash; trace it as it would actually appear
+                from this camera's angle.
+            </details>
+
             <div class="canvas-wrapper" id="canvas-wrapper">
                 <canvas id="line-canvas" width="1280" height="720"></canvas>
             </div>
@@ -374,9 +463,17 @@
         <div class="controls-panel">
             <div class="section-title">Draw Line</div>
 
+            <details class="instructions-box">
+                <summary><strong>How to draw a line</strong></summary>
+                <div class="step"><span class="step-number">1</span><span>Pick a visible landmark on the road that both cameras can see (e.g., a signpost, snow pile, or road marking). The crossing line should pass through this spot.</span></div>
+                <div class="step"><span class="step-number">2</span><span>Click one edge of the road, then the other &mdash; tracing where a painted line <strong>perpendicular to the lane markings</strong> would appear at that landmark. It will follow the road's perspective.</span></div>
+                <div class="step"><span class="step-number">3</span><span>Pick the <strong>forward direction</strong> &mdash; choose one direction of travel as "forward" (e.g., eastbound) and use the <strong>same convention on both cameras</strong>. On a two-lane road, this simply labels which way is which &mdash; eastbound vehicles will match with eastbound, westbound with westbound. The direction is a minor tiebreaker (10% of score) and only applies to tracks with multiple frames.</span></div>
+                <div class="step"><span class="step-number">4</span><span>On the paired camera, draw the line at the <strong>same landmark</strong> as seen from that angle. Name both lines descriptively (e.g., "Highway at Signpost").</span></div>
+            </details>
+
             <div class="control-group">
                 <label for="line-name">Line Name</label>
-                <input type="text" id="line-name" placeholder="e.g., Exit North">
+                <input type="text" id="line-name" placeholder="e.g., Highway East at Signpost">
             </div>
 
             <div class="control-group">
@@ -387,6 +484,7 @@
 
             <div id="direction-selector" class="control-group" style="display: none;">
                 <label>Select Forward Direction</label>
+                <p class="section-hint">Pick one direction as "forward" (e.g., eastbound) and use the same choice on both cameras. On a bidirectional road, it doesn't matter which you pick &mdash; just be consistent.</p>
                 <div class="direction-selector">
                     <button id="direction-a-btn" class="btn btn-secondary btn-small">← Direction A</button>
                     <button id="direction-b-btn" class="btn btn-secondary btn-small">Direction B →</button>
@@ -403,6 +501,7 @@
             </div>
 
             <div class="section-title">Pair Lines (Cross-Camera)</div>
+            <p class="section-hint">Link a line on one camera to a line on another camera that views the same road. This tells the matcher that vehicles crossing Line A should reappear at Line B within a few seconds.</p>
 
             <div class="pair-selector">
                 <select id="pair-line-a">
@@ -417,6 +516,7 @@
                 <input type="checkbox" id="pair-reversed">
                 <label for="pair-reversed">Lane mapping reversed</label>
             </div>
+            <p class="section-hint" style="margin-top: 0.3rem;">Check this if the left lane on camera A corresponds to the right lane on camera B (e.g., cameras facing opposite directions on the same road).</p>
 
             <div class="control-group">
                 <button id="pair-lines-btn" class="btn btn-primary">Pair Lines</button>
@@ -428,6 +528,7 @@
             </div>
 
             <div class="section-title">Spatial Matching</div>
+            <p class="section-hint">Run the matcher on all paired lines. It finds vehicles that crossed both lines in the same lane at roughly the same time, and creates cross-camera links with high confidence.</p>
             <div class="control-group">
                 <button id="run-spatial-match-btn" class="btn btn-secondary">Run Spatial Match</button>
             </div>
