@@ -12,3 +12,5 @@ downloads/
 exports/
 thumbnails/
 .omc/
+clips/
+*.pt
