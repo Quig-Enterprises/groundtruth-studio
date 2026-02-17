@@ -497,6 +497,30 @@ var ReviewApp = {
             .then(function(data) {
                 self.queueData = data;
                 self.renderQueueSummary(data);
+                // Fetch per-filter counts for badges
+                fetch('/api/ai/predictions/review-queue/filter-counts')
+                    .then(function(r) { return r.json(); })
+                    .then(function(fcData) {
+                        if (fcData.success && fcData.counts) {
+                            var c = fcData.counts;
+                            var map = {
+                                'all': c.total || 0,
+                                'high': c.high || 0,
+                                'low': c.low || 0,
+                                'plates': c.plates || 0,
+                                'boat_reg': c.boat_reg || 0,
+                                'classify': c.classify || 0
+                            };
+                            var badges = document.querySelectorAll('.filter-count-badge');
+                            for (var i = 0; i < badges.length; i++) {
+                                var key = badges[i].getAttribute('data-count-filter');
+                                if (key && map[key] !== undefined) {
+                                    badges[i].textContent = map[key] > 0 ? map[key] : '';
+                                }
+                            }
+                        }
+                    })
+                    .catch(function() {});
                 // Also fetch conflict count for badge
                 fetch('/api/ai/tracks/conflicts')
                     .then(function(r) { return r.json(); })
@@ -1013,7 +1037,13 @@ var ReviewApp = {
         // Swipe label overlays
         var approveLabel = document.createElement('div');
         approveLabel.className = 'swipe-label swipe-label-approve';
-        approveLabel.textContent = 'APPROVE';
+        var _ct = pred.corrected_tags || {};
+        if (typeof _ct === 'string') { try { _ct = JSON.parse(_ct); } catch(e) { _ct = {}; } }
+        if (_ct.needs_negative_review && _ct.actual_class) {
+            approveLabel.textContent = _ct.actual_class.toUpperCase();
+        } else {
+            approveLabel.textContent = 'APPROVE';
+        }
         card.appendChild(approveLabel);
 
         var rejectLabel = document.createElement('div');
@@ -1191,6 +1221,12 @@ var ReviewApp = {
                 } else {
                     guidance = pred.member_count + ' frames: ' + (pred.approved_count || 0) + ' approved, ' + (pred.rejected_count || 0) + ' rejected. Choose for all.';
                 }
+            }
+            // Pre-classified items awaiting confirmation
+            var _ctags = pred.corrected_tags || {};
+            if (typeof _ctags === 'string') { try { _ctags = JSON.parse(_ctags); } catch(e) { _ctags = {}; } }
+            if (_ctags.needs_negative_review && _ctags.actual_class) {
+                guidance = 'Suggested: "' + _ctags.actual_class + '". Swipe right to confirm, left to reclassify.';
             }
             this.els.reviewGuidance.textContent = guidance;
         }
@@ -1983,6 +2019,12 @@ var ReviewApp = {
                 action: action,
                 notes: notes || null
             };
+            // For approve-as-alternate-class, include actual_class
+            var _cTags = pred.corrected_tags || {};
+            if (typeof _cTags === 'string') { try { _cTags = JSON.parse(_cTags); } catch(e) { _cTags = {}; } }
+            if (action === 'approve' && _cTags.needs_negative_review && _cTags.actual_class) {
+                syncItem.actual_class = _cTags.actual_class;
+            }
             if (pred.group_id) {
                 syncItem.group_id = pred.group_id;
             }
@@ -3596,6 +3638,46 @@ var ReviewApp = {
                 container.appendChild(chip);
             })(options[i]);
         }
+
+        // "More..." button to show all known classes
+        var moreBtn = document.createElement('button');
+        moreBtn.className = 'classify-chip';
+        moreBtn.style.borderStyle = 'dashed';
+        moreBtn.style.color = '#a1a1aa';
+        moreBtn.textContent = 'More\u2026';
+        container.appendChild(moreBtn);
+
+        var moreSection = document.createElement('div');
+        moreSection.className = 'classify-chips';
+        moreSection.style.display = 'none';
+        var moreDivider = document.createElement('div');
+        moreDivider.className = 'classify-divider';
+        moreDivider.textContent = 'All classifications:';
+        moreSection.appendChild(moreDivider);
+
+        var optionSet = {};
+        for (var j = 0; j < options.length; j++) {
+            optionSet[options[j].toLowerCase()] = true;
+        }
+        for (var k = 0; k < self.knownClasses.length; k++) {
+            (function(cls) {
+                if (optionSet[cls.toLowerCase()]) return;
+                var moreChip = document.createElement('button');
+                moreChip.className = 'classify-chip';
+                moreChip.setAttribute('data-subtype', cls.toLowerCase());
+                moreChip.textContent = cls;
+                moreChip.addEventListener('click', function() {
+                    self.resolveConflictAsClassification(pred, cls);
+                });
+                moreSection.appendChild(moreChip);
+            })(self.knownClasses[k]);
+        }
+        container.appendChild(moreSection);
+
+        moreBtn.addEventListener('click', function() {
+            moreBtn.style.display = 'none';
+            moreSection.style.display = '';
+        });
 
         // Reject all button
         var rejectBtn = document.createElement('button');

@@ -547,6 +547,20 @@ def get_review_queue_summary():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@predictions_bp.route('/api/ai/predictions/review-queue/filter-counts', methods=['GET'])
+def get_review_filter_counts():
+    """Get counts for each filter chip in the review queue"""
+    try:
+        counts = db.get_review_filter_counts()
+        # Also get classify and conflict counts
+        classify_summary = db.get_classification_queue_summary()
+        classify_count = sum(s['pending_classification'] for s in classify_summary)
+        counts['classify'] = classify_count
+        return jsonify({'success': True, 'counts': counts})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 # ---- Batch Review ----
 
 @predictions_bp.route('/api/ai/predictions/batch-review', methods=['POST'])

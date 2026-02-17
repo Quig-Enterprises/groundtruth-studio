@@ -1736,6 +1736,25 @@ body {
 }
 .conflict-count-badge:empty { display: none; }
 
+.filter-count-badge {
+    display: inline-block;
+    min-width: 18px;
+    height: 18px;
+    line-height: 18px;
+    padding: 0 5px;
+    border-radius: 9px;
+    background: rgba(255,255,255,0.2);
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    margin-left: 4px;
+    vertical-align: middle;
+}
+.filter-count-badge:empty { display: none; }
+.filter-chip.active .filter-count-badge {
+    background: rgba(255,255,255,0.3);
+}
+
 .conflict-list {
     padding: 12px;
     display: flex;
@@ -1827,9 +1846,9 @@ body {
 /* Toast notification for conflict resolution */
 .conflict-toast {
     position: fixed;
-    bottom: 100px;
+    top: 80px;
     left: 50%;
-    transform: translateX(-50%) translateY(20px);
+    transform: translateX(-50%) translateY(-20px);
     background: rgba(13, 148, 136, 0.95);
     color: white;
     padding: 10px 20px;

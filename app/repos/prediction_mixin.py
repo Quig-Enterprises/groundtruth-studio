@@ -339,6 +339,21 @@ class PredictionMixin:
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
+    def get_review_filter_counts(self):
+        """Get counts for each review queue filter chip."""
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT
+                    COUNT(*) FILTER (WHERE review_status = 'pending') as total,
+                    COUNT(*) FILTER (WHERE review_status = 'pending' AND confidence >= 0.5) as high,
+                    COUNT(*) FILTER (WHERE review_status = 'pending' AND confidence < 0.5) as low,
+                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario = 'license_plate') as plates,
+                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario = 'boat_registration') as boat_reg
+                FROM ai_predictions
+            ''')
+            row = cursor.fetchone()
+            return dict(row) if row else {}
+
     def batch_review_predictions(self, reviews, reviewer='studio_user'):
         """Batch review multiple predictions. Returns summary."""
         results = {'approved': 0, 'rejected': 0, 'failed': 0, 'annotation_ids': []}
@@ -353,8 +368,22 @@ class PredictionMixin:
                     continue
                 status = 'approved' if action == 'approve' else 'rejected'
 
+                # Handle approve-as-alternate-class (confirm reclassification)
+                if status == 'approved' and actual_class:
+                    cursor.execute('''
+                        UPDATE ai_predictions
+                        SET review_status = %s, reviewed_by = %s, reviewed_at = NOW(), review_notes = %s,
+                            corrected_tags = (COALESCE(corrected_tags, '{}'::jsonb) ||
+                                jsonb_build_object(
+                                    'actual_class', %s,
+                                    'reclassified_by', %s,
+                                    'reclassified_at', NOW()::text
+                                )) - 'needs_negative_review'
+                        WHERE id = %s AND review_status = 'pending'
+                        RETURNING id, model_name, model_version
+                    ''', (status, reviewer, notes, actual_class, reviewer, pred_id))
                 # Handle reclassification for rejections
-                if status == 'rejected' and actual_class:
+                elif status == 'rejected' and actual_class:
                     cursor.execute('''
                         UPDATE ai_predictions
                         SET review_status = %s, reviewed_by = %s, reviewed_at = NOW(), review_notes = %s,
@@ -381,19 +410,21 @@ class PredictionMixin:
                     # Increment usage count for reclassification class
                     if status == 'rejected' and actual_class:
                         self.increment_class_usage(actual_class)
+                    if status == 'approved' and actual_class:
+                        self.increment_class_usage(actual_class)
                 else:
                     results['failed'] += 1
         # Create annotations for approved predictions (outside the batch cursor)
         # We do this separately to avoid nested cursor issues
         for review in reviews:
-            if review.get('action') == 'approve':
+            if review.get('action') == 'approve' and not review.get('actual_class'):
                 ann_id = self.approve_prediction_to_annotation(review['prediction_id'])
                 if ann_id:
                     results['annotation_ids'].append(ann_id)
         # Create hard negative annotations for rejected predictions where actual_class
         # is NOT a known vehicle class (i.e., the detection was truly a non-vehicle object)
         for review in reviews:
-            if review.get('action') == 'reject' and review.get('actual_class'):
+            if review.get('actual_class') and review.get('action') in ('reject', 'approve'):
                 actual_class = review['actual_class']
                 if actual_class.lower() in VEHICLE_CLASSES:
                     continue
@@ -414,7 +445,7 @@ class PredictionMixin:
                         pred['scenario'],
                         'hard_negative',
                         pred_id,
-                        f'Hard negative: rejected as {actual_class}'
+                        f'Hard negative: confirmed as {actual_class}'
                     ))
                     row = cursor.fetchone()
                     if row:
