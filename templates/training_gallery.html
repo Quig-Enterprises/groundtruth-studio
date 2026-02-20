@@ -42,8 +42,10 @@
         </div>
         <div class="action-bar-right">
             <div class="reclassify-group" id="reclassify-group" style="display:none">
-                <input id="reclassify-input" list="reclassify-list" class="filter-select reclassify-combo" placeholder="Type or choose class...">
-                <datalist id="reclassify-list"></datalist>
+                <select id="reclassify-select" class="filter-select reclassify-combo">
+                    <option value="">Choose class...</option>
+                </select>
+                <input id="reclassify-custom" class="filter-select reclassify-combo" placeholder="Type class name..." style="display:none">
                 <button class="btn btn-primary" id="btn-apply-reclassify">Apply</button>
                 <button class="btn btn-ghost" id="btn-cancel-reclassify">Cancel</button>
             </div>
@@ -77,8 +79,10 @@
                     <span id="modal-selection-count">0 selected</span>
                     <button class="btn btn-ghost btn-sm" id="modal-select-all">Select All</button>
                     <div class="modal-reclassify-group" id="modal-reclassify-group" style="display:none">
-                        <input id="modal-reclassify-input" list="modal-reclassify-list" class="filter-select reclassify-combo" placeholder="Type or choose class...">
-                        <datalist id="modal-reclassify-list"></datalist>
+                        <select id="modal-reclassify-select" class="filter-select reclassify-combo">
+                            <option value="">Choose class...</option>
+                        </select>
+                        <input id="modal-reclassify-custom" class="filter-select reclassify-combo" placeholder="Type class name..." style="display:none">
                         <button class="btn btn-primary btn-sm" id="modal-apply-reclassify">Apply</button>
                         <button class="btn btn-ghost btn-sm" id="modal-cancel-reclassify">Cancel</button>
                     </div>
