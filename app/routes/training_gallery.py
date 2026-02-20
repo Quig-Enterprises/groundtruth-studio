@@ -155,6 +155,10 @@ def get_gallery_items():
                     {scenario_join}
                     WHERE p.review_status IN ('approved', 'auto_approved')
                       AND p.camera_object_track_id IS NOT NULL
+                      AND (SELECT COUNT(DISTINCT p3.classification)
+                           FROM ai_predictions p3
+                           WHERE p3.camera_object_track_id = p.camera_object_track_id
+                             AND p3.review_status IN ('approved', 'auto_approved')) <= 2
                       {filter_sql}
                     ORDER BY p.camera_object_track_id, p.confidence DESC
                 ) AS track_clusters
@@ -191,6 +195,10 @@ def get_gallery_items():
                     WHERE p.review_status IN ('approved', 'auto_approved')
                       AND p.prediction_group_id IS NOT NULL
                       AND p.camera_object_track_id IS NULL
+                      AND (SELECT COUNT(DISTINCT p3.classification)
+                           FROM ai_predictions p3
+                           WHERE p3.prediction_group_id = p.prediction_group_id
+                             AND p3.review_status IN ('approved', 'auto_approved')) <= 2
                       {filter_sql}
                     ORDER BY p.prediction_group_id, p.confidence DESC
                 ) AS group_clusters
@@ -220,8 +228,22 @@ def get_gallery_items():
                 JOIN videos v ON p.video_id = v.id
                 {scenario_join}
                 WHERE p.review_status IN ('approved', 'auto_approved')
-                  AND p.prediction_group_id IS NULL
-                  AND p.camera_object_track_id IS NULL
+                  AND (
+                    -- No track or group
+                    (p.prediction_group_id IS NULL AND p.camera_object_track_id IS NULL)
+                    -- Track with 3+ distinct classes = not a real single-object cluster
+                    OR (p.camera_object_track_id IS NOT NULL
+                        AND (SELECT COUNT(DISTINCT p3.classification)
+                             FROM ai_predictions p3
+                             WHERE p3.camera_object_track_id = p.camera_object_track_id
+                               AND p3.review_status IN ('approved', 'auto_approved')) > 2)
+                    -- Group with 3+ distinct classes = not a real cluster
+                    OR (p.prediction_group_id IS NOT NULL AND p.camera_object_track_id IS NULL
+                        AND (SELECT COUNT(DISTINCT p3.classification)
+                             FROM ai_predictions p3
+                             WHERE p3.prediction_group_id = p.prediction_group_id
+                               AND p3.review_status IN ('approved', 'auto_approved')) > 2)
+                  )
                   {filter_sql}
             ) AS gallery_items
             ORDER BY {order_by}
