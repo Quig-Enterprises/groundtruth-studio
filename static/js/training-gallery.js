@@ -64,15 +64,15 @@ var TrainingGallery = {
     },
 
     populateReclassifyDropdowns() {
-        ['reclassify-select', 'modal-reclassify-select'].forEach(id => {
-            const rSel = document.getElementById(id);
-            if (!rSel) return;
-            while (rSel.options.length > 1) rSel.remove(1);
+        ['reclassify-list', 'modal-reclassify-list'].forEach(id => {
+            const dl = document.getElementById(id);
+            if (!dl) return;
+            dl.innerHTML = '';
             this.allClasses.forEach(c => {
                 const opt = document.createElement('option');
                 opt.value = c.name;
-                opt.textContent = c.display_name || c.name;
-                rSel.appendChild(opt);
+                opt.label = c.display_name || c.name;
+                dl.appendChild(opt);
             });
         });
     },
@@ -581,7 +581,7 @@ var TrainingGallery = {
             document.getElementById('btn-reclassify').style.display = '';
         });
         document.getElementById('btn-apply-reclassify').addEventListener('click', async () => {
-            const newClass = document.getElementById('reclassify-select').value;
+            const newClass = document.getElementById('reclassify-input').value.trim();
             if (!newClass) return;
             const ids = await this.getSelectedPredictionIds();
             this.executeBulkAction('reclassify', ids, newClass);
@@ -633,7 +633,7 @@ var TrainingGallery = {
             document.getElementById('modal-btn-reclassify').style.display = '';
         });
         document.getElementById('modal-apply-reclassify').addEventListener('click', () => {
-            const newClass = document.getElementById('modal-reclassify-select').value;
+            const newClass = document.getElementById('modal-reclassify-input').value.trim();
             if (!newClass) return;
             this.executeBulkAction('reclassify', Array.from(this.modalSelected), newClass);
         });

@@ -175,6 +175,9 @@ html, body {
 .filter-select:focus {
     border-color: var(--accent);
 }
+.reclassify-combo {
+    min-width: 180px;
+}
 .filter-stats {
     color: var(--text-secondary);
     font-size: 0.82rem;
