@@ -1,4 +1,4 @@
-from flask import Blueprint, request, jsonify, render_template, send_from_directory, send_file, g
+from flask import Blueprint, request, jsonify, render_template, send_from_directory, send_file, g, redirect
 from pathlib import Path
 from psycopg2 import extras
 from db_connection import get_connection, get_cursor
@@ -37,7 +37,7 @@ def mobile_review_page():
 
 @predictions_bp.route('/cross-camera-review')
 def cross_camera_review_page():
-    return render_template('cross_camera_review.html')
+    return redirect('/review?filter=cross_camera')
 
 
 @predictions_bp.route('/vehicle-metrics/<path:class_name>')
@@ -85,7 +85,7 @@ def get_prediction_clip(prediction_id):
 
         frigate_event_id = metadata.get('frigate_event_id')
         if frigate_event_id:
-            frigate_url = os.environ.get('FRIGATE_URL', '')
+            frigate_url = os.environ.get('FRIGATE_URL', 'http://localhost:5000')
             if not frigate_url:
                 # Try to get from ingester singleton
                 try:
@@ -224,6 +224,98 @@ def submit_predictions_batch():
                     except Exception as group_err:
                         logger.warning(f"Prediction grouping trigger failed: {group_err}")
 
+                    # Phase 2.5: VLM review — pre-analyze detections for false positives
+                    try:
+                        import vlm_reviewer
+                        if vlm_reviewer.VLM_ENABLED:
+                            with get_connection() as conn:
+                                cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+                                cursor.execute("""
+                                    SELECT p.id, p.confidence, p.timestamp,
+                                           p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
+                                           p.predicted_tags, p.scenario,
+                                           v.filename
+                                    FROM ai_predictions p
+                                    JOIN videos v ON p.video_id = v.id
+                                    WHERE p.id = ANY(%s)
+                                      AND p.review_status = 'processing'
+                                      AND p.scenario = 'vehicle_detection'
+                                """, (pred_ids,))
+                                vlm_candidates = cursor.fetchall()
+
+                                vlm_count = 0
+                                for cand in vlm_candidates:
+                                    # Skip high-confidence YOLO detections
+                                    if float(cand['confidence'] or 0) >= vlm_reviewer.SKIP_ABOVE_CONFIDENCE:
+                                        continue
+
+                                    video_path = DOWNLOAD_DIR / cand['filename']
+                                    if not video_path.exists():
+                                        continue
+
+                                    tags = cand['predicted_tags'] or {}
+                                    if isinstance(tags, str):
+                                        tags = json.loads(tags)
+                                    predicted_class = tags.get('class', tags.get('vehicle_type', 'vehicle'))
+
+                                    bbox = {
+                                        'x': cand['bbox_x'] or 0,
+                                        'y': cand['bbox_y'] or 0,
+                                        'width': cand['bbox_width'] or 0,
+                                        'height': cand['bbox_height'] or 0
+                                    }
+
+                                    result = vlm_reviewer.classify_detection(
+                                        str(video_path),
+                                        cand['timestamp'] or 0,
+                                        bbox,
+                                        predicted_class,
+                                        float(cand['confidence'] or 0),
+                                        cand['scenario'] or 'vehicle_detection'
+                                    )
+
+                                    if result and not result['is_vehicle'] and result['confidence'] >= vlm_reviewer.VLM_CONFIDENCE_THRESHOLD:
+                                        cursor.execute("""
+                                            UPDATE ai_predictions
+                                            SET corrected_tags = COALESCE(corrected_tags, '{}'::jsonb) || %s::jsonb
+                                            WHERE id = %s
+                                        """, (
+                                            extras.Json({
+                                                'actual_class': result['suggested_class'],
+                                                'vlm_confidence': result['confidence'],
+                                                'vlm_reasoning': result['reasoning'],
+                                                'vlm_model': vlm_reviewer.VLM_MODEL,
+                                                'vlm_suggested_class': result['suggested_class'],
+                                                'needs_negative_review': True
+                                            }),
+                                            cand['id']
+                                        ))
+                                        vlm_count += 1
+
+                                conn.commit()
+                                if vlm_count > 0:
+                                    logger.info(f"VLM review: {vlm_count}/{len(vlm_candidates)} detections flagged as non-vehicle")
+                    except Exception as vlm_err:
+                        logger.warning(f"VLM review failed (non-blocking): {vlm_err}")
+
+                    # Phase 2.7: Clip-based tracking (if video has a Frigate clip)
+                    try:
+                        _video_meta = video.get('metadata') or {}
+                        if isinstance(_video_meta, str):
+                            _video_meta = json.loads(_video_meta)
+                        _frigate_eid = _video_meta.get('frigate_event_id')
+                        if _frigate_eid:
+                            from clip_tracker import run_clip_tracking
+                            _cam = _video_meta.get('frigate_camera', _video_meta.get('camera_id', ''))
+                            threading.Thread(
+                                target=run_clip_tracking,
+                                args=(video_id, _cam, _frigate_eid),
+                                daemon=True,
+                                name=f"clip-track-{video_id}"
+                            ).start()
+                    except Exception as clip_err:
+                        logger.warning(f"Clip tracking trigger failed (non-blocking): {clip_err}")
+
                 finally:
                     # Phase 3: Promote remaining 'processing' predictions to reviewable status
                     # (Track matching may have already set some to auto_approved/auto_rejected)
@@ -354,11 +446,11 @@ def review_prediction(prediction_id):
             return jsonify({'success': False, 'error': 'Request body required'}), 400
 
         action = data.get('action')
-        reviewer = data.get('reviewer', 'anonymous')
+        reviewer = data.get('reviewer') or request.headers.get('X-Auth-User', 'anonymous')
         notes = data.get('notes')
 
-        if action not in ('approve', 'reject', 'correct'):
-            return jsonify({'success': False, 'error': 'action must be approve, reject, or correct'}), 400
+        if action not in ('approve', 'reject', 'correct', 'reclassify'):
+            return jsonify({'success': False, 'error': 'action must be approve, reject, correct, or reclassify'}), 400
 
         corrections = data.get('corrections') if action == 'correct' else None
 
@@ -496,11 +588,12 @@ def get_review_queue():
         offset = request.args.get('offset', 0, type=int)
         grouped = request.args.get('grouped', '').lower() in ('1', 'true', 'yes')
         scenario = request.args.get('scenario')
+        review_status = request.args.get('status', 'pending')
 
         if grouped:
-            predictions = db.get_grouped_review_queue(video_id, min_confidence, max_confidence, limit, offset, scenario=scenario)
+            predictions = db.get_grouped_review_queue(video_id, min_confidence, max_confidence, limit, offset, scenario=scenario, review_status=review_status)
         else:
-            predictions = db.get_review_queue(video_id, model_name, min_confidence, max_confidence, limit, offset, scenario=scenario)
+            predictions = db.get_review_queue(video_id, model_name, min_confidence, max_confidence, limit, offset, scenario=scenario, review_status=review_status)
 
         # Serialize for JSON (handle datetime, Decimal, etc.)
         for p in predictions:
@@ -521,10 +614,13 @@ def get_review_queue_summary():
     try:
         grouped = request.args.get('grouped', '').lower() in ('1', 'true', 'yes')
         scenario = request.args.get('scenario')
+        review_status = request.args.get('status', 'pending')
+        min_confidence = request.args.get('min_confidence', type=float)
+        max_confidence = request.args.get('max_confidence', type=float)
         if grouped:
-            summary = db.get_grouped_review_queue_summary(scenario=scenario)
+            summary = db.get_grouped_review_queue_summary(scenario=scenario, review_status=review_status, min_confidence=min_confidence, max_confidence=max_confidence)
         else:
-            summary = db.get_review_queue_summary(scenario=scenario)
+            summary = db.get_review_queue_summary(scenario=scenario, review_status=review_status, min_confidence=min_confidence, max_confidence=max_confidence)
         for s in summary:
             for key in ['avg_confidence', 'min_confidence']:
                 if key in s and s[key] is not None:
@@ -551,11 +647,43 @@ def get_review_queue_summary():
 def get_review_filter_counts():
     """Get counts for each filter chip in the review queue"""
     try:
-        counts = db.get_review_filter_counts()
-        # Also get classify and conflict counts
+        min_confidence = request.args.get('min_confidence', type=float)
+        max_confidence = request.args.get('max_confidence', type=float)
+        counts = db.get_review_filter_counts(
+            min_confidence=min_confidence,
+            max_confidence=max_confidence
+        )
+        # Classify count (includes needs_reclassification)
         classify_summary = db.get_classification_queue_summary()
         classify_count = sum(s['pending_classification'] for s in classify_summary)
-        counts['classify'] = classify_count
+        counts['classify'] = classify_count + (counts.get('needs_reclassification') or 0)
+        counts.pop('needs_reclassification', None)
+        # Get conflict count
+        try:
+            conflicts = db.get_track_conflicts()
+            counts['conflicts'] = len(conflicts) if conflicts else 0
+        except Exception:
+            counts['conflicts'] = 0
+        # Compute 'other' as predictions minus known scenario counts
+        known_scenario_sum = (
+            (counts.get('vehicles') or 0) +
+            (counts.get('people') or 0) +
+            (counts.get('plates') or 0) +
+            (counts.get('boat_reg') or 0)
+        )
+        counts['other'] = max(0, (counts.get('predictions') or 0) - known_scenario_sum)
+        # Compute unified total across all types (no double counting)
+        counts['total'] = (
+            (counts.get('vehicles') or 0) +
+            (counts.get('people') or 0) +
+            (counts.get('plates') or 0) +
+            (counts.get('boat_reg') or 0) +
+            (counts.get('other') or 0) +
+            (counts.get('classify') or 0) +
+            (counts.get('cross_camera') or 0) +
+            (counts.get('clusters') or 0) +
+            (counts.get('conflicts') or 0)
+        )
         return jsonify({'success': True, 'counts': counts})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -571,7 +699,7 @@ def batch_review_predictions():
         if not data:
             return jsonify({'success': False, 'error': 'Request body required'}), 400
         reviews = data.get('reviews', [])
-        reviewer = data.get('reviewer', 'studio_user')
+        reviewer = data.get('reviewer') or request.headers.get('X-Auth-User', 'studio_user')
         if not reviews:
             return jsonify({'success': False, 'error': 'reviews array required'}), 400
         if len(reviews) > 100:
@@ -674,7 +802,7 @@ def group_review():
             return jsonify({'success': False, 'error': 'Request body required'}), 400
         group_id = data.get('group_id')
         action = data.get('action')
-        reviewer = data.get('reviewer', 'mobile_reviewer')
+        reviewer = data.get('reviewer') or request.headers.get('X-Auth-User', 'mobile_reviewer')
         notes = data.get('notes')
         if not group_id or action not in ('approve', 'reject'):
             return jsonify({'success': False, 'error': 'group_id and valid action required'}), 400
@@ -1090,6 +1218,53 @@ def get_cropped_thumbnail(prediction_id):
         return jsonify({'error': 'Failed to generate crop'}), 500
 
 
+@predictions_bp.route('/thumbnails/annotated/<int:prediction_id>')
+def get_annotated_thumbnail(prediction_id):
+    """Serve full frame with bounding box drawn for context."""
+    from PIL import Image, ImageDraw
+
+    try:
+        pred = db.get_prediction_for_crop(prediction_id)
+        if not pred:
+            return jsonify({'error': 'Prediction not found'}), 404
+
+        thumbnail_path = pred.get('thumbnail_path')
+        if not thumbnail_path:
+            return jsonify({'error': 'No thumbnail available'}), 404
+
+        if not os.path.isabs(thumbnail_path):
+            thumbnail_path = os.path.join(str(BASE_DIR), thumbnail_path)
+
+        if not os.path.exists(thumbnail_path):
+            return jsonify({'error': 'Thumbnail file not found'}), 404
+
+        bbox_x = pred.get('bbox_x')
+        bbox_y = pred.get('bbox_y')
+        bbox_w = pred.get('bbox_width')
+        bbox_h = pred.get('bbox_height')
+
+        img = Image.open(thumbnail_path).convert('RGB')
+
+        if bbox_x is not None and bbox_w and bbox_h and bbox_w > 0 and bbox_h > 0:
+            draw = ImageDraw.Draw(img)
+            x1 = max(0, int(bbox_x))
+            y1 = max(0, int(bbox_y))
+            x2 = min(img.width, int(bbox_x + bbox_w))
+            y2 = min(img.height, int(bbox_y + bbox_h))
+            draw.rectangle([x1, y1, x2, y2], outline='red', width=3)
+
+        buf = io.BytesIO()
+        img.save(buf, format='JPEG', quality=85)
+        buf.seek(0)
+
+        response = send_file(buf, mimetype='image/jpeg')
+        response.headers['Cache-Control'] = 'public, max-age=3600'
+        return response
+    except Exception as e:
+        logger.error(f'Failed to annotate thumbnail for prediction {prediction_id}: {e}')
+        return jsonify({'error': 'Failed to generate annotated image'}), 500
+
+
 # ---- Batch Update Class ----
 
 @predictions_bp.route('/api/ai/predictions/batch-update-class', methods=['POST'])
@@ -1125,6 +1300,258 @@ def batch_update_prediction_class():
             return jsonify({'success': False, 'error': 'Either vehicle_subtype or requeue=true required'}), 400
     except Exception as e:
         logger.error(f'Failed to batch update predictions: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---- Static Cluster Batch Review ----
+
+@predictions_bp.route('/batch-cluster-review')
+def batch_cluster_review_page():
+    return redirect('/review?filter=clusters')
+
+
+@predictions_bp.route('/api/ai/predictions/static-clusters', methods=['GET'])
+def get_static_clusters():
+    """Get spatial clusters of repeated detections for batch review."""
+    try:
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                SELECT
+                    p.corrected_tags->>'static_cluster' as cluster_key,
+                    v.camera_id,
+                    COUNT(*) as count,
+                    array_agg(DISTINCT p.predicted_tags->>'class') as yolo_classes,
+                    ROUND(AVG(p.confidence)::numeric, 3) as avg_conf,
+                    MIN(p.id) as sample_id,
+                    json_agg(json_build_object(
+                        'id', p.id, 'confidence', p.confidence,
+                        'class', p.predicted_tags->>'class',
+                        'vlm_class', p.corrected_tags->>'vlm_suggested_class',
+                        'vlm_reasoning', p.corrected_tags->>'vlm_reasoning',
+                        'previous_status', p.corrected_tags->>'previous_review_status'
+                    ) ORDER BY p.id) as members
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                WHERE p.corrected_tags->>'batch_reviewable' = 'true'
+                AND p.review_status = 'pending'
+                AND p.predicted_tags->>'class' = 'unknown vehicle'
+                GROUP BY cluster_key, v.camera_id
+                HAVING COUNT(*) >= 2
+                ORDER BY COUNT(*) DESC
+            """)
+            clusters = []
+            for row in cur.fetchall():
+                clusters.append({
+                    'cluster_key': row[0],
+                    'camera_id': row[1],
+                    'count': row[2],
+                    'yolo_classes': row[3],
+                    'avg_confidence': float(row[4]) if row[4] else 0,
+                    'sample_id': row[5],
+                    'members': row[6],
+                })
+            cur.close()
+        return jsonify({'success': True, 'clusters': clusters, 'total': sum(c['count'] for c in clusters)})
+    except Exception as e:
+        logger.error(f'Failed to get static clusters: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@predictions_bp.route('/api/ai/predictions/batch-cluster-review', methods=['POST'])
+def batch_cluster_review():
+    """Batch approve or reject an entire spatial cluster."""
+    try:
+        data = request.get_json()
+        cluster_key = data.get('cluster_key')
+        action = data.get('action')  # 'approve', 'reject', or 'reclassify'
+        actual_class = data.get('actual_class', '').strip().lower()
+
+        if not cluster_key or action not in ('approve', 'reject', 'reclassify'):
+            return jsonify({'success': False, 'error': 'cluster_key and action (approve/reject/reclassify) required'}), 400
+
+        if action == 'reclassify' and not actual_class:
+            return jsonify({'success': False, 'error': 'actual_class required for reclassify'}), 400
+
+        review_status = 'approved' if action == 'approve' else 'rejected'
+
+        with get_connection() as conn:
+            cur = conn.cursor()
+            if action == 'reclassify':
+                cur.execute("""
+                    UPDATE ai_predictions
+                    SET review_status = 'rejected',
+                        reviewed_by = 'batch_cluster_review',
+                        reviewed_at = NOW(),
+                        corrected_tags = COALESCE(corrected_tags, '{}'::jsonb) ||
+                            jsonb_build_object(
+                                'batch_reviewed', true,
+                                'batch_action', 'reclassify',
+                                'actual_class', %s,
+                                'needs_negative_review', true
+                            )
+                    WHERE corrected_tags->>'static_cluster' = %s
+                    AND review_status = 'pending'
+                """, (actual_class, cluster_key))
+            else:
+                cur.execute("""
+                    UPDATE ai_predictions
+                    SET review_status = %s,
+                        reviewed_by = 'batch_cluster_review',
+                        reviewed_at = NOW(),
+                        corrected_tags = COALESCE(corrected_tags, '{}'::jsonb) ||
+                            jsonb_build_object('batch_reviewed', true, 'batch_action', %s)
+                    WHERE corrected_tags->>'static_cluster' = %s
+                    AND review_status = 'pending'
+                """, (review_status, action, cluster_key))
+            updated = cur.rowcount
+            conn.commit()
+            cur.close()
+
+        return jsonify({'success': True, 'updated': updated, 'action': action, 'cluster_key': cluster_key})
+    except Exception as e:
+        logger.error(f'Failed to batch review cluster: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@predictions_bp.route('/api/ai/predictions/uncluster', methods=['POST'])
+def uncluster():
+    """Remove cluster tags from predictions, sending them back to individual review."""
+    try:
+        data = request.get_json()
+        cluster_key = data.get('cluster_key')
+        if not cluster_key:
+            return jsonify({'success': False, 'error': 'cluster_key required'}), 400
+
+        with get_connection() as conn:
+            cur = conn.cursor()
+            cur.execute("""
+                UPDATE ai_predictions
+                SET corrected_tags = corrected_tags - 'static_cluster' - 'batch_reviewable' - 'cluster_size' - 'suggested_class'
+                WHERE corrected_tags->>'static_cluster' = %s
+                AND review_status = 'pending'
+            """, (cluster_key,))
+            updated = cur.rowcount
+            conn.commit()
+            cur.close()
+
+        return jsonify({'success': True, 'updated': updated, 'cluster_key': cluster_key})
+    except Exception as e:
+        logger.error(f'Failed to uncluster: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---- VLM Endpoints ----
+
+@predictions_bp.route('/api/ai/predictions/vlm-stats', methods=['GET'])
+def get_vlm_stats():
+    """Get VLM review statistics: acceptance rate, breakdown by class."""
+    try:
+        stats = db.get_vlm_stats()
+        return jsonify({'success': True, **stats})
+    except Exception as e:
+        logger.error(f'Failed to get VLM stats: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@predictions_bp.route('/api/ai/predictions/<int:prediction_id>/vlm-review', methods=['POST'])
+def trigger_vlm_review(prediction_id):
+    """Manually trigger VLM review on a specific prediction."""
+    try:
+        import vlm_reviewer
+
+        pred = db.get_prediction_by_id(prediction_id)
+        if not pred:
+            return jsonify({'success': False, 'error': 'Prediction not found'}), 404
+
+        video = db.get_video(pred['video_id'])
+        if not video:
+            return jsonify({'success': False, 'error': 'Video not found'}), 404
+
+        video_path = DOWNLOAD_DIR / video['filename']
+        if not video_path.exists():
+            return jsonify({'success': False, 'error': 'Video file not found'}), 404
+
+        tags = pred.get('predicted_tags') or {}
+        if isinstance(tags, str):
+            tags = json.loads(tags)
+        predicted_class = tags.get('class', tags.get('vehicle_type', 'vehicle'))
+
+        bbox = {
+            'x': pred.get('bbox_x') or 0,
+            'y': pred.get('bbox_y') or 0,
+            'width': pred.get('bbox_width') or 0,
+            'height': pred.get('bbox_height') or 0
+        }
+
+        result = vlm_reviewer.classify_detection(
+            str(video_path),
+            pred.get('timestamp') or 0,
+            bbox,
+            predicted_class,
+            float(pred.get('confidence') or 0),
+            pred.get('scenario') or 'vehicle_detection'
+        )
+
+        if not result:
+            return jsonify({'success': False, 'error': 'VLM analysis returned no result (model may be unavailable)'}), 503
+
+        # If VLM says not a vehicle with sufficient confidence, update corrected_tags
+        if not result['is_vehicle'] and result['confidence'] >= vlm_reviewer.VLM_CONFIDENCE_THRESHOLD:
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute("""
+                    UPDATE ai_predictions
+                    SET corrected_tags = COALESCE(corrected_tags, '{}'::jsonb) || %s::jsonb
+                    WHERE id = %s
+                """, (
+                    extras.Json({
+                        'actual_class': result['suggested_class'],
+                        'vlm_confidence': result['confidence'],
+                        'vlm_reasoning': result['reasoning'],
+                        'vlm_model': vlm_reviewer.VLM_MODEL,
+                        'vlm_suggested_class': result['suggested_class'],
+                        'needs_negative_review': True
+                    }),
+                    prediction_id
+                ))
+                conn.commit()
+
+        return jsonify({
+            'success': True,
+            'prediction_id': prediction_id,
+            'vlm_result': result,
+            'tags_updated': not result['is_vehicle'] and result['confidence'] >= vlm_reviewer.VLM_CONFIDENCE_THRESHOLD
+        })
+    except Exception as e:
+        logger.error(f'VLM review failed for prediction {prediction_id}: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@predictions_bp.route('/api/ai/predictions/vlm-config', methods=['GET'])
+def get_vlm_config():
+    """Get current VLM configuration and status."""
+    try:
+        import vlm_reviewer
+        config = vlm_reviewer.get_config()
+        status = vlm_reviewer.check_ollama_status()
+        return jsonify({'success': True, 'config': config, 'status': status})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@predictions_bp.route('/api/ai/predictions/vlm-config', methods=['PUT'])
+def update_vlm_config():
+    """Update VLM configuration (enable/disable, model, thresholds)."""
+    try:
+        import vlm_reviewer
+        data = request.get_json()
+        if not data:
+            return jsonify({'success': False, 'error': 'JSON body required'}), 400
+        updated = vlm_reviewer.update_config(data)
+        logger.info(f"VLM config updated: {updated}")
+        return jsonify({'success': True, 'config': updated})
+    except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
@@ -1189,3 +1616,120 @@ def _check_and_trigger_interpolation(approved_pred):
             daemon=True,
             name=f"interp-{start_id}-{end_id}"
         ).start()
+
+
+@predictions_bp.route('/api/ai/feedback', methods=['POST'])
+def submit_ai_feedback():
+    """Save user feedback about AI predictions to a JSONL file."""
+    import json, datetime
+    try:
+        data = request.get_json()
+        if not data or not data.get('feedback'):
+            return jsonify({'success': False, 'error': 'feedback text required'}), 400
+        
+        feedback_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'feedback')
+        os.makedirs(feedback_dir, exist_ok=True)
+        
+        entry = {
+            'timestamp': datetime.datetime.utcnow().isoformat() + 'Z',
+            'feedback': data['feedback'],
+            'prediction_id': data.get('prediction_id'),
+            'video_id': data.get('video_id'),
+            'scenario': data.get('scenario'),
+            'predicted_class': data.get('predicted_class'),
+            'confidence': data.get('confidence'),
+            'review_mode': data.get('review_mode'),
+            'active_filter': data.get('active_filter'),
+            'url': data.get('url'),
+        }
+
+        # Store video timestamps and clip references for cross-camera feedback
+        if data.get('video_timestamps'):
+            entry['video_timestamps'] = data['video_timestamps']
+        if data.get('clip_data'):
+            entry['clip_data'] = data['clip_data']
+        if data.get('sync_offsets'):
+            entry['sync_offsets'] = data['sync_offsets']
+        if data.get('cross_camera_link_id'):
+            entry['cross_camera_link_id'] = data['cross_camera_link_id']
+        if data.get('match_confidence') is not None:
+            entry['match_confidence'] = data['match_confidence']
+        if data.get('match_factors'):
+            entry['match_factors'] = data['match_factors']
+
+        filepath = os.path.join(feedback_dir, 'ai_feedback.jsonl')
+        with open(filepath, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+        
+        logger.info(f"AI feedback saved: pred={entry.get('prediction_id')} feedback={entry['feedback'][:100]}")
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error saving AI feedback: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@predictions_bp.route('/api/ai/feedback/bbox-correction', methods=['POST'])
+def submit_bbox_correction():
+    """Save a user-drawn bbox correction for retraining."""
+    import json, datetime
+    try:
+        data = request.get_json()
+        if not data or not data.get('corrected_bbox'):
+            return jsonify({'success': False, 'error': 'corrected_bbox required'}), 400
+
+        feedback_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'feedback')
+        os.makedirs(feedback_dir, exist_ok=True)
+
+        entry = {
+            'timestamp': data.get('timestamp', datetime.datetime.utcnow().isoformat() + 'Z'),
+            'type': 'bbox_correction',
+            'camera_id': data.get('camera_id'),
+            'video_track_id': data.get('video_track_id'),
+            'clip_url': data.get('clip_url'),
+            'video_time': data.get('video_time'),
+            'video_duration': data.get('video_duration'),
+            'video_width': data.get('video_width'),
+            'video_height': data.get('video_height'),
+            'original_bbox': data.get('original_bbox'),
+            'corrected_bbox': data.get('corrected_bbox'),
+            'class_name': data.get('class_name'),
+            'cross_camera_link_id': data.get('cross_camera_link_id'),
+        }
+
+        filepath = os.path.join(feedback_dir, 'bbox_corrections.jsonl')
+        with open(filepath, 'a') as f:
+            f.write(json.dumps(entry) + '\n')
+
+        logger.info(f"BBox correction saved: camera={entry.get('camera_id')} track={entry.get('video_track_id')} t={entry.get('video_time')}")
+        return jsonify({'success': True})
+    except Exception as e:
+        logger.error(f"Error saving bbox correction: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@predictions_bp.route('/api/ai/feedback/calibration')
+def get_camera_calibration():
+    """Get per-camera projection calibration data derived from bbox corrections."""
+    try:
+        import calibration
+        cal_data = calibration.load_calibration()
+        return jsonify({'success': True, 'calibration': cal_data})
+    except Exception as e:
+        logger.error(f"Failed to get camera calibration: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@predictions_bp.route('/api/ai/feedback/calibration/rebuild', methods=['POST'])
+def rebuild_calibration():
+    """Rebuild calibration from corrections data."""
+    try:
+        import calibration
+        cal_data = calibration.rebuild_calibration()
+        return jsonify({
+            'success': True,
+            'calibration': cal_data,
+            'camera_count': len(cal_data)
+        })
+    except Exception as e:
+        logger.error(f"Failed to rebuild calibration: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500

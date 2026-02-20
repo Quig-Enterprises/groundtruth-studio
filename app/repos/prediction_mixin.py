@@ -78,17 +78,27 @@ class PredictionMixin:
             return [dict(row) for row in cursor.fetchall()]
 
     def cascade_reject_children(self, parent_id: int, reviewed_by: str = 'cascade') -> int:
-        """When a parent entity is rejected, auto-reject its child predictions."""
+        """When a parent entity is rejected, auto-reject its child predictions.
+        Uses prediction_group_id to find siblings in the same group."""
         with get_cursor() as cursor:
+            # Find the group of this prediction
+            cursor.execute(
+                'SELECT prediction_group_id FROM ai_predictions WHERE id = %s',
+                (parent_id,))
+            row = cursor.fetchone()
+            if not row or not row['prediction_group_id']:
+                return 0
+            group_id = row['prediction_group_id']
             cursor.execute('''
                 UPDATE ai_predictions
                 SET review_status = 'auto_rejected',
                     reviewed_by = %s,
                     reviewed_at = NOW(),
-                    review_notes = 'Auto-rejected: parent entity was rejected'
-                WHERE parent_prediction_id = %s
-                  AND review_status NOT IN ('rejected', 'auto_rejected')
-            ''', (reviewed_by, parent_id))
+                    review_notes = 'Auto-rejected: sibling in group was rejected'
+                WHERE prediction_group_id = %s
+                  AND id != %s
+                  AND review_status NOT IN ('rejected', 'auto_rejected', 'approved')
+            ''', (reviewed_by, group_id, parent_id))
             return cursor.rowcount
 
     def get_pending_predictions(self, video_id: int = None, model_name: str = None,
@@ -173,6 +183,8 @@ class PredictionMixin:
                 status = 'rejected'
             elif action == 'correct':
                 status = 'approved'  # corrections are approved with modified data
+            elif action == 'reclassify':
+                status = 'needs_reclassification'
             else:
                 return None
 
@@ -276,11 +288,11 @@ class PredictionMixin:
             return cursor.rowcount > 0
 
     def get_review_queue(self, video_id=None, model_name=None, min_confidence=None,
-                         max_confidence=None, limit=50, offset=0, scenario=None):
-        """Get pending predictions for mobile review queue, with thumbnail paths."""
+                         max_confidence=None, limit=50, offset=0, scenario=None, review_status='pending'):
+        """Get predictions for mobile review queue, with thumbnail paths."""
         with get_cursor(commit=False) as cursor:
-            conditions = ["p.review_status = 'pending'"]
-            params = []
+            conditions = ["p.review_status = %s"]
+            params = [review_status]
             if video_id:
                 conditions.append("p.video_id = %s")
                 params.append(video_id)
@@ -294,33 +306,57 @@ class PredictionMixin:
                 conditions.append("p.confidence <= %s")
                 params.append(max_confidence)
             if scenario:
-                conditions.append("p.scenario = %s")
-                params.append(scenario)
+                if scenario == '_other':
+                    conditions.append("p.scenario NOT IN ('vehicle_detection', 'person_detection', 'face_detection', 'person_identification', 'license_plate', 'boat_registration')")
+                elif ',' in scenario:
+                    scenario_list = [s.strip() for s in scenario.split(',')]
+                    placeholders = ', '.join(['%s'] * len(scenario_list))
+                    conditions.append(f"p.scenario IN ({placeholders})")
+                    params.extend(scenario_list)
+                else:
+                    conditions.append("p.scenario = %s")
+                    params.append(scenario)
             where = " AND ".join(conditions)
             params.extend([limit, offset])
             cursor.execute(f'''
                 SELECT p.id, p.video_id, p.model_name, p.model_version, p.prediction_type,
                        p.confidence, p.timestamp, p.start_time, p.end_time,
                        p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
-                       p.scenario, p.predicted_tags, p.inference_time_ms,
+                       p.scenario, p.predicted_tags, p.corrected_tags, p.inference_time_ms,
                        v.title as video_title, v.thumbnail_path, v.width as video_width, v.height as video_height, v.camera_id
                 FROM ai_predictions p
                 JOIN videos v ON p.video_id = v.id
                 WHERE {where}
-                ORDER BY p.confidence ASC, p.created_at DESC
+                ORDER BY p.confidence DESC, p.created_at DESC
                 LIMIT %s OFFSET %s
             ''', params)
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def get_review_queue_summary(self, scenario=None):
-        """Get summary of pending predictions grouped by video for review queue entry screen."""
+    def get_review_queue_summary(self, scenario=None, review_status='pending', min_confidence=None, max_confidence=None):
+        """Get summary of predictions grouped by video for review queue entry screen."""
         with get_cursor(commit=False) as cursor:
-            conditions = ["p.review_status = 'pending'", "p.confidence >= 0.10"]
-            params = []
+            conditions = ["p.review_status = %s"]
+            params = [review_status]
+            if min_confidence is not None:
+                conditions.append("p.confidence >= %s")
+                params.append(min_confidence)
+            elif max_confidence is None:
+                conditions.append("p.confidence >= 0.10")
+            if max_confidence is not None:
+                conditions.append("p.confidence <= %s")
+                params.append(max_confidence)
             if scenario:
-                conditions.append("p.scenario = %s")
-                params.append(scenario)
+                if scenario == '_other':
+                    conditions.append("p.scenario NOT IN ('vehicle_detection', 'person_detection', 'face_detection', 'person_identification', 'license_plate', 'boat_registration')")
+                elif ',' in scenario:
+                    scenario_list = [s.strip() for s in scenario.split(',')]
+                    placeholders = ', '.join(['%s'] * len(scenario_list))
+                    conditions.append(f"p.scenario IN ({placeholders})")
+                    params.extend(scenario_list)
+                else:
+                    conditions.append("p.scenario = %s")
+                    params.append(scenario)
             where_clause = " AND ".join(conditions)
             cursor.execute('''
                 SELECT v.id as video_id, v.title as video_title, v.thumbnail_path,
@@ -329,7 +365,8 @@ class PredictionMixin:
                        COUNT(*) FILTER (WHERE p.review_status = 'pending') +
                        COUNT(*) FILTER (WHERE p.review_status IN ('approved', 'rejected')) as total_count,
                        ROUND(AVG(p.confidence)::numeric, 3) as avg_confidence,
-                       MIN(p.confidence) as min_confidence
+                       MIN(p.confidence) as min_confidence,
+                       MODE() WITHIN GROUP (ORDER BY p.predicted_tags->>'class') as dominant_class
                 FROM ai_predictions p
                 JOIN videos v ON p.video_id = v.id
                 WHERE ''' + where_clause + '''
@@ -339,34 +376,75 @@ class PredictionMixin:
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def get_review_filter_counts(self):
-        """Get counts for each review queue filter chip."""
+    def get_review_filter_counts(self, min_confidence=None, max_confidence=None):
+        """Get counts for each review queue filter chip.
+        Uses confidence >= 0.10 to match the review queue/summary filters.
+        Optional min_confidence/max_confidence params filter prediction counts."""
         with get_cursor(commit=False) as cursor:
+            # Build optional confidence filter for predictions
+            conf_filter = "AND confidence >= 0.10"
+            params = []
+            if min_confidence is not None:
+                conf_filter = "AND confidence >= %s"
+                params.append(min_confidence)
+            if max_confidence is not None:
+                conf_filter += " AND confidence <= %s"
+                params.append(max_confidence)
+            elif min_confidence is None:
+                # Default minimum
+                pass
+
             cursor.execute('''
                 SELECT
-                    COUNT(*) FILTER (WHERE review_status = 'pending') as total,
-                    COUNT(*) FILTER (WHERE review_status = 'pending' AND confidence >= 0.5) as high,
-                    COUNT(*) FILTER (WHERE review_status = 'pending' AND confidence < 0.5) as low,
-                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario = 'license_plate') as plates,
-                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario = 'boat_registration') as boat_reg
+                    COUNT(*) FILTER (WHERE review_status = 'pending' ''' + conf_filter + ''') as predictions,
+                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario = 'vehicle_detection' ''' + conf_filter + ''') as vehicles,
+                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario IN ('person_detection', 'face_detection', 'person_identification') ''' + conf_filter + ''') as people,
+                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario = 'license_plate' ''' + conf_filter + ''') as plates,
+                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario = 'boat_registration' ''' + conf_filter + ''') as boat_reg,
+                    COUNT(*) FILTER (WHERE review_status = 'needs_reclassification') as needs_reclassification
                 FROM ai_predictions
-            ''')
+            ''', params + params + params + params + params)
             row = cursor.fetchone()
-            return dict(row) if row else {}
+            counts = dict(row) if row else {}
+
+            # Cross-camera count
+            cursor.execute("SELECT COUNT(*) as cnt FROM cross_camera_links WHERE status = 'auto'")
+            cc_row = cursor.fetchone()
+            counts['cross_camera'] = cc_row['cnt'] if cc_row else 0
+
+            # Cluster count (only clusters with 2+ members)
+            cursor.execute("""
+                SELECT COUNT(*) as cnt FROM (
+                    SELECT corrected_tags->>'static_cluster'
+                    FROM ai_predictions
+                    WHERE corrected_tags->>'batch_reviewable' = 'true'
+                      AND review_status = 'pending'
+                      AND predicted_tags->>'class' = 'unknown vehicle'
+                    GROUP BY corrected_tags->>'static_cluster'
+                    HAVING COUNT(*) >= 2
+                ) sub
+            """)
+            cl_row = cursor.fetchone()
+            counts['clusters'] = cl_row['cnt'] if cl_row else 0
+
+            return counts
 
     def batch_review_predictions(self, reviews, reviewer='studio_user'):
         """Batch review multiple predictions. Returns summary."""
-        results = {'approved': 0, 'rejected': 0, 'failed': 0, 'annotation_ids': []}
+        results = {'approved': 0, 'rejected': 0, 'needs_reclassification': 0, 'failed': 0, 'annotation_ids': []}
         with get_cursor() as cursor:
             for review in reviews:
                 pred_id = review.get('prediction_id')
                 action = review.get('action')
                 notes = review.get('notes')
                 actual_class = review.get('actual_class')
-                if action not in ('approve', 'reject'):
+                if action not in ('approve', 'reject', 'reclassify'):
                     results['failed'] += 1
                     continue
-                status = 'approved' if action == 'approve' else 'rejected'
+                if action == 'reclassify':
+                    status = 'needs_reclassification'
+                else:
+                    status = 'approved' if action == 'approve' else 'rejected'
 
                 # Handle approve-as-alternate-class (confirm reclassification)
                 if status == 'approved' and actual_class:
@@ -379,7 +457,7 @@ class PredictionMixin:
                                     'reclassified_by', %s,
                                     'reclassified_at', NOW()::text
                                 )) - 'needs_negative_review'
-                        WHERE id = %s AND review_status = 'pending'
+                        WHERE id = %s AND review_status IN ('pending', 'approved', 'needs_reclassification')
                         RETURNING id, model_name, model_version
                     ''', (status, reviewer, notes, actual_class, reviewer, pred_id))
                 # Handle reclassification for rejections
@@ -393,16 +471,26 @@ class PredictionMixin:
                                     'reclassified_by', %s,
                                     'reclassified_at', NOW()::text
                                 )
-                        WHERE id = %s AND review_status = 'pending'
+                        WHERE id = %s AND review_status IN ('pending', 'approved', 'needs_reclassification')
                         RETURNING id, model_name, model_version
                     ''', (status, reviewer, notes, actual_class, reviewer, pred_id))
                 else:
-                    cursor.execute('''
-                        UPDATE ai_predictions
-                        SET review_status = %s, reviewed_by = %s, reviewed_at = NOW(), review_notes = %s
-                        WHERE id = %s AND review_status = 'pending'
-                        RETURNING id, model_name, model_version
-                    ''', (status, reviewer, notes, pred_id))
+                    corrected_tags = review.get('corrected_tags')
+                    if corrected_tags:
+                        cursor.execute('''
+                            UPDATE ai_predictions
+                            SET review_status = %s, reviewed_by = %s, reviewed_at = NOW(), review_notes = %s,
+                                corrected_tags = COALESCE(corrected_tags, '{}'::jsonb) || %s::jsonb
+                            WHERE id = %s AND review_status IN ('pending', 'approved', 'needs_reclassification')
+                            RETURNING id, model_name, model_version
+                        ''', (status, reviewer, notes, json.dumps(corrected_tags), pred_id))
+                    else:
+                        cursor.execute('''
+                            UPDATE ai_predictions
+                            SET review_status = %s, reviewed_by = %s, reviewed_at = NOW(), review_notes = %s
+                            WHERE id = %s AND review_status IN ('pending', 'approved', 'needs_reclassification')
+                            RETURNING id, model_name, model_version
+                        ''', (status, reviewer, notes, pred_id))
 
                 row = cursor.fetchone()
                 if row:
@@ -417,6 +505,10 @@ class PredictionMixin:
         # Create annotations for approved predictions (outside the batch cursor)
         # We do this separately to avoid nested cursor issues
         for review in reviews:
+            # Skip annotation creation for bad-bbox: valid detection but unsuitable for training
+            corrected = review.get('corrected_tags') or {}
+            if corrected.get('bad_bbox') or corrected.get('exclude_from_training'):
+                continue
             if review.get('action') == 'approve' and not review.get('actual_class'):
                 ann_id = self.approve_prediction_to_annotation(review['prediction_id'])
                 if ann_id:
@@ -463,26 +555,30 @@ class PredictionMixin:
                 status_condition = "p.review_status IN ('approved', 'pending')"
             else:
                 status_condition = "p.review_status = 'approved'"
-            conditions = [
-                status_condition,
-                "p.scenario = 'vehicle_detection'",
-                "(p.corrected_tags IS NULL OR p.corrected_tags->>'vehicle_subtype' IS NULL)"
-            ]
             params = []
             if video_id:
-                conditions.append("p.video_id = %s")
+                video_filter = "AND p.video_id = %s"
                 params.append(video_id)
-            where = " AND ".join(conditions)
+            else:
+                video_filter = ""
             params.extend([limit, offset])
             cursor.execute(f'''
                 SELECT p.id, p.video_id, p.model_name, p.model_version, p.prediction_type,
                        p.confidence, p.timestamp, p.start_time, p.end_time,
                        p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
                        p.scenario, p.predicted_tags, p.corrected_tags, p.inference_time_ms,
+                       p.prediction_group_id as group_id,
+                       pg.member_count,
                        v.title as video_title, v.thumbnail_path, v.width as video_width, v.height as video_height
                 FROM ai_predictions p
                 JOIN videos v ON p.video_id = v.id
-                WHERE {where}
+                LEFT JOIN prediction_groups pg ON pg.id = p.prediction_group_id
+                WHERE (
+                    ({status_condition}
+                     AND p.scenario = 'vehicle_detection'
+                     AND (p.corrected_tags IS NULL OR (p.corrected_tags->>'vehicle_subtype' IS NULL AND p.corrected_tags->>'actual_class' IS NULL)))
+                    OR p.review_status = 'needs_reclassification'
+                ) {video_filter}
                 ORDER BY p.confidence DESC, p.created_at DESC
                 LIMIT %s OFFSET %s
             ''', params)
@@ -502,9 +598,12 @@ class PredictionMixin:
                        ROUND(AVG(p.confidence)::numeric, 3) as avg_confidence
                 FROM ai_predictions p
                 JOIN videos v ON p.video_id = v.id
-                WHERE {status_condition}
-                  AND p.scenario = 'vehicle_detection'
-                  AND (p.corrected_tags IS NULL OR p.corrected_tags->>'vehicle_subtype' IS NULL)
+                WHERE (
+                    ({status_condition}
+                     AND p.scenario = 'vehicle_detection'
+                     AND (p.corrected_tags IS NULL OR (p.corrected_tags->>'vehicle_subtype' IS NULL AND p.corrected_tags->>'actual_class' IS NULL)))
+                    OR p.review_status = 'needs_reclassification'
+                )
                 GROUP BY v.id, v.title, v.thumbnail_path
                 ORDER BY pending_classification DESC
             ''')
@@ -796,18 +895,23 @@ class PredictionMixin:
             return len(group_ids)
 
     def get_grouped_review_queue(self, video_id=None, min_confidence=None,
-                                  max_confidence=None, limit=50, offset=0, scenario=None):
-        """Get review queue with grouped predictions collapsed into single entries."""
+                                  max_confidence=None, limit=50, offset=0, scenario=None, review_status='pending'):
+        """Get review queue with grouped predictions collapsed into single entries.
+        Groups are found by looking for predictions with a group ID matching the given status."""
         with get_cursor(commit=False) as cursor:
-            # Build conditions for both grouped and ungrouped
-            group_conditions = ["pg.review_status = 'pending'"]
+            # Build conditions for grouped (predictions in a group) and ungrouped
+            group_conditions = [
+                "p.review_status = %s",
+                "p.prediction_group_id IS NOT NULL",
+                "p.confidence >= 0.10"
+            ]
             ungrouped_conditions = [
-                "p.review_status = 'pending'",
+                "p.review_status = %s",
                 "p.prediction_group_id IS NULL",
                 "p.confidence >= 0.10"
             ]
-            group_params = []
-            ungrouped_params = []
+            group_params = [review_status]
+            ungrouped_params = [review_status]
 
             if video_id:
                 group_conditions.append("p.video_id = %s")
@@ -815,12 +919,12 @@ class PredictionMixin:
                 ungrouped_conditions.append("p.video_id = %s")
                 ungrouped_params.append(video_id)
             if min_confidence is not None:
-                group_conditions.append("pg.avg_confidence >= %s")
+                group_conditions.append("p.confidence >= %s")
                 group_params.append(min_confidence)
                 ungrouped_conditions.append("p.confidence >= %s")
                 ungrouped_params.append(min_confidence)
             if max_confidence is not None:
-                group_conditions.append("pg.avg_confidence <= %s")
+                group_conditions.append("p.confidence <= %s")
                 group_params.append(max_confidence)
                 ungrouped_conditions.append("p.confidence <= %s")
                 ungrouped_params.append(max_confidence)
@@ -833,35 +937,46 @@ class PredictionMixin:
             group_where = " AND ".join(group_conditions)
             ungrouped_where = " AND ".join(ungrouped_conditions)
 
+            # For grouped: pick the representative (first) pending prediction per group
+            # DISTINCT ON + ORDER BY must be in a subquery before UNION ALL
             query = f"""
-                SELECT pg.id as group_id, pg.member_count, pg.avg_confidence,
-                       pg.min_confidence as group_min_confidence, pg.scenario as group_scenario,
-                       pg.review_status as group_status,
-                       p.id, p.video_id, p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
-                       p.confidence, p.timestamp, p.predicted_tags, p.inference_time_ms,
-                       p.scenario, p.model_name, p.model_version,
-                       v.title as video_title, v.thumbnail_path,
-                       v.width as video_width, v.height as video_height, v.camera_id
-                FROM prediction_groups pg
-                JOIN ai_predictions p ON p.id = pg.representative_prediction_id
-                JOIN videos v ON p.video_id = v.id
-                WHERE {group_where}
+                SELECT * FROM (
+                    SELECT * FROM (
+                        SELECT DISTINCT ON (p.prediction_group_id)
+                               p.prediction_group_id as group_id,
+                               (SELECT COUNT(*) FROM ai_predictions p2
+                                WHERE p2.prediction_group_id = p.prediction_group_id
+                                  AND p2.review_status = 'pending') as member_count,
+                               p.confidence as avg_confidence,
+                               p.confidence as group_min_confidence,
+                               p.scenario as group_scenario,
+                               'pending'::text as group_status,
+                               p.id, p.video_id, p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
+                               p.confidence, p.timestamp, p.predicted_tags, p.corrected_tags, p.inference_time_ms,
+                               p.scenario, p.model_name, p.model_version,
+                               v.title as video_title, v.thumbnail_path,
+                               v.width as video_width, v.height as video_height, v.camera_id
+                        FROM ai_predictions p
+                        JOIN videos v ON p.video_id = v.id
+                        WHERE {group_where}
+                        ORDER BY p.prediction_group_id, p.confidence ASC
+                    ) grouped_items
 
-                UNION ALL
+                    UNION ALL
 
-                SELECT NULL as group_id, 1 as member_count, p.confidence as avg_confidence,
-                       p.confidence as group_min_confidence, p.scenario as group_scenario,
-                       p.review_status as group_status,
-                       p.id, p.video_id, p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
-                       p.confidence, p.timestamp, p.predicted_tags, p.inference_time_ms,
-                       p.scenario, p.model_name, p.model_version,
-                       v.title as video_title, v.thumbnail_path,
-                       v.width as video_width, v.height as video_height, v.camera_id
-                FROM ai_predictions p
-                JOIN videos v ON p.video_id = v.id
-                WHERE {ungrouped_where}
-
-                ORDER BY avg_confidence ASC
+                    SELECT NULL::integer as group_id, 1 as member_count, p.confidence as avg_confidence,
+                           p.confidence as group_min_confidence, p.scenario as group_scenario,
+                           p.review_status as group_status,
+                           p.id, p.video_id, p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
+                           p.confidence, p.timestamp, p.predicted_tags, p.corrected_tags, p.inference_time_ms,
+                           p.scenario, p.model_name, p.model_version,
+                           v.title as video_title, v.thumbnail_path,
+                           v.width as video_width, v.height as video_height, v.camera_id
+                    FROM ai_predictions p
+                    JOIN videos v ON p.video_id = v.id
+                    WHERE {ungrouped_where}
+                ) combined
+                ORDER BY avg_confidence DESC
                 LIMIT %s OFFSET %s
             """
             params = group_params + ungrouped_params + [limit, offset]
@@ -869,16 +984,40 @@ class PredictionMixin:
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
 
-    def get_grouped_review_queue_summary(self, scenario=None):
+    def get_grouped_review_queue_summary(self, scenario=None, review_status='pending', min_confidence=None, max_confidence=None):
         """Get summary with groups counted as single items per video."""
         with get_cursor(commit=False) as cursor:
             scenario_filter_grouped = ""
             scenario_filter_ungrouped = ""
-            params = []
+            # Build confidence filter string
+            if min_confidence is not None:
+                confidence_filter = f" AND p.confidence >= {float(min_confidence)}"
+            elif max_confidence is None:
+                confidence_filter = " AND p.confidence >= 0.10"
+            else:
+                confidence_filter = ""
+            if max_confidence is not None:
+                confidence_filter += f" AND p.confidence <= {float(max_confidence)}"
+            # Build params per UNION part: [review_status, scenario_params...] for each
+            grouped_params = [review_status]
+            ungrouped_params = [review_status]
             if scenario:
-                scenario_filter_grouped = " AND p.scenario = %s"
-                scenario_filter_ungrouped = " AND p.scenario = %s"
-                params = [scenario, scenario]  # once for each UNION part
+                if scenario == '_other':
+                    scenario_filter_grouped = " AND p.scenario NOT IN ('vehicle_detection', 'person_detection', 'face_detection', 'person_identification', 'license_plate', 'boat_registration')"
+                    scenario_filter_ungrouped = scenario_filter_grouped
+                elif ',' in scenario:
+                    scenario_list = [s.strip() for s in scenario.split(',')]
+                    placeholders = ', '.join(['%s'] * len(scenario_list))
+                    scenario_filter_grouped = f" AND p.scenario IN ({placeholders})"
+                    scenario_filter_ungrouped = scenario_filter_grouped
+                    grouped_params.extend(scenario_list)
+                    ungrouped_params.extend(scenario_list)
+                else:
+                    scenario_filter_grouped = " AND p.scenario = %s"
+                    scenario_filter_ungrouped = " AND p.scenario = %s"
+                    grouped_params.append(scenario)
+                    ungrouped_params.append(scenario)
+            params = grouped_params + ungrouped_params
 
             cursor.execute("""
                 SELECT video_id, video_title, thumbnail_path,
@@ -887,28 +1026,33 @@ class PredictionMixin:
                        0 as reviewed_count,
                        SUM(item_count) as total_count,
                        ROUND(AVG(avg_conf)::numeric, 3) as avg_confidence,
-                       MIN(min_conf) as min_confidence
+                       MIN(min_conf) as min_confidence,
+                       MODE() WITHIN GROUP (ORDER BY dominant_class) as dominant_class
                 FROM (
-                    -- Grouped items (each group = 1 item)
+                    -- Grouped items: groups matching the requested status (each group = 1 item)
                     SELECT p.video_id, v.title as video_title, v.thumbnail_path,
-                           1 as item_count, pg.member_count as prediction_count,
-                           pg.avg_confidence as avg_conf, pg.min_confidence as min_conf
-                    FROM prediction_groups pg
-                    JOIN ai_predictions p ON p.id = pg.representative_prediction_id
+                           1 as item_count,
+                           COUNT(*) as prediction_count,
+                           AVG(p.confidence) as avg_conf,
+                           MIN(p.confidence) as min_conf,
+                           MODE() WITHIN GROUP (ORDER BY p.predicted_tags->>'class') as dominant_class
+                    FROM ai_predictions p
                     JOIN videos v ON p.video_id = v.id
-                    WHERE pg.review_status = 'pending'""" + scenario_filter_grouped + """
+                    WHERE p.review_status = %s
+                      AND p.prediction_group_id IS NOT NULL""" + confidence_filter + scenario_filter_grouped + """
+                    GROUP BY p.prediction_group_id, p.video_id, v.title, v.thumbnail_path
 
                     UNION ALL
 
                     -- Ungrouped items
                     SELECT p.video_id, v.title as video_title, v.thumbnail_path,
                            1 as item_count, 1 as prediction_count,
-                           p.confidence as avg_conf, p.confidence as min_conf
+                           p.confidence as avg_conf, p.confidence as min_conf,
+                           p.predicted_tags->>'class' as dominant_class
                     FROM ai_predictions p
                     JOIN videos v ON p.video_id = v.id
-                    WHERE p.review_status = 'pending'
-                      AND p.prediction_group_id IS NULL
-                      AND p.confidence >= 0.10""" + scenario_filter_ungrouped + """
+                    WHERE p.review_status = %s
+                      AND p.prediction_group_id IS NULL""" + confidence_filter + scenario_filter_ungrouped + """
                 ) combined
                 GROUP BY video_id, video_title, thumbnail_path
                 ORDER BY pending_count DESC
@@ -937,13 +1081,13 @@ class PredictionMixin:
             group_conditions = [
                 group_review_filter,
                 "p.scenario = 'vehicle_detection'",
-                "(p.corrected_tags IS NULL OR p.corrected_tags->>'vehicle_subtype' IS NULL)"
+                "(p.corrected_tags IS NULL OR (p.corrected_tags->>'vehicle_subtype' IS NULL AND p.corrected_tags->>'actual_class' IS NULL))"
             ]
             ungrouped_conditions = [
                 review_status,
                 "p.prediction_group_id IS NULL",
                 "p.scenario = 'vehicle_detection'",
-                "(p.corrected_tags IS NULL OR p.corrected_tags->>'vehicle_subtype' IS NULL)"
+                "(p.corrected_tags IS NULL OR (p.corrected_tags->>'vehicle_subtype' IS NULL AND p.corrected_tags->>'actual_class' IS NULL))"
             ]
 
             group_params = []
@@ -1005,11 +1149,11 @@ class PredictionMixin:
         results = {'approved': 0, 'rejected': 0, 'annotation_ids': []}
 
         with get_cursor() as cursor:
-            # Update all member predictions
+            # Update all member predictions (include approved so classify rule-outs work)
             cursor.execute("""
                 UPDATE ai_predictions
                 SET review_status = %s, reviewed_by = %s, reviewed_at = NOW(), review_notes = %s
-                WHERE prediction_group_id = %s AND review_status = 'pending'
+                WHERE prediction_group_id = %s AND review_status IN ('pending', 'approved', 'needs_reclassification')
                 RETURNING id
             """, (status, reviewer, notes, group_id))
             updated_rows = cursor.fetchall()
@@ -1301,3 +1445,61 @@ class PredictionMixin:
                     VALUES (%s, 'custom', 1)
                     ON CONFLICT (class_name) DO UPDATE SET usage_count = reclassification_classes.usage_count + 1
                 """, (class_name.lower().strip(),))
+
+    def get_vlm_stats(self):
+        """Get VLM review statistics: acceptance rate, breakdown by class."""
+        with get_cursor(commit=False) as cursor:
+            # Total VLM-reviewed predictions
+            cursor.execute("""
+                SELECT
+                    COUNT(*) FILTER (WHERE corrected_tags->>'vlm_model' IS NOT NULL) as vlm_reviewed,
+                    COUNT(*) FILTER (
+                        WHERE corrected_tags->>'vlm_model' IS NOT NULL
+                          AND review_status IN ('approved', 'rejected')
+                    ) as vlm_human_reviewed,
+                    COUNT(*) FILTER (
+                        WHERE corrected_tags->>'vlm_model' IS NOT NULL
+                          AND review_status = 'approved'
+                          AND corrected_tags->>'actual_class' IS NOT NULL
+                    ) as vlm_accepted,
+                    COUNT(*) FILTER (
+                        WHERE corrected_tags->>'vlm_model' IS NOT NULL
+                          AND review_status = 'rejected'
+                    ) as vlm_overridden_reject,
+                    COUNT(*) FILTER (
+                        WHERE corrected_tags->>'vlm_model' IS NOT NULL
+                          AND review_status = 'approved'
+                          AND (corrected_tags->>'actual_class' IS NULL
+                               OR corrected_tags->>'actual_class' != corrected_tags->>'vlm_suggested_class')
+                    ) as vlm_overridden_approve
+                FROM ai_predictions
+                WHERE scenario = 'vehicle_detection'
+            """)
+            row = cursor.fetchone()
+            stats = dict(row) if row else {}
+
+            vlm_reviewed = stats.get('vlm_reviewed', 0)
+            vlm_human_reviewed = stats.get('vlm_human_reviewed', 0)
+            vlm_accepted = stats.get('vlm_accepted', 0)
+
+            stats['acceptance_rate'] = round(vlm_accepted / vlm_human_reviewed * 100, 1) if vlm_human_reviewed > 0 else 0
+
+            # Breakdown by suggested class
+            cursor.execute("""
+                SELECT
+                    corrected_tags->>'vlm_suggested_class' as suggested_class,
+                    COUNT(*) as count,
+                    COUNT(*) FILTER (WHERE review_status = 'approved'
+                                      AND corrected_tags->>'actual_class' IS NOT NULL) as accepted,
+                    COUNT(*) FILTER (WHERE review_status IN ('approved', 'rejected')
+                                      AND (corrected_tags->>'actual_class' IS NULL
+                                           OR corrected_tags->>'actual_class' != corrected_tags->>'vlm_suggested_class')) as overridden
+                FROM ai_predictions
+                WHERE corrected_tags->>'vlm_model' IS NOT NULL
+                  AND corrected_tags->>'vlm_suggested_class' IS NOT NULL
+                GROUP BY suggested_class
+                ORDER BY count DESC
+            """)
+            stats['by_class'] = [dict(r) for r in cursor.fetchall()]
+
+            return stats
