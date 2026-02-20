@@ -368,6 +368,7 @@ var TrainingGallery = {
         grid.appendChild(loadingEl);
 
         document.getElementById('modal-cluster-title').textContent = classification || 'Cluster';
+        document.getElementById('modal-cluster-ref').textContent = clusterType + ':' + clusterId;
         document.getElementById('modal-cluster-count').textContent = '';
         document.getElementById('modal-action-bar').style.display = 'none';
         document.getElementById('modal-reclassify-group').style.display = 'none';

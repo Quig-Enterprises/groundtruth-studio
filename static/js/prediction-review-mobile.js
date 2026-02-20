@@ -43,6 +43,7 @@ var ReviewApp = {
     crossCameraMode: false,
     clusterMode: false,
     confidenceFilter: 'all',
+    cameraFilter: 'all',
     conflicts: [],
     currentConflictIndex: -1,
     selectedClassification: null,
@@ -113,6 +114,7 @@ var ReviewApp = {
     init: function() {
         this.cacheElements();
         this.bindEvents();
+        this.loadCameraFilter();
 
         // Always load badge counts independently on page load
         this.loadFilterBadges();
@@ -161,9 +163,47 @@ var ReviewApp = {
     },
 
     _confidenceParams: function() {
-        if (this.confidenceFilter === 'high') return 'min_confidence=0.60';
+        if (this.confidenceFilter === 'certain') return 'min_confidence=0.99';
+        if (this.confidenceFilter === 'very_high') return 'min_confidence=0.90';
+        if (this.confidenceFilter === 'high') return 'min_confidence=0.80';
+        if (this.confidenceFilter === 'moderate') return 'min_confidence=0.60';
         if (this.confidenceFilter === 'low') return 'max_confidence=0.60';
         return '';
+    },
+
+    _cameraParams: function() {
+        if (this.cameraFilter && this.cameraFilter !== 'all') return 'camera_id=' + encodeURIComponent(this.cameraFilter);
+        return '';
+    },
+
+    loadCameraFilter: function() {
+        var self = this;
+        fetch('/api/ai/predictions/cameras')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (!data.success || !data.cameras) return;
+                var sel = document.getElementById('camera-filter');
+                if (!sel) return;
+                // Group by location
+                var groups = {};
+                data.cameras.forEach(function(cam) {
+                    var loc = cam.location_name || 'Unknown';
+                    if (!groups[loc]) groups[loc] = [];
+                    groups[loc].push(cam);
+                });
+                Object.keys(groups).sort().forEach(function(loc) {
+                    var optgroup = document.createElement('optgroup');
+                    optgroup.label = loc;
+                    groups[loc].forEach(function(cam) {
+                        var opt = document.createElement('option');
+                        opt.value = cam.camera_id;
+                        opt.textContent = cam.camera_name + ' (' + cam.prediction_count + ')';
+                        optgroup.appendChild(opt);
+                    });
+                    sel.appendChild(optgroup);
+                });
+            })
+            .catch(function(err) { console.error('Failed to load cameras:', err); });
     },
 
     loadFilterBadges: function() {
@@ -171,6 +211,8 @@ var ReviewApp = {
         var fcUrl = '/api/ai/predictions/review-queue/filter-counts';
         var cp = self._confidenceParams();
         if (cp) fcUrl += '?' + cp;
+        var cam = self._cameraParams();
+        if (cam) fcUrl += (fcUrl.indexOf('?') >= 0 ? '&' : '?') + cam;
         fetch(fcUrl)
             .then(function(r) { return r.json(); })
             .then(function(fcData) {
@@ -533,6 +575,23 @@ var ReviewApp = {
             });
         }
 
+        // Camera dropdown handler
+        var camSelect = document.getElementById('camera-filter');
+        if (camSelect) {
+            camSelect.addEventListener('change', function() {
+                self.cameraFilter = camSelect.value;
+                if (self.classifyMode) {
+                    self.loadClassifyQueueSummary();
+                } else if (self.crossCameraMode) {
+                    self.loadCrossCameraQueueSummary();
+                } else if (self.clusterMode) {
+                    self.loadClusterQueueSummary();
+                } else {
+                    self.loadQueueSummary();
+                }
+            });
+        }
+
         // Touch/pointer events on card container
         if (this.els.cardContainer) {
             var container = this.els.cardContainer;
@@ -632,6 +691,8 @@ var ReviewApp = {
         }
         var cp = this._confidenceParams();
         if (cp) url += (url.indexOf('?') >= 0 ? '&' : '?') + cp;
+        var cam = this._cameraParams();
+        if (cam) url += (url.indexOf('?') >= 0 ? '&' : '?') + cam;
         fetch(url)
             .then(function(resp) { return resp.json(); })
             .then(function(data) {
@@ -1003,7 +1064,7 @@ var ReviewApp = {
         // Mixed "All" queue: fetch all types in parallel when no specific video
         if (this.activeFilter === 'all' && !videoId) {
             var promises = [
-                fetch('/api/ai/predictions/review-queue?limit=200' + (this.groupedMode ? '&grouped=1' : '') + (this._confidenceParams() ? '&' + this._confidenceParams() : ''))
+                fetch('/api/ai/predictions/review-queue?limit=200' + (this.groupedMode ? '&grouped=1' : '') + (this._confidenceParams() ? '&' + this._confidenceParams() : '') + (this._cameraParams() ? '&' + this._cameraParams() : ''))
                     .then(function(r) { return r.json(); })
                     .then(function(data) {
                         return (data.predictions || []).map(function(p) {
@@ -1183,6 +1244,8 @@ var ReviewApp = {
         }
         var cp = this._confidenceParams();
         if (cp) url += '&' + cp;
+        var cam = this._cameraParams();
+        if (cam) url += '&' + cam;
 
         fetch(url)
             .then(function(resp) { return resp.json(); })

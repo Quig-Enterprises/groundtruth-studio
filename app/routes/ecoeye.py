@@ -283,7 +283,7 @@ def sync_ecoeye_sample():
             # Store as a record without video
             record_id = db.add_video(
                 filename=f"ecoeye_metadata_{event_id}.placeholder",
-                title=f"[No Video] {event.get('camera_name', 'Unknown')} - {event.get('event_type', 'event')}",
+                title=f"{event.get('camera_name', 'Unknown')} - alert {event.get('event_type', 'event')}",
                 original_url=f"ecoeye://{event_id}",
                 thumbnail_path=thumbnail_path,
                 notes=notes + "\n[Metadata only - no video file]",

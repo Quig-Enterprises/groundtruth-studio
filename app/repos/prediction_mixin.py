@@ -333,7 +333,7 @@ class PredictionMixin:
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def get_review_queue_summary(self, scenario=None, review_status='pending', min_confidence=None, max_confidence=None):
+    def get_review_queue_summary(self, scenario=None, review_status='pending', min_confidence=None, max_confidence=None, camera_id=None):
         """Get summary of predictions grouped by video for review queue entry screen."""
         with get_cursor(commit=False) as cursor:
             conditions = ["p.review_status = %s"]
@@ -346,6 +346,9 @@ class PredictionMixin:
             if max_confidence is not None:
                 conditions.append("p.confidence <= %s")
                 params.append(max_confidence)
+            if camera_id:
+                conditions.append("v.camera_id = %s")
+                params.append(camera_id)
             if scenario:
                 if scenario == '_other':
                     conditions.append("p.scenario NOT IN ('vehicle_detection', 'person_detection', 'face_detection', 'person_identification', 'license_plate', 'boat_registration')")
@@ -376,34 +379,48 @@ class PredictionMixin:
             rows = cursor.fetchall()
             return [dict(row) for row in rows]
 
-    def get_review_filter_counts(self, min_confidence=None, max_confidence=None):
+    def get_review_filter_counts(self, min_confidence=None, max_confidence=None, camera_id=None):
         """Get counts for each review queue filter chip.
         Uses confidence >= 0.10 to match the review queue/summary filters.
         Optional min_confidence/max_confidence params filter prediction counts."""
         with get_cursor(commit=False) as cursor:
             # Build optional confidence filter for predictions
-            conf_filter = "AND confidence >= 0.10"
+            conf_filter = "AND p.confidence >= 0.10"
             params = []
             if min_confidence is not None:
-                conf_filter = "AND confidence >= %s"
+                conf_filter = "AND p.confidence >= %s"
                 params.append(min_confidence)
             if max_confidence is not None:
-                conf_filter += " AND confidence <= %s"
+                conf_filter += " AND p.confidence <= %s"
                 params.append(max_confidence)
             elif min_confidence is None:
                 # Default minimum
                 pass
 
+            # Build camera filter
+            camera_filter = ""
+            camera_params = []
+            if camera_id:
+                camera_filter = "AND v.camera_id = %s"
+                camera_params.append(camera_id)
+
+            # Use JOIN when camera filter is needed, otherwise plain table scan
+            from_clause = "FROM ai_predictions p JOIN videos v ON v.id = p.video_id"
+            # params repeated 5x (predictions, vehicles, people, plates, boat_reg) + camera_params per filter
+            # Each FILTER clause uses conf_filter params + camera_params
+            filter_params = params + camera_params
+            all_params = filter_params * 5 + camera_params  # needs_reclassification only uses camera_params
+
             cursor.execute('''
                 SELECT
-                    COUNT(*) FILTER (WHERE review_status = 'pending' ''' + conf_filter + ''') as predictions,
-                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario = 'vehicle_detection' ''' + conf_filter + ''') as vehicles,
-                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario IN ('person_detection', 'face_detection', 'person_identification') ''' + conf_filter + ''') as people,
-                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario = 'license_plate' ''' + conf_filter + ''') as plates,
-                    COUNT(*) FILTER (WHERE review_status = 'pending' AND scenario = 'boat_registration' ''' + conf_filter + ''') as boat_reg,
-                    COUNT(*) FILTER (WHERE review_status = 'needs_reclassification') as needs_reclassification
-                FROM ai_predictions
-            ''', params + params + params + params + params)
+                    COUNT(*) FILTER (WHERE p.review_status = 'pending' ''' + conf_filter + ' ' + camera_filter + ''') as predictions,
+                    COUNT(*) FILTER (WHERE p.review_status = 'pending' AND p.scenario = 'vehicle_detection' ''' + conf_filter + ' ' + camera_filter + ''') as vehicles,
+                    COUNT(*) FILTER (WHERE p.review_status = 'pending' AND p.scenario IN ('person_detection', 'face_detection', 'person_identification') ''' + conf_filter + ' ' + camera_filter + ''') as people,
+                    COUNT(*) FILTER (WHERE p.review_status = 'pending' AND p.scenario = 'license_plate' ''' + conf_filter + ' ' + camera_filter + ''') as plates,
+                    COUNT(*) FILTER (WHERE p.review_status = 'pending' AND p.scenario = 'boat_registration' ''' + conf_filter + ' ' + camera_filter + ''') as boat_reg,
+                    COUNT(*) FILTER (WHERE p.review_status = 'needs_reclassification' ''' + camera_filter + ''') as needs_reclassification
+                ''' + from_clause + '''
+            ''', all_params)
             row = cursor.fetchone()
             counts = dict(row) if row else {}
 
@@ -984,7 +1001,7 @@ class PredictionMixin:
             rows = cursor.fetchall()
             return [dict(r) for r in rows]
 
-    def get_grouped_review_queue_summary(self, scenario=None, review_status='pending', min_confidence=None, max_confidence=None):
+    def get_grouped_review_queue_summary(self, scenario=None, review_status='pending', min_confidence=None, max_confidence=None, camera_id=None):
         """Get summary with groups counted as single items per video."""
         with get_cursor(commit=False) as cursor:
             scenario_filter_grouped = ""
@@ -998,6 +1015,10 @@ class PredictionMixin:
                 confidence_filter = ""
             if max_confidence is not None:
                 confidence_filter += f" AND p.confidence <= {float(max_confidence)}"
+            # Build camera filter string
+            camera_filter = ""
+            if camera_id:
+                camera_filter = " AND v.camera_id = %s"
             # Build params per UNION part: [review_status, scenario_params...] for each
             grouped_params = [review_status]
             ungrouped_params = [review_status]
@@ -1017,6 +1038,9 @@ class PredictionMixin:
                     scenario_filter_ungrouped = " AND p.scenario = %s"
                     grouped_params.append(scenario)
                     ungrouped_params.append(scenario)
+            if camera_id:
+                grouped_params.append(camera_id)
+                ungrouped_params.append(camera_id)
             params = grouped_params + ungrouped_params
 
             cursor.execute("""
@@ -1039,7 +1063,7 @@ class PredictionMixin:
                     FROM ai_predictions p
                     JOIN videos v ON p.video_id = v.id
                     WHERE p.review_status = %s
-                      AND p.prediction_group_id IS NOT NULL""" + confidence_filter + scenario_filter_grouped + """
+                      AND p.prediction_group_id IS NOT NULL""" + confidence_filter + scenario_filter_grouped + camera_filter + """
                     GROUP BY p.prediction_group_id, p.video_id, v.title, v.thumbnail_path
 
                     UNION ALL
@@ -1052,7 +1076,7 @@ class PredictionMixin:
                     FROM ai_predictions p
                     JOIN videos v ON p.video_id = v.id
                     WHERE p.review_status = %s
-                      AND p.prediction_group_id IS NULL""" + confidence_filter + scenario_filter_ungrouped + """
+                      AND p.prediction_group_id IS NULL""" + confidence_filter + scenario_filter_ungrouped + camera_filter + """
                 ) combined
                 GROUP BY video_id, video_title, thumbnail_path
                 ORDER BY pending_count DESC

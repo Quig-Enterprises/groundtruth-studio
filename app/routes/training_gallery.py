@@ -106,13 +106,6 @@ def get_gallery_items():
         if filter_clauses:
             filter_sql = ' AND ' + ' AND '.join(filter_clauses)
 
-        # Subquery filter for cluster_count subqueries
-        cluster_count_filter = ''
-        cluster_count_params = []
-        if classification:
-            cluster_count_filter += ' AND p2.classification = %s'
-            cluster_count_params.append(classification)
-
         # Sort order
         if sort == 'date':
             order_by = 'created_at DESC'
@@ -142,7 +135,7 @@ def get_gallery_items():
                          FROM ai_predictions p2
                          WHERE p2.camera_object_track_id = p.camera_object_track_id
                            AND p2.review_status IN ('approved', 'auto_approved')
-                           {cluster_count_filter}) AS cluster_count,
+                           ) AS cluster_count,
                         p.id,
                         p.classification,
                         p.confidence,
@@ -177,7 +170,7 @@ def get_gallery_items():
                          FROM ai_predictions p2
                          WHERE p2.prediction_group_id = p.prediction_group_id
                            AND p2.review_status IN ('approved', 'auto_approved')
-                           {cluster_count_filter}) AS cluster_count,
+                           ) AS cluster_count,
                         p.id,
                         p.classification,
                         p.confidence,
@@ -239,8 +232,8 @@ def get_gallery_items():
         #   group branch:      cluster_count_params + filter_params
         #   standalone branch: filter_params
         all_params = (
-            cluster_count_params + filter_params +
-            cluster_count_params + filter_params +
+            filter_params +
+            filter_params +
             filter_params
         )
 
@@ -427,7 +420,8 @@ def get_prediction_crop(prediction_id):
         crop_path = CROPS_DIR / f'gallery_{prediction_id}.jpg'
 
         if not crop_path.exists():
-            thumb_path = THUMBNAIL_DIR / row['thumbnail_path']
+            tp = row['thumbnail_path']
+            thumb_path = Path(tp) if tp.startswith('/') else THUMBNAIL_DIR / tp
             if not thumb_path.exists():
                 return jsonify({'error': 'Thumbnail not found'}), 404
 

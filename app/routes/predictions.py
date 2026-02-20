@@ -608,6 +608,29 @@ def get_review_queue():
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@predictions_bp.route('/api/ai/predictions/cameras', methods=['GET'])
+def get_camera_list():
+    """Get cameras grouped by location for filter dropdown."""
+    try:
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT cl.camera_id, cl.camera_name, cl.location_name,
+                       COUNT(DISTINCT p.id) as prediction_count
+                FROM camera_locations cl
+                JOIN videos v ON v.camera_id = cl.camera_id
+                JOIN ai_predictions p ON p.video_id = v.id
+                WHERE p.review_status IN ('pending', 'processing')
+                GROUP BY cl.camera_id, cl.camera_name, cl.location_name
+                HAVING COUNT(DISTINCT p.id) > 0
+                ORDER BY cl.location_name, cl.camera_name
+            ''')
+            rows = cursor.fetchall()
+        cameras = [dict(r) for r in rows]
+        return jsonify({'success': True, 'cameras': cameras})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @predictions_bp.route('/api/ai/predictions/review-queue/summary', methods=['GET'])
 def get_review_queue_summary():
     """Get summary of pending predictions by video for queue entry screen"""
@@ -617,10 +640,11 @@ def get_review_queue_summary():
         review_status = request.args.get('status', 'pending')
         min_confidence = request.args.get('min_confidence', type=float)
         max_confidence = request.args.get('max_confidence', type=float)
+        camera_id = request.args.get('camera_id')
         if grouped:
-            summary = db.get_grouped_review_queue_summary(scenario=scenario, review_status=review_status, min_confidence=min_confidence, max_confidence=max_confidence)
+            summary = db.get_grouped_review_queue_summary(scenario=scenario, review_status=review_status, min_confidence=min_confidence, max_confidence=max_confidence, camera_id=camera_id)
         else:
-            summary = db.get_review_queue_summary(scenario=scenario, review_status=review_status, min_confidence=min_confidence, max_confidence=max_confidence)
+            summary = db.get_review_queue_summary(scenario=scenario, review_status=review_status, min_confidence=min_confidence, max_confidence=max_confidence, camera_id=camera_id)
         for s in summary:
             for key in ['avg_confidence', 'min_confidence']:
                 if key in s and s[key] is not None:
@@ -649,9 +673,11 @@ def get_review_filter_counts():
     try:
         min_confidence = request.args.get('min_confidence', type=float)
         max_confidence = request.args.get('max_confidence', type=float)
+        camera_id = request.args.get('camera_id')
         counts = db.get_review_filter_counts(
             min_confidence=min_confidence,
-            max_confidence=max_confidence
+            max_confidence=max_confidence,
+            camera_id=camera_id
         )
         # Classify count (includes needs_reclassification)
         classify_summary = db.get_classification_queue_summary()
