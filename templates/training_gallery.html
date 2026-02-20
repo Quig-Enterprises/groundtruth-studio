@@ -1,0 +1,108 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groundtruth Studio - Training Gallery</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="{{ static_v('css/training-gallery.css') }}">
+</head>
+<body>
+    {% include 'partials/nav.html' %}
+
+    <!-- Page Header -->
+    <div class="gallery-header">
+        <h1>Training Gallery</h1>
+        <p class="subtitle">Browse and manage approved training images</p>
+    </div>
+
+    <!-- Filter Bar (sticky) -->
+    <div class="filter-bar" id="filter-bar">
+        <div class="filter-group">
+            <select id="scenario-filter" class="filter-select">
+                <option value="">All Scenarios</option>
+            </select>
+            <select id="classification-filter" class="filter-select">
+                <option value="">All Classes</option>
+            </select>
+            <select id="sort-select" class="filter-select">
+                <option value="confidence">Highest Confidence</option>
+                <option value="date">Newest First</option>
+            </select>
+        </div>
+        <div class="filter-stats" id="filter-stats"></div>
+    </div>
+
+    <!-- Selection Action Bar (fixed bottom, hidden until items selected) -->
+    <div class="action-bar" id="action-bar" style="display:none">
+        <div class="action-bar-left">
+            <span id="selection-count">0 selected</span>
+            <button class="btn btn-ghost" id="btn-select-all">Select All</button>
+            <button class="btn btn-ghost" id="btn-deselect-all">Deselect All</button>
+        </div>
+        <div class="action-bar-right">
+            <div class="reclassify-group" id="reclassify-group" style="display:none">
+                <select id="reclassify-select" class="filter-select">
+                    <option value="">Choose class...</option>
+                </select>
+                <button class="btn btn-primary" id="btn-apply-reclassify">Apply</button>
+                <button class="btn btn-ghost" id="btn-cancel-reclassify">Cancel</button>
+            </div>
+            <button class="btn btn-accent" id="btn-reclassify">Reclassify</button>
+            <button class="btn btn-warning" id="btn-requeue">Requeue for Review</button>
+            <button class="btn btn-danger" id="btn-remove">Remove</button>
+        </div>
+    </div>
+
+    <!-- Main Gallery Grid -->
+    <div class="gallery-grid" id="gallery-grid">
+        <div class="loading-state" id="initial-loading">Loading training images...</div>
+    </div>
+
+    <!-- Scroll sentinel for infinite scroll -->
+    <div id="scroll-sentinel" style="height:1px"></div>
+
+    <!-- Cluster Modal -->
+    <div class="modal-overlay" id="cluster-modal" style="display:none">
+        <div class="modal-content">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <h2 id="modal-cluster-title">Cluster</h2>
+                    <span class="modal-count" id="modal-cluster-count"></span>
+                </div>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-action-bar" id="modal-action-bar" style="display:none">
+                    <span id="modal-selection-count">0 selected</span>
+                    <button class="btn btn-ghost btn-sm" id="modal-select-all">Select All</button>
+                    <div class="modal-reclassify-group" id="modal-reclassify-group" style="display:none">
+                        <select id="modal-reclassify-select" class="filter-select">
+                            <option value="">Choose class...</option>
+                        </select>
+                        <button class="btn btn-primary btn-sm" id="modal-apply-reclassify">Apply</button>
+                        <button class="btn btn-ghost btn-sm" id="modal-cancel-reclassify">Cancel</button>
+                    </div>
+                    <button class="btn btn-accent btn-sm" id="modal-btn-reclassify">Reclassify</button>
+                    <button class="btn btn-warning btn-sm" id="modal-btn-requeue">Requeue</button>
+                    <button class="btn btn-danger btn-sm" id="modal-btn-remove">Remove</button>
+                </div>
+                <div class="modal-grid" id="modal-grid"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Dialog -->
+    <div class="confirm-overlay" id="confirm-dialog" style="display:none">
+        <div class="confirm-box">
+            <p id="confirm-message"></p>
+            <div class="confirm-actions">
+                <button class="btn btn-ghost" id="confirm-cancel">Cancel</button>
+                <button class="btn btn-danger" id="confirm-ok">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ static_v('js/training-gallery.js') }}"></script>
+</body>
+</html>

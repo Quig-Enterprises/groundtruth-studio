@@ -13,10 +13,12 @@ from routes.frigate import frigate_bp
 from routes.locations import locations_bp
 from routes.vibration import vibration_bp
 from routes.camera_map import camera_map_bp
+from routes.clip_analysis import clip_analysis_bp
+from routes.training_gallery import training_gallery_bp
 
 __all__ = [
     'videos_bp', 'annotations_bp', 'ecoeye_bp', 'unifi_bp',
     'training_bp', 'yolo_export_bp', 'predictions_bp', 'tracks_bp',
     'models_bp', 'persons_bp', 'frigate_bp', 'locations_bp', 'vibration_bp',
-    'camera_map_bp',
+    'camera_map_bp', 'clip_analysis_bp', 'training_gallery_bp',
 ]

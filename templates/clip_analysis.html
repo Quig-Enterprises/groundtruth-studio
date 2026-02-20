@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groundtruth Studio - Clip Analysis</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="{{ static_v('css/clip-analysis.css') }}">
+</head>
+<body>
+    {% include 'partials/nav.html' %}
+
+    <!-- Screen 1: Source Selection -->
+    <div id="source-screen" class="screen active">
+        <div class="screen-header">
+            <h1>Clip Analysis</h1>
+            <p class="subtitle">Analyze tracked objects for consensus classification</p>
+        </div>
+
+        <div class="source-tabs">
+            <button class="tab-btn active" data-tab="frigate">Frigate Events</button>
+            <button class="tab-btn" data-tab="ecoeye">EcoEye Alerts</button>
+            <button class="tab-btn" data-tab="upload">Upload</button>
+        </div>
+
+        <div class="tab-content active" id="tab-frigate">
+            <div class="filter-row">
+                <select id="frigate-camera-filter" class="input-field">
+                    <option value="">All Cameras</option>
+                </select>
+                <button class="btn btn-secondary" id="btn-refresh-sources">Refresh</button>
+            </div>
+            <div class="source-list" id="frigate-events-list">
+                <div class="empty-state">Loading events...</div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tab-ecoeye">
+            <div class="filter-row">
+                <select id="ecoeye-camera-filter" class="input-field">
+                    <option value="">All Cameras</option>
+                </select>
+            </div>
+            <div class="source-list" id="ecoeye-alerts-list">
+                <div class="empty-state">Loading alerts...</div>
+            </div>
+        </div>
+
+        <div class="tab-content" id="tab-upload">
+            <div class="upload-zone" id="upload-zone">
+                <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                    <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+                    <polyline points="17 8 12 3 7 8"/>
+                    <line x1="12" y1="3" x2="12" y2="15"/>
+                </svg>
+                <p>Drag & drop MP4 file here, or click to browse</p>
+                <input type="file" id="file-input" accept=".mp4,.avi,.mov,.mkv,.webm" hidden>
+            </div>
+            <div class="upload-meta">
+                <label>Camera ID</label>
+                <input type="text" id="upload-camera-id" class="input-field" placeholder="e.g. mwcam8">
+            </div>
+        </div>
+
+        <div class="remote-toggle" id="remote-toggle-wrap" style="display: flex; align-items: center; gap: 8px; margin: 12px 0 4px; padding: 0 4px;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 0.85rem; color: var(--text-secondary, #aaa);">
+                <input type="checkbox" id="chk-remote-worker" style="accent-color: var(--accent, #4fc3f7);">
+                Queue for remote worker
+            </label>
+        </div>
+        <button class="btn btn-primary btn-analyze" id="btn-analyze" disabled>
+            Analyze Clip
+        </button>
+
+        <!-- Previous analyses -->
+        <div class="previous-analyses">
+            <h2>Previous Analyses</h2>
+            <div id="previous-list" class="analysis-list"></div>
+        </div>
+    </div>
+
+    <!-- Screen 2: Analysis Review -->
+    <div id="review-screen" class="screen">
+        <div class="review-layout">
+            <!-- Video + Overlay -->
+            <div class="video-section">
+                <div class="video-header">
+                    <button class="btn btn-icon" id="btn-back-to-sources">
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+                    </button>
+                    <h2 id="review-title">Analysis Review</h2>
+                    <span class="badge" id="review-status-badge">pending</span>
+                    <button class="btn btn-sm btn-secondary" id="btn-reanalyze" title="Delete results and re-run analysis">Re-analyze</button>
+                </div>
+                <div class="video-container">
+                    <video id="analysis-video" controls></video>
+                    <canvas id="overlay-canvas"></canvas>
+                </div>
+                <div class="video-controls">
+                    <button class="btn btn-sm" id="btn-prev-frame">&#9664;&#9664;</button>
+                    <button class="btn btn-sm" id="btn-play-pause">&#9654;</button>
+                    <button class="btn btn-sm" id="btn-next-frame">&#9654;&#9654;</button>
+                    <span id="time-display">0:00 / 0:00</span>
+                </div>
+            </div>
+
+            <!-- Track Sidebar -->
+            <div class="track-sidebar">
+                <div class="sidebar-header">
+                    <h3>Tracked Objects</h3>
+                    <button class="btn btn-sm btn-secondary" id="btn-select-all-tracks">Select All</button>
+                </div>
+                <div class="track-list" id="track-list"></div>
+                <div class="sidebar-actions">
+                    <button class="btn btn-primary" id="btn-export-selected" disabled>
+                        Export Selected for Training
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <!-- Timeline -->
+        <div class="timeline-section">
+            <h3>Classification Timeline</h3>
+            <canvas id="timeline-canvas"></canvas>
+        </div>
+
+        <!-- Distribution Chart -->
+        <div class="distribution-section" id="distribution-section">
+            <h3>Class Distribution</h3>
+            <div class="distribution-bars" id="distribution-bars"></div>
+        </div>
+    </div>
+
+    <!-- Screen 3: Export Confirmation -->
+    <div id="export-screen" class="screen">
+        <div class="screen-header">
+            <button class="btn btn-icon" id="btn-back-to-review">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M15 18l-6-6 6-6"/></svg>
+            </button>
+            <h1>Export Training Frames</h1>
+        </div>
+
+        <div class="export-params">
+            <div class="param-group">
+                <label>Top N Frames <span id="topn-value">10</span></label>
+                <input type="range" id="slider-topn" min="5" max="30" value="10">
+            </div>
+            <div class="param-group">
+                <label>Min Quality <span id="quality-value">0.50</span></label>
+                <input type="range" id="slider-quality" min="30" max="80" value="50">
+            </div>
+        </div>
+
+        <div class="export-preview" id="export-preview">
+            <div class="empty-state">Adjust parameters to preview frames</div>
+        </div>
+
+        <div class="export-actions">
+            <button class="btn btn-primary btn-lg" id="btn-confirm-export">
+                Export as Pending Predictions
+            </button>
+            <p class="export-note">Exported predictions will appear in <a href="/prediction-review">AI Review</a> for human verification.</p>
+        </div>
+
+        <!-- Export success -->
+        <div class="export-success hidden" id="export-success">
+            <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="#4caf50" stroke-width="2">
+                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/>
+                <polyline points="22 4 12 14.01 9 11.01"/>
+            </svg>
+            <h2>Export Complete!</h2>
+            <p id="export-result-text"></p>
+            <a href="/prediction-review" class="btn btn-secondary">Go to AI Review</a>
+        </div>
+    </div>
+
+    <!-- Issue Report Sheet -->
+    <div id="issue-backdrop" class="sheet-backdrop hidden"></div>
+    <div id="issue-sheet" class="bottom-sheet">
+        <div class="sheet-grabber"></div>
+        <div class="sheet-heading">Correct Bbox — drag to reposition</div>
+        <div class="issue-reasons">
+            <button class="reason-chip" data-reason="bbox_misaligned">BBox misaligned</button>
+            <button class="reason-chip" data-reason="bbox_too_large">BBox too large</button>
+            <button class="reason-chip" data-reason="bbox_too_small">BBox too small</button>
+            <button class="reason-chip" data-reason="wrong_class">Wrong classification</button>
+            <button class="reason-chip" data-reason="track_split">Track should be merged</button>
+            <button class="reason-chip" data-reason="false_positive">Not a real object</button>
+            <button class="reason-chip" data-reason="other">Other</button>
+        </div>
+        <input type="text" id="issue-other-input" class="input-field" placeholder="Describe the issue..." style="display:none; margin-bottom: 12px;">
+        <div class="correction-actions">
+            <button class="btn btn-primary" id="btn-submit-issue" disabled>Save Correction</button>
+            <button class="btn btn-secondary" id="btn-cancel-correction">Cancel</button>
+        </div>
+    </div>
+
+    <!-- Loading Overlay -->
+    <div class="loading-overlay hidden" id="loading-overlay">
+        <div class="spinner"></div>
+        <p id="loading-text">Analyzing clip...</p>
+    </div>
+
+    <script src="{{ static_v('js/clip-analysis.js') }}"></script>
+</body>
+</html>

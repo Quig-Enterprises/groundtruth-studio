@@ -687,8 +687,8 @@ CREATE INDEX IF NOT EXISTS idx_visits_arrival ON visits(arrival_time);
 -- Cross-camera entity links (matches same real-world entity across different cameras)
 CREATE TABLE IF NOT EXISTS cross_camera_links (
     id BIGSERIAL PRIMARY KEY,
-    track_a_id BIGINT NOT NULL REFERENCES camera_object_tracks(id) ON DELETE CASCADE,
-    track_b_id BIGINT NOT NULL REFERENCES camera_object_tracks(id) ON DELETE CASCADE,
+    track_a_id BIGINT NOT NULL,
+    track_b_id BIGINT NOT NULL,
     entity_type VARCHAR(20) NOT NULL CHECK (entity_type IN ('vehicle', 'person', 'boat')),
     match_confidence REAL NOT NULL,
     match_method VARCHAR(50) NOT NULL,
@@ -726,6 +726,37 @@ CREATE TABLE IF NOT EXISTS camera_crossing_lines (
 );
 CREATE INDEX IF NOT EXISTS idx_crossing_lines_camera ON camera_crossing_lines(camera_id);
 CREATE INDEX IF NOT EXISTS idx_crossing_lines_paired ON camera_crossing_lines(paired_line_id);
+
+-- Video tracks table (ByteTrack MOT results from video clips)
+CREATE TABLE IF NOT EXISTS video_tracks (
+    id BIGSERIAL PRIMARY KEY,
+    video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    camera_id TEXT NOT NULL,
+    tracker_track_id INTEGER NOT NULL,
+    class_name TEXT,
+    first_seen REAL NOT NULL,
+    last_seen REAL NOT NULL,
+    first_seen_epoch REAL,
+    last_seen_epoch REAL,
+    trajectory JSONB NOT NULL,
+    best_crop_path TEXT,
+    avg_confidence REAL,
+    bbox_centroid_x INTEGER,
+    bbox_centroid_y INTEGER,
+    avg_bbox_width INTEGER,
+    avg_bbox_height INTEGER,
+    reid_embedding REAL[],
+    reid_embedding_id UUID,
+    cross_camera_identity_id BIGINT,
+    status VARCHAR(20) DEFAULT 'active',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(video_id, tracker_track_id)
+);
+CREATE INDEX IF NOT EXISTS idx_video_tracks_camera ON video_tracks(camera_id);
+CREATE INDEX IF NOT EXISTS idx_video_tracks_camera_epoch ON video_tracks(camera_id, first_seen_epoch);
+CREATE INDEX IF NOT EXISTS idx_video_tracks_xcam_identity ON video_tracks(cross_camera_identity_id);
+CREATE INDEX IF NOT EXISTS idx_video_tracks_status ON video_tracks(status);
+CREATE INDEX IF NOT EXISTS idx_video_tracks_video ON video_tracks(video_id);
 """
 
 
@@ -782,7 +813,8 @@ def verify_schema():
         'content_libraries', 'content_library_items', 'interpolation_tracks',
         'identities', 'embeddings', 'associations', 'tracks', 'sightings',
         'camera_topology_learned', 'violations', 'visits', 'prediction_groups',
-        'camera_object_tracks', 'cross_camera_links', 'camera_crossing_lines'
+        'camera_object_tracks', 'cross_camera_links', 'camera_crossing_lines',
+        'video_tracks', 'clip_analysis_results'
     ]
 
     with get_cursor(commit=False) as cursor:
@@ -1162,17 +1194,17 @@ def run_migrations():
             # Migration: Add 'auto_confirmed' to cross_camera_links status CHECK
             try:
                 cursor.execute("""
-                    SELECT conname FROM pg_constraint
+                    SELECT conname, pg_get_constraintdef(oid) as condef
+                    FROM pg_constraint
                     WHERE conrelid = 'cross_camera_links'::regclass
                       AND contype = 'c'
-                      AND consrc LIKE '%%status%%'
+                      AND pg_get_constraintdef(oid) LIKE '%%status%%'
                 """)
                 xcam_constraint = cursor.fetchone()
                 if xcam_constraint:
                     cname = xcam_constraint['conname']
-                    cursor.execute("SELECT consrc FROM pg_constraint WHERE conname = %s", (cname,))
-                    src_row = cursor.fetchone()
-                    if src_row and 'auto_confirmed' not in (src_row.get('consrc') or ''):
+                    condef = xcam_constraint.get('condef') or ''
+                    if 'auto_confirmed' not in condef:
                         cursor.execute(f"ALTER TABLE cross_camera_links DROP CONSTRAINT {cname}")
                         cursor.execute("""
                             ALTER TABLE cross_camera_links ADD CONSTRAINT cross_camera_links_status_check
@@ -1190,20 +1222,17 @@ def run_migrations():
             # Allows predictions to be held back from review until automated processing completes
             try:
                 cursor.execute("""
-                    SELECT conname FROM pg_constraint
+                    SELECT conname, pg_get_constraintdef(oid) as condef
+                    FROM pg_constraint
                     WHERE conrelid = 'ai_predictions'::regclass
                       AND contype = 'c'
-                      AND consrc LIKE '%%review_status%%'
+                      AND pg_get_constraintdef(oid) LIKE '%%review_status%%'
                 """)
                 existing = cursor.fetchone()
                 if existing:
                     constraint_name = existing['conname']
-                    # Check if 'processing' is already in the constraint
-                    cursor.execute("""
-                        SELECT consrc FROM pg_constraint WHERE conname = %s
-                    """, (constraint_name,))
-                    consrc_row = cursor.fetchone()
-                    if consrc_row and 'processing' not in (consrc_row.get('consrc') or ''):
+                    condef = existing.get('condef') or ''
+                    if 'processing' not in condef:
                         cursor.execute(f"ALTER TABLE ai_predictions DROP CONSTRAINT {constraint_name}")
                         cursor.execute("""
                             ALTER TABLE ai_predictions ADD CONSTRAINT ai_predictions_review_status_check
@@ -1226,6 +1255,120 @@ def run_migrations():
                 """)
                 cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_parent ON ai_predictions(parent_prediction_id)")
                 logger.info("Added parent_prediction_id to ai_predictions")
+
+            # Migration: Create classification_classes lookup table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS classification_classes (
+                    name VARCHAR(100) PRIMARY KEY,
+                    scenario VARCHAR(100) NOT NULL,
+                    display_name VARCHAR(200),
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_classification_classes_scenario ON classification_classes(scenario)")
+            logger.info("classification_classes table ready")
+
+            # Migration: Add classification column to ai_predictions (lookup table for training class of record)
+            cursor.execute("""
+                SELECT column_name FROM information_schema.columns
+                WHERE table_name = 'ai_predictions' AND column_name = 'classification'
+            """)
+            if not cursor.fetchone():
+                cursor.execute("""
+                    ALTER TABLE ai_predictions ADD COLUMN classification VARCHAR(100)
+                    REFERENCES classification_classes(name) ON UPDATE CASCADE
+                """)
+                cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_classification ON ai_predictions(classification)")
+                logger.info("Added classification column to ai_predictions")
+
+            # Backfill classification_classes and ai_predictions.classification (one-time)
+            cursor.execute("SELECT COUNT(*) as cnt FROM classification_classes")
+            if cursor.fetchone()['cnt'] == 0:
+                # Seed from existing approved predictions
+                cursor.execute("""
+                    INSERT INTO classification_classes (name, scenario, display_name)
+                    SELECT DISTINCT
+                        LOWER(TRIM(class_val)) as name,
+                        COALESCE(p.scenario, 'unknown') as scenario,
+                        INITCAP(REPLACE(TRIM(class_val), '_', ' ')) as display_name
+                    FROM ai_predictions p,
+                    LATERAL (
+                        SELECT COALESCE(
+                            p.corrected_tags->>'vehicle_subtype',
+                            p.corrected_tags->>'actual_class',
+                            p.predicted_tags->>'activity_tag',
+                            p.predicted_tags->>'class'
+                        ) as class_val
+                    ) cv
+                    WHERE class_val IS NOT NULL
+                      AND TRIM(class_val) != ''
+                    ON CONFLICT (name) DO NOTHING
+                """)
+                seeded = cursor.rowcount
+                logger.info(f"Seeded {seeded} classification classes from existing predictions")
+
+                # Backfill classification column
+                cursor.execute("""
+                    UPDATE ai_predictions SET classification = LOWER(TRIM(COALESCE(
+                        corrected_tags->>'vehicle_subtype',
+                        corrected_tags->>'actual_class',
+                        predicted_tags->>'activity_tag',
+                        predicted_tags->>'class'
+                    )))
+                    WHERE classification IS NULL
+                      AND COALESCE(
+                          corrected_tags->>'vehicle_subtype',
+                          corrected_tags->>'actual_class',
+                          predicted_tags->>'activity_tag',
+                          predicted_tags->>'class'
+                      ) IS NOT NULL
+                """)
+                backfilled = cursor.rowcount
+                logger.info(f"Backfilled classification for {backfilled} predictions")
+
+            # Migration: Create video_tracks table (ByteTrack MOT results)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS video_tracks (
+                    id BIGSERIAL PRIMARY KEY,
+                    video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                    camera_id TEXT NOT NULL,
+                    tracker_track_id INTEGER NOT NULL,
+                    class_name TEXT,
+                    first_seen DOUBLE PRECISION NOT NULL,
+                    last_seen DOUBLE PRECISION NOT NULL,
+                    first_seen_epoch DOUBLE PRECISION,
+                    last_seen_epoch DOUBLE PRECISION,
+                    trajectory JSONB NOT NULL,
+                    best_crop_path TEXT,
+                    avg_confidence REAL,
+                    bbox_centroid_x INTEGER,
+                    bbox_centroid_y INTEGER,
+                    avg_bbox_width INTEGER,
+                    avg_bbox_height INTEGER,
+                    reid_embedding REAL[],
+                    reid_embedding_id UUID,
+                    cross_camera_identity_id BIGINT,
+                    status VARCHAR(20) DEFAULT 'active',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    UNIQUE(video_id, tracker_track_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_video_tracks_camera ON video_tracks(camera_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_video_tracks_camera_epoch ON video_tracks(camera_id, first_seen_epoch)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_video_tracks_xcam_identity ON video_tracks(cross_camera_identity_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_video_tracks_status ON video_tracks(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_video_tracks_video ON video_tracks(video_id)")
+            logger.info("Video tracks table ready")
+
+            # Migration: Add source_track_type to cross_camera_links
+            cursor.execute("ALTER TABLE cross_camera_links ADD COLUMN IF NOT EXISTS source_track_type VARCHAR(20) DEFAULT 'camera_object'")
+            logger.info("cross_camera_links source_track_type column ready")
+
+            # Migration: Drop FK constraints on track_a_id/track_b_id (polymorphic: camera_object_tracks OR video_tracks)
+            for fk_name in ('cross_camera_links_track_a_id_fkey', 'cross_camera_links_track_b_id_fkey'):
+                cursor.execute(f"ALTER TABLE cross_camera_links DROP CONSTRAINT IF EXISTS {fk_name}")
+            logger.info("cross_camera_links FK constraints dropped (polymorphic track IDs)")
 
             # Migration: Add camera map placement fields to camera_locations
             map_columns = [
@@ -1256,6 +1399,38 @@ def run_migrations():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_camera_aliases_alias ON camera_aliases(alias_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_camera_aliases_primary ON camera_aliases(primary_camera_id)")
             logger.info("Camera aliases table ready")
+
+            # Migration: Create clip_analysis_results table (single-camera clip consensus analysis)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS clip_analysis_results (
+                    id BIGSERIAL PRIMARY KEY,
+                    video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                    video_track_id BIGINT REFERENCES video_tracks(id) ON DELETE SET NULL,
+                    camera_id TEXT NOT NULL,
+                    consensus_class TEXT NOT NULL,
+                    consensus_confidence REAL NOT NULL,
+                    consensus_method VARCHAR(30) DEFAULT 'weighted_vote',
+                    frame_classifications JSONB NOT NULL DEFAULT '[]',
+                    class_distribution JSONB NOT NULL DEFAULT '{}',
+                    frame_quality_scores JSONB NOT NULL DEFAULT '[]',
+                    training_frames_exported INTEGER DEFAULT 0,
+                    training_batch_id VARCHAR(255),
+                    total_frames INTEGER NOT NULL DEFAULT 0,
+                    duration_seconds REAL,
+                    direction_of_travel TEXT,
+                    status VARCHAR(20) DEFAULT 'pending',
+                    review_status VARCHAR(20) DEFAULT 'pending',
+                    reviewed_by VARCHAR(100),
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    UNIQUE(video_id, video_track_id)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_clip_analysis_video ON clip_analysis_results(video_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_clip_analysis_camera ON clip_analysis_results(camera_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_clip_analysis_status ON clip_analysis_results(status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_clip_analysis_review ON clip_analysis_results(review_status)")
+            logger.info("Clip analysis results table ready")
 
         logger.info("Migrations completed successfully")
     except Exception as e:
