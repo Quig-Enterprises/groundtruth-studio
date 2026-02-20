@@ -64,74 +64,16 @@ var TrainingGallery = {
     },
 
     populateReclassifyDropdowns() {
-        ['reclassify-select', 'modal-reclassify-select'].forEach(selId => {
-            const sel = document.getElementById(selId);
-            if (!sel) return;
-            while (sel.options.length > 1) sel.remove(1);
-            // Group classes by scenario
-            const groups = {};
+        ['reclassify-list', 'modal-reclassify-list'].forEach(id => {
+            const dl = document.getElementById(id);
+            if (!dl) return;
+            dl.innerHTML = '';
             this.allClasses.forEach(c => {
-                const sc = c.scenario || 'other';
-                if (!groups[sc]) groups[sc] = [];
-                groups[sc].push(c);
+                const opt = document.createElement('option');
+                opt.value = c.name;
+                dl.appendChild(opt);
             });
-            Object.keys(groups).sort().forEach(sc => {
-                const og = document.createElement('optgroup');
-                og.label = sc.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
-                groups[sc].forEach(c => {
-                    const opt = document.createElement('option');
-                    opt.value = c.name;
-                    opt.textContent = c.display_name || c.name;
-                    og.appendChild(opt);
-                });
-                sel.appendChild(og);
-            });
-            // Add "Other..." option for custom class
-            const otherOpt = document.createElement('option');
-            otherOpt.value = '__other__';
-            otherOpt.textContent = 'Other (type custom)...';
-            sel.appendChild(otherOpt);
         });
-        // Wire up select→custom input toggle
-        this._wireReclassifyCustom('reclassify-select', 'reclassify-custom');
-        this._wireReclassifyCustom('modal-reclassify-select', 'modal-reclassify-custom');
-    },
-
-    _wireReclassifyCustom(selectId, inputId) {
-        const sel = document.getElementById(selectId);
-        const inp = document.getElementById(inputId);
-        if (!sel || !inp) return;
-        sel.addEventListener('change', () => {
-            if (sel.value === '__other__') {
-                sel.style.display = 'none';
-                inp.style.display = '';
-                inp.focus();
-            }
-        });
-        // Reset back to select if custom input is cleared
-        inp.addEventListener('blur', () => {
-            if (!inp.value.trim()) {
-                inp.style.display = 'none';
-                sel.style.display = '';
-                sel.value = '';
-            }
-        });
-    },
-
-    _resetReclassify(selectId, inputId) {
-        const sel = document.getElementById(selectId);
-        const inp = document.getElementById(inputId);
-        if (sel) { sel.value = ''; sel.style.display = ''; }
-        if (inp) { inp.value = ''; inp.style.display = 'none'; }
-    },
-
-    _getReclassifyValue(selectId, inputId) {
-        const inp = document.getElementById(inputId);
-        if (inp && inp.style.display !== 'none' && inp.value.trim()) {
-            return inp.value.trim();
-        }
-        const sel = document.getElementById(selectId);
-        return (sel && sel.value !== '__other__') ? sel.value : '';
     },
 
     // ── Page Loading ─────────────────────────────────────────────────────
@@ -636,10 +578,10 @@ var TrainingGallery = {
         document.getElementById('btn-cancel-reclassify').addEventListener('click', () => {
             document.getElementById('reclassify-group').style.display = 'none';
             document.getElementById('btn-reclassify').style.display = '';
-            this._resetReclassify('reclassify-select', 'reclassify-custom');
+            document.getElementById('reclassify-input').value = '';
         });
         document.getElementById('btn-apply-reclassify').addEventListener('click', async () => {
-            const newClass = this._getReclassifyValue('reclassify-select', 'reclassify-custom');
+            const newClass = document.getElementById('reclassify-input').value.trim();
             if (!newClass) return;
             const ids = await this.getSelectedPredictionIds();
             this.executeBulkAction('reclassify', ids, newClass);
@@ -689,10 +631,10 @@ var TrainingGallery = {
         document.getElementById('modal-cancel-reclassify').addEventListener('click', () => {
             document.getElementById('modal-reclassify-group').style.display = 'none';
             document.getElementById('modal-btn-reclassify').style.display = '';
-            this._resetReclassify('modal-reclassify-select', 'modal-reclassify-custom');
+            document.getElementById('modal-reclassify-input').value = '';
         });
         document.getElementById('modal-apply-reclassify').addEventListener('click', () => {
-            const newClass = this._getReclassifyValue('modal-reclassify-select', 'modal-reclassify-custom');
+            const newClass = document.getElementById('modal-reclassify-input').value.trim();
             if (!newClass) return;
             this.executeBulkAction('reclassify', Array.from(this.modalSelected), newClass);
         });
