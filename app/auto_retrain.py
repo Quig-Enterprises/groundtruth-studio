@@ -34,16 +34,16 @@ CHECK_INTERVAL_SECONDS = 30 * 60
 # Export config name used for auto-retrain
 AUTO_RETRAIN_CONFIG_NAME = "auto-retrain-vehicle"
 
-# All vehicle class names from vehicle_detect_runner.py mapped to class IDs
+# All vehicle class names mapped to class IDs (must match classification_classes)
 VEHICLE_CLASS_MAPPING = {
     "sedan": 0,
     "pickup truck": 1,
-    "SUV": 2,
+    "suv": 2,
     "minivan": 3,
     "van": 4,
     "tractor": 5,
-    "ATV": 6,
-    "UTV": 7,
+    "atv": 6,
+    "utv": 7,
     "snowmobile": 8,
     "golf cart": 9,
     "motorcycle": 10,
@@ -52,14 +52,13 @@ VEHICLE_CLASS_MAPPING = {
     "semi truck": 13,
     "dump truck": 14,
     "rowboat": 15,
-    "fishing boat": 16,
-    "speed boat": 17,
-    "pontoon boat": 18,
-    "kayak": 19,
-    "canoe": 20,
-    "sailboat": 21,
-    "jet ski": 22,
-    "person": 23,
+    "pontoon boat": 16,
+    "ambulance": 17,
+    "box truck": 18,
+    "other truck": 19,
+    "unknown vehicle": 20,
+    "person": 21,
+    "multiple_vehicles": 22,
 }
 
 # Module-level singleton state

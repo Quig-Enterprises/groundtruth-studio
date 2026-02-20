@@ -175,6 +175,33 @@ html, body {
 .filter-select:focus {
     border-color: var(--accent);
 }
+.status-toggle {
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+}
+.toggle-btn {
+    padding: 0.45rem 0.9rem;
+    background: var(--bg-input);
+    color: var(--text-secondary);
+    border: none;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.15s, color 0.15s;
+}
+.toggle-btn:not(:last-child) {
+    border-right: 1px solid var(--border);
+}
+.toggle-btn.active {
+    background: var(--accent);
+    color: #fff;
+    font-weight: 600;
+}
+.toggle-btn:hover:not(.active) {
+    background: var(--bg-card);
+    color: var(--text-primary);
+}
 .reclassify-combo {
     min-width: 180px;
 }

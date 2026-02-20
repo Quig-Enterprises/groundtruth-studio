@@ -25,6 +25,12 @@ def get_gallery_filters():
     """Return distinct scenarios and classifications with counts for filter dropdowns."""
     try:
         scenario_param = request.args.get('scenario')
+        status_param = request.args.get('status', 'approved')
+
+        if status_param == 'pending':
+            status_list = ('pending', 'processing')
+        else:
+            status_list = ('approved', 'auto_approved')
 
         with get_cursor(commit=False) as cursor:
             # Scenarios with counts
@@ -32,10 +38,10 @@ def get_gallery_filters():
                 SELECT cc.scenario, COUNT(DISTINCT p.id) as count
                 FROM ai_predictions p
                 JOIN classification_classes cc ON cc.name = p.classification
-                WHERE p.review_status IN ('approved', 'auto_approved')
+                WHERE p.review_status IN %s
                 GROUP BY cc.scenario
                 ORDER BY count DESC
-            ''')
+            ''', (status_list,))
             scenarios = [dict(row) for row in cursor.fetchall()]
 
             # Classifications with counts, optionally filtered by scenario
@@ -45,27 +51,37 @@ def get_gallery_filters():
                            COUNT(*) as count
                     FROM ai_predictions p
                     JOIN classification_classes cc ON cc.name = p.classification
-                    WHERE p.review_status IN ('approved', 'auto_approved')
+                    WHERE p.review_status IN %s
                       AND cc.scenario = %s
                     GROUP BY p.classification, cc.scenario, cc.display_name
                     ORDER BY count DESC
-                ''', (scenario_param,))
+                ''', (status_list, scenario_param))
             else:
                 cursor.execute('''
                     SELECT p.classification as name, cc.scenario, cc.display_name,
                            COUNT(*) as count
                     FROM ai_predictions p
                     JOIN classification_classes cc ON cc.name = p.classification
-                    WHERE p.review_status IN ('approved', 'auto_approved')
+                    WHERE p.review_status IN %s
                     GROUP BY p.classification, cc.scenario, cc.display_name
                     ORDER BY count DESC
-                ''')
+                ''', (status_list,))
             classifications = [dict(row) for row in cursor.fetchall()]
+
+            # All configured classes for reclassify suggestions
+            cursor.execute('''
+                SELECT name, scenario, display_name
+                FROM classification_classes
+                WHERE is_active = true
+                ORDER BY scenario, display_name
+            ''')
+            all_classes = [dict(row) for row in cursor.fetchall()]
 
         return jsonify({
             'success': True,
             'scenarios': scenarios,
-            'classifications': classifications
+            'classifications': classifications,
+            'all_classes': all_classes
         })
 
     except Exception as e:
@@ -79,6 +95,7 @@ def get_gallery_items():
     try:
         scenario = request.args.get('scenario')
         classification = request.args.get('classification')
+        status_mode = request.args.get('status', 'approved')
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 60, type=int)
         sort = request.args.get('sort', 'confidence')
@@ -111,6 +128,69 @@ def get_gallery_items():
             order_by = 'created_at DESC'
         else:
             order_by = 'confidence DESC'
+
+        # ── Pending mode: simple flat query, no clustering ──
+        if status_mode == 'pending':
+            scenario_join = ''
+            if scenario:
+                scenario_join = 'JOIN classification_classes cc ON cc.name = p.classification'
+
+            pending_query = f'''
+                SELECT
+                    NULL::text AS cluster_type,
+                    NULL::text AS cluster_id,
+                    1::bigint AS cluster_count,
+                    p.id,
+                    p.classification,
+                    p.confidence,
+                    p.bbox_x,
+                    p.bbox_y,
+                    p.bbox_width,
+                    p.bbox_height,
+                    p.video_id,
+                    p.scenario,
+                    p.created_at,
+                    v.thumbnail_path,
+                    v.width AS video_width,
+                    v.height AS video_height,
+                    v.camera_id
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                {scenario_join}
+                WHERE p.review_status IN ('pending', 'processing')
+                  {filter_sql}
+                ORDER BY {order_by}
+            '''
+
+            count_query = f'SELECT COUNT(*) AS total FROM ({pending_query}) AS counted'
+            paginated_query = pending_query + ' LIMIT %s OFFSET %s'
+
+            with get_cursor(commit=False) as cursor:
+                cursor.execute(count_query, filter_params)
+                total = cursor.fetchone()['total']
+                cursor.execute(paginated_query, filter_params + [per_page, offset])
+                rows = cursor.fetchall()
+
+            items = []
+            for row in rows:
+                item = dict(row)
+                if item.get('created_at'):
+                    item['created_at'] = item['created_at'].isoformat()
+                if item.get('confidence') is not None:
+                    item['confidence'] = float(item['confidence'])
+                item['crop_url'] = f'/api/training-gallery/crop/{item["id"]}'
+                items.append(item)
+
+            pages = (total + per_page - 1) // per_page if per_page > 0 else 1
+            return jsonify({
+                'success': True,
+                'items': items,
+                'total': total,
+                'page': page,
+                'pages': pages,
+            })
+
+        # ── Approved mode: clustered UNION query ──
 
         # We need to pass params in order for the UNION ALL query.
         # Each branch may have different param sets.
@@ -152,13 +232,26 @@ def get_gallery_items():
                         v.camera_id
                     FROM ai_predictions p
                     JOIN videos v ON p.video_id = v.id
+                    JOIN camera_object_tracks t ON t.id = p.camera_object_track_id
                     {scenario_join}
                     WHERE p.review_status IN ('approved', 'auto_approved')
                       AND p.camera_object_track_id IS NOT NULL
+                      -- Single-class check
                       AND (SELECT COUNT(DISTINCT p3.classification)
                            FROM ai_predictions p3
                            WHERE p3.camera_object_track_id = p.camera_object_track_id
-                             AND p3.review_status IN ('approved', 'auto_approved')) <= 2
+                             AND p3.review_status IN ('approved', 'auto_approved')) = 1
+                      -- Velocity check: reject moving vehicles (> 0.1 px/s)
+                      AND (
+                          t.last_seen - t.first_seen = 0
+                          OR (SELECT (MAX(p4.bbox_x) - MIN(p4.bbox_x)
+                                    + MAX(p4.bbox_y) - MIN(p4.bbox_y))::float
+                                    / GREATEST(t.last_seen - t.first_seen, 1)
+                              FROM ai_predictions p4
+                              WHERE p4.camera_object_track_id = p.camera_object_track_id
+                                AND p4.review_status IN ('approved', 'auto_approved')
+                             ) < 0.1
+                      )
                       {filter_sql}
                     ORDER BY p.camera_object_track_id, p.confidence DESC
                 ) AS track_clusters
@@ -191,14 +284,27 @@ def get_gallery_items():
                         v.camera_id
                     FROM ai_predictions p
                     JOIN videos v ON p.video_id = v.id
+                    JOIN prediction_groups pg ON pg.id = p.prediction_group_id
                     {scenario_join}
                     WHERE p.review_status IN ('approved', 'auto_approved')
                       AND p.prediction_group_id IS NOT NULL
                       AND p.camera_object_track_id IS NULL
+                      -- Single-class check
                       AND (SELECT COUNT(DISTINCT p3.classification)
                            FROM ai_predictions p3
                            WHERE p3.prediction_group_id = p.prediction_group_id
-                             AND p3.review_status IN ('approved', 'auto_approved')) <= 2
+                             AND p3.review_status IN ('approved', 'auto_approved')) = 1
+                      -- Velocity check: reject moving vehicles (> 0.1 px/s)
+                      AND (
+                          COALESCE(pg.max_timestamp - pg.min_timestamp, 0) = 0
+                          OR (SELECT (MAX(p4.bbox_x) - MIN(p4.bbox_x)
+                                    + MAX(p4.bbox_y) - MIN(p4.bbox_y))::float
+                                    / GREATEST(pg.max_timestamp - pg.min_timestamp, 1)
+                              FROM ai_predictions p4
+                              WHERE p4.prediction_group_id = p.prediction_group_id
+                                AND p4.review_status IN ('approved', 'auto_approved')
+                             ) < 0.1
+                      )
                       {filter_sql}
                     ORDER BY p.prediction_group_id, p.confidence DESC
                 ) AS group_clusters
@@ -231,18 +337,54 @@ def get_gallery_items():
                   AND (
                     -- No track or group
                     (p.prediction_group_id IS NULL AND p.camera_object_track_id IS NULL)
-                    -- Track with 3+ distinct classes = not a real single-object cluster
+                    -- Track with mixed classes = not a real single-object cluster
                     OR (p.camera_object_track_id IS NOT NULL
                         AND (SELECT COUNT(DISTINCT p3.classification)
                              FROM ai_predictions p3
                              WHERE p3.camera_object_track_id = p.camera_object_track_id
-                               AND p3.review_status IN ('approved', 'auto_approved')) > 2)
-                    -- Group with 3+ distinct classes = not a real cluster
+                               AND p3.review_status IN ('approved', 'auto_approved')) > 1)
+                    -- Track with high velocity = moving vehicle, not clusterable
+                    OR (p.camera_object_track_id IS NOT NULL
+                        AND (SELECT COUNT(DISTINCT p3.classification)
+                             FROM ai_predictions p3
+                             WHERE p3.camera_object_track_id = p.camera_object_track_id
+                               AND p3.review_status IN ('approved', 'auto_approved')) = 1
+                        AND EXISTS (
+                            SELECT 1 FROM camera_object_tracks t
+                            WHERE t.id = p.camera_object_track_id
+                              AND t.last_seen - t.first_seen > 0
+                              AND (SELECT (MAX(p4.bbox_x) - MIN(p4.bbox_x)
+                                        + MAX(p4.bbox_y) - MIN(p4.bbox_y))::float
+                                        / GREATEST(t.last_seen - t.first_seen, 1)
+                                   FROM ai_predictions p4
+                                   WHERE p4.camera_object_track_id = p.camera_object_track_id
+                                     AND p4.review_status IN ('approved', 'auto_approved')
+                                  ) >= 0.1
+                        ))
+                    -- Group with mixed classes = not a real cluster
                     OR (p.prediction_group_id IS NOT NULL AND p.camera_object_track_id IS NULL
                         AND (SELECT COUNT(DISTINCT p3.classification)
                              FROM ai_predictions p3
                              WHERE p3.prediction_group_id = p.prediction_group_id
-                               AND p3.review_status IN ('approved', 'auto_approved')) > 2)
+                               AND p3.review_status IN ('approved', 'auto_approved')) > 1)
+                    -- Group with high velocity = moving vehicle, not clusterable
+                    OR (p.prediction_group_id IS NOT NULL AND p.camera_object_track_id IS NULL
+                        AND (SELECT COUNT(DISTINCT p3.classification)
+                             FROM ai_predictions p3
+                             WHERE p3.prediction_group_id = p.prediction_group_id
+                               AND p3.review_status IN ('approved', 'auto_approved')) = 1
+                        AND EXISTS (
+                            SELECT 1 FROM prediction_groups pg
+                            WHERE pg.id = p.prediction_group_id
+                              AND COALESCE(pg.max_timestamp - pg.min_timestamp, 0) > 0
+                              AND (SELECT (MAX(p4.bbox_x) - MIN(p4.bbox_x)
+                                        + MAX(p4.bbox_y) - MIN(p4.bbox_y))::float
+                                        / GREATEST(pg.max_timestamp - pg.min_timestamp, 1)
+                                   FROM ai_predictions p4
+                                   WHERE p4.prediction_group_id = p.prediction_group_id
+                                     AND p4.review_status IN ('approved', 'auto_approved')
+                                  ) >= 0.1
+                        ))
                   )
                   {filter_sql}
             ) AS gallery_items
@@ -372,8 +514,8 @@ def bulk_gallery_action():
         prediction_ids = data.get('prediction_ids', [])
         new_classification = data.get('new_classification')
 
-        if action not in ('reclassify', 'requeue', 'remove'):
-            return jsonify({'success': False, 'error': 'action must be reclassify, requeue, or remove'}), 400
+        if action not in ('reclassify', 'requeue', 'remove', 'approve'):
+            return jsonify({'success': False, 'error': 'action must be reclassify, requeue, remove, or approve'}), 400
 
         if not prediction_ids or not isinstance(prediction_ids, list):
             return jsonify({'success': False, 'error': 'prediction_ids array required'}), 400
@@ -386,10 +528,23 @@ def bulk_gallery_action():
                 cursor.execute('''
                     UPDATE ai_predictions
                     SET classification = %s,
+                        review_status = 'approved',
+                        reviewed_by = COALESCE(reviewed_by, 'gallery_reclassify'),
+                        reviewed_at = COALESCE(reviewed_at, NOW()),
                         corrected_tags = COALESCE(corrected_tags, '{}'::jsonb)
                             || jsonb_build_object('gallery_reclassify', %s)
                     WHERE id = ANY(%s)
                 ''', (new_classification, new_classification, prediction_ids))
+                affected = cursor.rowcount
+
+            elif action == 'approve':
+                cursor.execute('''
+                    UPDATE ai_predictions
+                    SET review_status = 'approved',
+                        reviewed_by = 'gallery_approval',
+                        reviewed_at = NOW()
+                    WHERE id = ANY(%s)
+                ''', (prediction_ids,))
                 affected = cursor.rowcount
 
             elif action == 'requeue':
@@ -484,7 +639,9 @@ def get_prediction_crop(prediction_id):
 
             crop.save(str(crop_path), 'JPEG', quality=85)
 
-        return send_file(str(crop_path), mimetype='image/jpeg')
+        resp = send_file(str(crop_path), mimetype='image/jpeg')
+        resp.headers['Cache-Control'] = 'public, max-age=604800'  # 7 days
+        return resp
 
     except Exception as e:
         logger.error(f'Failed to generate crop for prediction {prediction_id}: {e}')

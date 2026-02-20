@@ -6,7 +6,7 @@ var TrainingGallery = {
     perPage: 60,
     totalPages: 0,
     loading: false,
-    filters: { scenario: '', classification: '', sort: 'confidence' },
+    filters: { scenario: '', classification: '', sort: 'confidence', status: 'approved' },
     selected: new Set(),         // individual prediction IDs
     selectedClusters: new Set(), // "type:id" strings
     clusterMembers: {},          // cache: "type:id" -> [items]
@@ -31,10 +31,12 @@ var TrainingGallery = {
 
     async loadFilters() {
         try {
-            const resp = await fetch('/api/training-gallery/filters');
+            const filterParams = new URLSearchParams({ status: this.filters.status });
+            const resp = await fetch('/api/training-gallery/filters?' + filterParams);
             const data = await resp.json();
 
             const scenarioSel = document.getElementById('scenario-filter');
+            while (scenarioSel.options.length > 1) scenarioSel.remove(1);
             data.scenarios.forEach(s => {
                 const opt = document.createElement('option');
                 opt.value = s.scenario;
@@ -43,6 +45,7 @@ var TrainingGallery = {
             });
 
             this.allClasses = data.classifications;
+            this.reclassifyClasses = data.all_classes || data.classifications;
             this.updateClassificationDropdown(data.classifications);
             this.loadPage();
         } catch (e) {
@@ -64,11 +67,12 @@ var TrainingGallery = {
     },
 
     populateReclassifyDropdowns() {
+        const classes = this.reclassifyClasses || this.allClasses;
         ['reclassify-list', 'modal-reclassify-list'].forEach(id => {
             const dl = document.getElementById(id);
             if (!dl) return;
             dl.innerHTML = '';
-            this.allClasses.forEach(c => {
+            classes.forEach(c => {
                 const opt = document.createElement('option');
                 opt.value = c.name;
                 dl.appendChild(opt);
@@ -85,7 +89,8 @@ var TrainingGallery = {
         const params = new URLSearchParams({
             page: this.page,
             per_page: this.perPage,
-            sort: this.filters.sort
+            sort: this.filters.sort,
+            status: this.filters.status
         });
         if (this.filters.scenario) params.set('scenario', this.filters.scenario);
         if (this.filters.classification) params.set('classification', this.filters.classification);
@@ -168,6 +173,14 @@ var TrainingGallery = {
         const img = document.createElement('img');
         img.alt = '';
         img.dataset.src = '/api/training-gallery/crop/' + item.id;
+        img.dataset.retries = '0';
+        img.onerror = function() {
+            var r = parseInt(this.dataset.retries || '0');
+            if (r < 3) {
+                this.dataset.retries = r + 1;
+                setTimeout(() => { this.src = this.src.split('?')[0] + '?r=' + (r + 1); }, 500 * (r + 1));
+            }
+        };
         if (this.imageObserver) {
             this.imageObserver.observe(img);
         } else {
@@ -228,6 +241,16 @@ var TrainingGallery = {
             this.toggleSelection(item, e.target.checked);
             card.classList.toggle('selected', e.target.checked);
         });
+
+        // Click anywhere on card to toggle checkbox (clusters open modal via imgWrap)
+        card.addEventListener('click', (e) => {
+            if (e.target === checkbox || e.target.closest('.cluster-badge')) return;
+            if (isCluster && e.target.closest('.card-image')) return;
+            checkbox.checked = !checkbox.checked;
+            this.toggleSelection(item, checkbox.checked);
+            card.classList.toggle('selected', checkbox.checked);
+        });
+        card.style.cursor = 'pointer';
 
         return card;
     },
@@ -401,6 +424,7 @@ var TrainingGallery = {
     createModalCard(item) {
         const card = document.createElement('div');
         card.className = 'modal-card';
+        card.dataset.id = item.id;
 
         const checkWrap = document.createElement('div');
         checkWrap.className = 'card-checkbox';
@@ -414,6 +438,14 @@ var TrainingGallery = {
         img.src = '/api/training-gallery/crop/' + item.id;
         img.alt = '';
         img.loading = 'lazy';
+        img.dataset.retries = '0';
+        img.onerror = function() {
+            var r = parseInt(this.dataset.retries || '0');
+            if (r < 3) {
+                this.dataset.retries = r + 1;
+                setTimeout(() => { this.src = this.src.split('?')[0] + '?r=' + (r + 1); }, 500 * (r + 1));
+            }
+        };
         card.appendChild(img);
 
         const info = document.createElement('div');
@@ -436,6 +468,20 @@ var TrainingGallery = {
             }
             this.updateModalActionBar();
         });
+
+        card.addEventListener('click', (e) => {
+            if (e.target === checkbox) return;
+            checkbox.checked = !checkbox.checked;
+            if (checkbox.checked) {
+                this.modalSelected.add(item.id);
+                card.classList.add('selected');
+            } else {
+                this.modalSelected.delete(item.id);
+                card.classList.remove('selected');
+            }
+            this.updateModalActionBar();
+        });
+        card.style.cursor = 'pointer';
 
         return card;
     },
@@ -478,24 +524,69 @@ var TrainingGallery = {
             const data = await resp.json();
 
             if (data.success) {
-                predictionIds.forEach(id => {
+                const idSet = new Set(predictionIds);
+
+                // Remove from modal if open
+                if (this.modalOpen) {
+                    // Remove affected cards from modal DOM
+                    idSet.forEach(id => {
+                        const modalCard = document.querySelector(
+                            '#modal-grid .modal-card[data-id="' + id + '"]'
+                        );
+                        if (modalCard) modalCard.remove();
+                        this.modalSelected.delete(id);
+                    });
+                    this.modalItems = this.modalItems.filter(item => !idSet.has(item.id));
+
+                    if (this.modalItems.length === 0) {
+                        // Cluster is empty — close modal and remove cluster card from main grid
+                        const clusterCard = document.querySelector(
+                            '.gallery-card[data-cluster-type="' + this.modalClusterType +
+                            '"][data-cluster-id="' + this.modalClusterId + '"]'
+                        );
+                        if (clusterCard) {
+                            const cId = parseInt(clusterCard.dataset.predictionId);
+                            this.items = this.items.filter(item => item.id !== cId);
+                            clusterCard.remove();
+                        }
+                        this.closeModal();
+                    } else {
+                        // Update modal count and action bar
+                        document.getElementById('modal-cluster-count').textContent =
+                            this.modalItems.length + ' image' + (this.modalItems.length !== 1 ? 's' : '');
+                        this.updateModalActionBar();
+                        // Reset reclassify UI
+                        document.getElementById('modal-reclassify-group').style.display = 'none';
+                        document.getElementById('modal-btn-reclassify').style.display = '';
+                        // Update cluster badge count in main grid
+                        const clusterCard = document.querySelector(
+                            '.gallery-card[data-cluster-type="' + this.modalClusterType +
+                            '"][data-cluster-id="' + this.modalClusterId + '"]'
+                        );
+                        if (clusterCard) {
+                            const badgeSpan = clusterCard.querySelector('.cluster-badge span');
+                            if (badgeSpan) badgeSpan.textContent = this.modalItems.length;
+                        }
+                    }
+                }
+
+                // Remove affected cards from main grid
+                idSet.forEach(id => {
                     const card = document.querySelector(
                         '.gallery-card[data-prediction-id="' + id + '"]'
                     );
                     if (card) card.remove();
                     this.selected.delete(id);
                 });
-
-                this.items = this.items.filter(item => !predictionIds.includes(item.id));
+                this.items = this.items.filter(item => !idSet.has(item.id));
                 this.selectedClusters.clear();
                 this.updateActionBar();
-
-                if (this.modalOpen) this.closeModal();
 
                 const affected = data.affected || predictionIds.length;
                 const noun = affected !== 1 ? 'images' : 'image';
                 const verb = action === 'remove' ? 'removed'
                     : action === 'requeue' ? 'requeued for review'
+                    : action === 'approve' ? 'approved'
                     : 'reclassified';
                 this.showToast(affected + ' ' + noun + ' ' + verb, false);
             } else {
@@ -536,6 +627,16 @@ var TrainingGallery = {
 
     // ── Stats ────────────────────────────────────────────────────────────
 
+    updateModeButtons() {
+        const isPending = this.filters.status === 'pending';
+        const requeueBtn = document.getElementById('btn-requeue');
+        requeueBtn.textContent = isPending ? 'Approve' : 'Requeue for Review';
+        requeueBtn.className = isPending ? 'btn btn-primary' : 'btn btn-warning';
+        const modalRequeueBtn = document.getElementById('modal-btn-requeue');
+        modalRequeueBtn.textContent = isPending ? 'Approve' : 'Requeue';
+        modalRequeueBtn.className = isPending ? 'btn btn-primary btn-sm' : 'btn btn-warning btn-sm';
+    },
+
     updateStats(total) {
         const el = document.getElementById('filter-stats');
         if (el) el.textContent = total.toLocaleString() + ' training images';
@@ -544,6 +645,27 @@ var TrainingGallery = {
     // ── Event Binding ────────────────────────────────────────────────────
 
     bindEvents() {
+        // Status toggle
+        document.querySelectorAll('#status-toggle .toggle-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                document.querySelectorAll('#status-toggle .toggle-btn').forEach(b => b.classList.remove('active'));
+                btn.classList.add('active');
+                this.filters.status = btn.dataset.status;
+                // Reset state and reload filters (which calls loadPage)
+                this.filters.scenario = '';
+                this.filters.classification = '';
+                document.getElementById('scenario-filter').value = '';
+                document.getElementById('classification-filter').value = '';
+                this.page = 1;
+                this.items = [];
+                this.selected.clear();
+                this.selectedClusters.clear();
+                document.getElementById('action-bar').style.display = 'none';
+                this.updateModeButtons();
+                this.loadFilters();
+            });
+        });
+
         // Filters
         document.getElementById('scenario-filter').addEventListener('change', (e) => {
             this.filters.scenario = e.target.value;
@@ -572,6 +694,7 @@ var TrainingGallery = {
 
         // Action bar — Reclassify
         document.getElementById('btn-reclassify').addEventListener('click', () => {
+            document.getElementById('reclassify-input').value = '';
             document.getElementById('reclassify-group').style.display = 'flex';
             document.getElementById('btn-reclassify').style.display = 'none';
         });
@@ -587,14 +710,16 @@ var TrainingGallery = {
             this.executeBulkAction('reclassify', ids, newClass);
         });
 
-        // Action bar — Requeue
+        // Action bar — Requeue / Approve
         document.getElementById('btn-requeue').addEventListener('click', async () => {
             const ids = await this.getSelectedPredictionIds();
             const n = ids.length;
-            this.showConfirm(
-                'Requeue ' + n.toLocaleString() + ' image' + (n !== 1 ? 's' : '') + ' for review?',
-                () => this.executeBulkAction('requeue', ids)
-            );
+            const isPending = this.filters.status === 'pending';
+            const action = isPending ? 'approve' : 'requeue';
+            const msg = isPending
+                ? 'Approve ' + n.toLocaleString() + ' image' + (n !== 1 ? 's' : '') + '?'
+                : 'Requeue ' + n.toLocaleString() + ' image' + (n !== 1 ? 's' : '') + ' for review?';
+            this.showConfirm(msg, () => this.executeBulkAction(action, ids));
         });
 
         // Action bar — Remove
@@ -625,6 +750,7 @@ var TrainingGallery = {
 
         // Modal — Reclassify
         document.getElementById('modal-btn-reclassify').addEventListener('click', () => {
+            document.getElementById('modal-reclassify-input').value = '';
             document.getElementById('modal-reclassify-group').style.display = 'flex';
             document.getElementById('modal-btn-reclassify').style.display = 'none';
         });
@@ -639,14 +765,16 @@ var TrainingGallery = {
             this.executeBulkAction('reclassify', Array.from(this.modalSelected), newClass);
         });
 
-        // Modal — Requeue
+        // Modal — Requeue / Approve
         document.getElementById('modal-btn-requeue').addEventListener('click', () => {
             const ids = Array.from(this.modalSelected);
             const n = ids.length;
-            this.showConfirm(
-                'Requeue ' + n + ' image' + (n !== 1 ? 's' : '') + ' for review?',
-                () => this.executeBulkAction('requeue', ids)
-            );
+            const isPending = this.filters.status === 'pending';
+            const action = isPending ? 'approve' : 'requeue';
+            const msg = isPending
+                ? 'Approve ' + n + ' image' + (n !== 1 ? 's' : '') + '?'
+                : 'Requeue ' + n + ' image' + (n !== 1 ? 's' : '') + ' for review?';
+            this.showConfirm(msg, () => this.executeBulkAction(action, ids));
         });
 
         // Modal — Remove
