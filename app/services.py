@@ -18,6 +18,7 @@ from face_clustering import FaceClusterer
 from training_queue import TrainingQueueClient, init_training_jobs_table
 from sync_config import SyncConfigManager
 from auto_retrain import start_auto_retrain_checker, stop_auto_retrain_checker
+from ecoeye_auto_sync import start_ecoeye_auto_sync, stop_ecoeye_auto_sync
 
 logger = logging.getLogger(__name__)
 
@@ -139,6 +140,18 @@ def init_services():
 
     # Start auto-retrain background checker
     start_auto_retrain_checker(db, yolo_exporter, training_queue)
+
+    # Start EcoEye auto-sync background daemon
+    if ECOEYE_API_KEY and ECOEYE_API_SECRET:
+        from ecoeye_sync import EcoEyeSyncClient
+        _ecoeye_client = EcoEyeSyncClient(
+            download_dir=DOWNLOAD_DIR,
+            api_key=ECOEYE_API_KEY,
+            api_secret=ECOEYE_API_SECRET,
+            base_url=ECOEYE_API_BASE
+        )
+        start_ecoeye_auto_sync(db, processor, _ecoeye_client, DOWNLOAD_DIR, THUMBNAIL_DIR, sync_config)
+        atexit.register(stop_ecoeye_auto_sync)
 
     # Run schema migrations
     from schema import run_migrations

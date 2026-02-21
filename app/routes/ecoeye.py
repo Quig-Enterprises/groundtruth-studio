@@ -715,3 +715,38 @@ def list_ecoeye_alerts():
 
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ===== EcoEye Auto-Sync Control Endpoints =====
+
+@ecoeye_bp.route('/api/ecoeye/auto-sync/status', methods=['GET'])
+def get_auto_sync_status():
+    """Get the current status of the EcoEye auto-sync daemon."""
+    from ecoeye_auto_sync import get_ecoeye_auto_sync_status
+    return jsonify(get_ecoeye_auto_sync_status())
+
+
+@ecoeye_bp.route('/api/ecoeye/auto-sync/toggle', methods=['POST'])
+def toggle_auto_sync():
+    """Enable or disable the EcoEye auto-sync daemon."""
+    from ecoeye_auto_sync import get_auto_sync_instance
+    instance = get_auto_sync_instance()
+    if not instance:
+        return jsonify({'success': False, 'error': 'Auto-sync not initialized'}), 500
+    data = request.json or {}
+    if data.get('enabled', True):
+        instance.enable()
+    else:
+        instance.disable()
+    return jsonify({'success': True, 'enabled': instance._enabled})
+
+
+@ecoeye_bp.route('/api/ecoeye/auto-sync/run-now', methods=['POST'])
+def run_auto_sync_now():
+    """Manually trigger an immediate auto-sync cycle."""
+    from ecoeye_auto_sync import get_auto_sync_instance
+    instance = get_auto_sync_instance()
+    if not instance:
+        return jsonify({'success': False, 'error': 'Auto-sync not initialized'}), 500
+    result = instance.run_cycle()
+    return jsonify({'success': True, 'result': result})

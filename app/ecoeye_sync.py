@@ -613,6 +613,37 @@ class EcoEyeSyncClient:
                         # Acknowledge download to relay for retention management
                         self.acknowledge_download(alert_id)
 
+                        # Create videos record + trigger detection pipeline
+                        try:
+                            from services import db as _db, processor as _proc
+                            from vehicle_detect_runner import trigger_vehicle_detect as _tvd
+                            from clip_tracker import run_clip_tracking
+                            import threading
+
+                            vid_id = _db.add_video(
+                                filename=Path(result).name,
+                                original_url=f'ecoeye://{alert_id}',
+                                title=f'{camera_id or "unknown"} - ecoeye alert',
+                                camera_id=camera_id,
+                            )
+
+                            thumb = _proc.extract_thumbnail(result)
+                            if thumb.get('success'):
+                                _db.update_video(vid_id, thumbnail_path=thumb['thumbnail_path'])
+                                _tvd(vid_id, thumb['thumbnail_path'])
+
+                            # Clip tracking
+                            if vid_id:
+                                threading.Thread(
+                                    target=run_clip_tracking,
+                                    args=(vid_id, camera_id or ''),
+                                    kwargs={'clip_path': result},
+                                    daemon=True,
+                                    name=f"clip-track-ecoeye-{alert_id}"
+                                ).start()
+                        except Exception as proc_err:
+                            logger.warning(f"Post-processing failed for EcoEye {alert_id}: {proc_err}")
+
                         results.append({
                             'alert_id': alert_id,
                             'status': 'success',

@@ -1432,6 +1432,11 @@ def run_migrations():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_clip_analysis_review ON clip_analysis_results(review_status)")
             logger.info("Clip analysis results table ready")
 
+            # Migration: EcoEye auto-sync indexes
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ecoeye_alerts_download_status ON ecoeye_alerts(video_available, video_downloaded)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ecoeye_alerts_timestamp ON ecoeye_alerts(timestamp)")
+            logger.info("EcoEye auto-sync indexes ready")
+
         logger.info("Migrations completed successfully")
     except Exception as e:
         logger.error(f"Migration error: {e}")
