@@ -52,7 +52,7 @@ var ReviewApp = {
     knownClasses: [
         'sedan', 'pickup truck', 'SUV', 'minivan', 'van',
         'tractor', 'ATV', 'UTV', 'snowmobile', 'golf cart', 'motorcycle', 'trailer',
-        'bus', 'semi truck', 'dump truck',
+        'bus', 'semi truck', 'dump truck', 'multiple_vehicles',
         'rowboat', 'fishing boat', 'speed boat', 'pontoon boat', 'kayak', 'canoe', 'sailboat', 'jet ski',
         'person', 'animal', 'flag', 'tree', 'snow', 'roof'
     ],
@@ -4153,7 +4153,8 @@ var ReviewApp = {
         }
 
         // In conflict mode: classification conflicts must use the chips, not swipe/buttons
-        if (this.conflictMode && pred.conflict_id && pred.classification_conflict) {
+        // BUT allow skip — it's client-only and doesn't resolve the conflict
+        if (this.conflictMode && pred.conflict_id && pred.classification_conflict && action !== 'skip') {
             return;  // Block swipe/button actions - user must pick a classification chip
         }
 
@@ -6142,11 +6143,30 @@ var ReviewApp = {
     // --------------- Conflict Resolution ---------------
     loadConflicts: function() {
         var self = this;
+        // Fetch known classes from API so the list stays current
+        fetch('/api/training-gallery/filters?status=approved')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.all_classes) {
+                    self.knownClasses = data.all_classes.map(function(c) { return c.name; });
+                }
+            })
+            .catch(function() { /* keep hardcoded fallback */ });
+
         fetch('/api/ai/tracks/conflicts')
             .then(function(r) { return r.json(); })
             .then(function(data) {
                 if (!data.success) return;
                 self.conflicts = data.conflicts || [];
+                // Pre-cache thumbnails for all conflicts
+                for (var i = 0; i < self.conflicts.length; i++) {
+                    var thumbUrl = self.getThumbUrl(self.conflicts[i].thumbnail_path);
+                    if (thumbUrl && !self.imageCache[thumbUrl]) {
+                        var preImg = new Image();
+                        preImg.src = thumbUrl;
+                        self.imageCache[thumbUrl] = preImg;
+                    }
+                }
                 self.renderConflictList();
                 // Update badge
                 var badge = document.getElementById('conflict-count-badge');
@@ -6352,45 +6372,40 @@ var ReviewApp = {
             })(options[i]);
         }
 
-        // "More..." button to show all known classes
-        var moreBtn = document.createElement('button');
-        moreBtn.className = 'classify-chip';
-        moreBtn.style.borderStyle = 'dashed';
-        moreBtn.style.color = '#a1a1aa';
-        moreBtn.textContent = 'More\u2026';
-        container.appendChild(moreBtn);
-
-        var moreSection = document.createElement('div');
-        moreSection.className = 'classify-chips';
-        moreSection.style.display = 'none';
-        var moreDivider = document.createElement('div');
-        moreDivider.className = 'classify-divider';
-        moreDivider.textContent = 'All classifications:';
-        moreSection.appendChild(moreDivider);
-
+        // "Multiple Vehicles" suggested chip for mixed-classification conflicts
         var optionSet = {};
         for (var j = 0; j < options.length; j++) {
             optionSet[options[j].toLowerCase()] = true;
         }
-        for (var k = 0; k < self.knownClasses.length; k++) {
-            (function(cls) {
-                if (optionSet[cls.toLowerCase()]) return;
-                var moreChip = document.createElement('button');
-                moreChip.className = 'classify-chip';
-                moreChip.setAttribute('data-subtype', cls.toLowerCase());
-                moreChip.textContent = cls;
-                moreChip.addEventListener('click', function() {
-                    self.resolveConflictAsClassification(pred, cls);
-                });
-                moreSection.appendChild(moreChip);
-            })(self.knownClasses[k]);
-        }
-        container.appendChild(moreSection);
+        if (options.length >= 2 && !optionSet['multiple_vehicles']) {
+            var mvDivider = document.createElement('div');
+            mvDivider.className = 'classify-divider';
+            mvDivider.style.marginTop = '8px';
+            mvDivider.textContent = 'Suggested:';
+            container.appendChild(mvDivider);
 
-        moreBtn.addEventListener('click', function() {
-            moreBtn.style.display = 'none';
-            moreSection.style.display = '';
+            var mvChip = document.createElement('button');
+            mvChip.className = 'classify-chip';
+            mvChip.setAttribute('data-subtype', 'multiple_vehicles');
+            mvChip.textContent = 'Multiple Vehicles';
+            mvChip.style.borderColor = '#F59E0B';
+            mvChip.style.color = '#F59E0B';
+            mvChip.addEventListener('click', function() {
+                self.resolveConflictAsClassification(pred, 'multiple_vehicles');
+            });
+            container.appendChild(mvChip);
+        }
+
+        // Searchable class widget replacing flat chip list
+        var searchWidget = createClassSearchWidget({
+            classes: self.knownClasses.map(function(c) { return {name: c}; }),
+            onSelect: function(cls) {
+                self.resolveConflictAsClassification(pred, cls);
+            },
+            placeholder: 'Search all classes...',
+            excludeClasses: options.map(function(o) { return o.toLowerCase(); })
         });
+        container.appendChild(searchWidget);
 
         // Reject all button
         var rejectBtn = document.createElement('button');

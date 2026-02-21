@@ -751,3 +751,17 @@ html, body {
         font-size: 1.25rem;
     }
 }
+
+/* ── Pending Count Badge ────────────────────────────────────────────── */
+.toggle-btn .count-badge {
+    display: inline-block;
+    background: #EF4444;
+    color: white;
+    font-size: 0.7rem;
+    padding: 1px 6px;
+    border-radius: 10px;
+    margin-left: 6px;
+    font-weight: 600;
+    min-width: 18px;
+    text-align: center;
+}

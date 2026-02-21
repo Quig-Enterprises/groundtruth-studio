@@ -77,11 +77,20 @@ def get_gallery_filters():
             ''')
             all_classes = [dict(row) for row in cursor.fetchall()]
 
+            # Pending count for badge
+            cursor.execute('''
+                SELECT COUNT(*) AS cnt
+                FROM ai_predictions
+                WHERE review_status IN ('pending', 'processing')
+            ''')
+            pending_count = cursor.fetchone()['cnt']
+
         return jsonify({
             'success': True,
             'scenarios': scenarios,
             'classifications': classifications,
-            'all_classes': all_classes
+            'all_classes': all_classes,
+            'pending_count': pending_count
         })
 
     except Exception as e:
@@ -525,6 +534,10 @@ def bulk_gallery_action():
 
         with get_cursor(commit=True) as cursor:
             if action == 'reclassify':
+                logger.info(f'Reclassify: ids={prediction_ids}, new_class={new_classification}')
+                cursor.execute('SELECT id, review_status, classification FROM ai_predictions WHERE id = ANY(%s)', (prediction_ids,))
+                logger.info(f'Reclassify PRE-UPDATE: {[dict(r) for r in cursor.fetchall()]}')
+
                 cursor.execute('''
                     UPDATE ai_predictions
                     SET classification = %s,
@@ -536,6 +549,9 @@ def bulk_gallery_action():
                     WHERE id = ANY(%s)
                 ''', (new_classification, new_classification, new_classification, prediction_ids))
                 affected = cursor.rowcount
+
+                cursor.execute('SELECT id, review_status, classification FROM ai_predictions WHERE id = ANY(%s)', (prediction_ids,))
+                logger.info(f'Reclassify POST-UPDATE: {[dict(r) for r in cursor.fetchall()]}, affected={affected}')
 
             elif action == 'approve':
                 cursor.execute('''

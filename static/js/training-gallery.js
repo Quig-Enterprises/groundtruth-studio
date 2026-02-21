@@ -48,6 +48,21 @@ var TrainingGallery = {
             this.reclassifyClasses = data.all_classes || data.classifications;
             this.updateClassificationDropdown(data.classifications);
             this.loadPage();
+
+            // Update pending badge
+            var pendingBtn = document.querySelector('.toggle-btn[data-status="pending"]');
+            if (pendingBtn && data.pending_count > 0) {
+                var badge = pendingBtn.querySelector('.count-badge');
+                if (!badge) {
+                    badge = document.createElement('span');
+                    badge.className = 'count-badge';
+                    pendingBtn.appendChild(badge);
+                }
+                badge.textContent = data.pending_count.toLocaleString();
+            } else if (pendingBtn) {
+                var oldBadge = pendingBtn.querySelector('.count-badge');
+                if (oldBadge) oldBadge.remove();
+            }
         } catch (e) {
             console.error('Failed to load filters:', e);
             this.loadPage();
@@ -68,16 +83,8 @@ var TrainingGallery = {
 
     populateReclassifyDropdowns() {
         const classes = this.reclassifyClasses || this.allClasses;
-        ['reclassify-list', 'modal-reclassify-list'].forEach(id => {
-            const dl = document.getElementById(id);
-            if (!dl) return;
-            dl.innerHTML = '';
-            classes.forEach(c => {
-                const opt = document.createElement('option');
-                opt.value = c.name;
-                dl.appendChild(opt);
-            });
-        });
+        populateClassDatalist('reclassify-list', classes);
+        populateClassDatalist('modal-reclassify-list', classes);
     },
 
     // ── Page Loading ─────────────────────────────────────────────────────
@@ -589,6 +596,12 @@ var TrainingGallery = {
                     : action === 'approve' ? 'approved'
                     : 'reclassified';
                 this.showToast(affected + ' ' + noun + ' ' + verb, false);
+
+                // Force full reload in pending mode after reclassify/approve to ensure
+                // items that changed status are removed from the pending view
+                if (this.filters.status === 'pending' && (action === 'reclassify' || action === 'approve')) {
+                    this.resetAndReload();
+                }
             } else {
                 this.showToast(data.error || 'Action failed', true);
             }
