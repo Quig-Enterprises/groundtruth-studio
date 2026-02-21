@@ -532,9 +532,9 @@ def bulk_gallery_action():
                         reviewed_by = COALESCE(reviewed_by, 'gallery_reclassify'),
                         reviewed_at = COALESCE(reviewed_at, NOW()),
                         corrected_tags = COALESCE(corrected_tags, '{}'::jsonb)
-                            || jsonb_build_object('gallery_reclassify', %s)
+                            || jsonb_build_object('gallery_reclassify', %s, 'vehicle_subtype', %s)
                     WHERE id = ANY(%s)
-                ''', (new_classification, new_classification, prediction_ids))
+                ''', (new_classification, new_classification, new_classification, prediction_ids))
                 affected = cursor.rowcount
 
             elif action == 'approve':
@@ -542,7 +542,9 @@ def bulk_gallery_action():
                     UPDATE ai_predictions
                     SET review_status = 'approved',
                         reviewed_by = 'gallery_approval',
-                        reviewed_at = NOW()
+                        reviewed_at = NOW(),
+                        corrected_tags = COALESCE(corrected_tags, '{}'::jsonb)
+                            || jsonb_build_object('vehicle_subtype', classification)
                     WHERE id = ANY(%s)
                 ''', (prediction_ids,))
                 affected = cursor.rowcount
