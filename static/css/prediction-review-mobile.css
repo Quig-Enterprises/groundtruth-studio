@@ -1872,7 +1872,7 @@ body {
 /* Toast notification for conflict resolution */
 .conflict-toast {
     position: fixed;
-    top: 80px;
+    top: 20px;
     left: 50%;
     transform: translateX(-50%) translateY(-20px);
     background: rgba(13, 148, 136, 0.95);
@@ -2264,6 +2264,15 @@ body {
     font-size: 13px;
     cursor: pointer;
 }
+.cc-correct-wrongveh-btn {
+    background: #E65100;
+    color: #fff;
+    border: none;
+    border-radius: 4px;
+    padding: 5px 14px;
+    font-size: 13px;
+    cursor: pointer;
+}
 .cc-correct-cancel-btn {
     background: #555;
     color: #fff;
@@ -2308,6 +2317,8 @@ body {
     aspect-ratio: auto !important;
     height: 80vh;
     max-height: 80vh;
+    top: 0;
+    transform: none !important;
 }
 .cc-video-active .cc-camera-badge {
     position: absolute;

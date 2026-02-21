@@ -2367,11 +2367,13 @@ var ReviewApp = {
             correctionOverlay = document.createElement('div');
             correctionOverlay.className = 'cc-correct-bar';
             correctionOverlay.innerHTML = '<span class="cc-correct-bar-label">Tap a video to correct</span>' +
+                '<button class="cc-correct-wrongveh-btn" id="cc-correct-wrongveh" style="display:none">Not this vehicle</button>' +
                 '<button class="cc-correct-save-btn" id="cc-correct-save" style="display:none">Save</button>' +
                 '<button class="cc-correct-cancel-btn" id="cc-correct-cancel">Cancel</button>';
             syncControls.parentElement.insertBefore(correctionOverlay, syncControls.nextSibling);
             correctionOverlay.querySelector('#cc-correct-cancel').addEventListener('click', exitCorrectionMode);
             correctionOverlay.querySelector('#cc-correct-save').addEventListener('click', saveBboxCorrection);
+            correctionOverlay.querySelector('#cc-correct-wrongveh').addEventListener('click', flagWrongVehicle);
             correctBtn.classList.add('active');
         }
 
@@ -2443,6 +2445,8 @@ var ReviewApp = {
                         'Drag bbox on ' + targetCamData.camera_id;
                     var saveBtn = correctionOverlay.querySelector('#cc-correct-save');
                     if (saveBtn) saveBtn.style.display = 'inline-block';
+                    var wrongVehBtn = correctionOverlay.querySelector('#cc-correct-wrongveh');
+                    if (wrongVehBtn) wrongVehBtn.style.display = 'inline-block';
                 }
             }, 60);
         }
@@ -2673,6 +2677,49 @@ var ReviewApp = {
                 }
             }).catch(function(err) {
                 self._showToast('Save failed', '#f44336');
+            });
+
+            exitCorrectionMode();
+        }
+
+        function flagWrongVehicle() {
+            if (!correctionCam) return;
+            var video = correctionCam === 'A' ? videoA : videoB;
+            var camData = correctionCam === 'A' ? clipData.camera_a : clipData.camera_b;
+            var canvas = correctionCam === 'A' ? canvasA : canvasB;
+            var layout = getVideoLayout(canvas, video, camData);
+            var normalGap = correctionCam === 'A' ? normalGapA : normalGapB;
+            var aiBbox = getBboxAtTime(camData, video.currentTime, normalGap);
+
+            var payload = {
+                type: 'wrong_vehicle',
+                camera_id: camData.camera_id,
+                video_track_id: camData.video_track_id,
+                clip_url: camData.clip_url,
+                video_time: video.currentTime,
+                video_duration: video.duration || 0,
+                video_width: layout.srcW,
+                video_height: layout.srcH,
+                original_bbox: aiBbox ? { x: aiBbox.x, y: aiBbox.y, w: aiBbox.width, h: aiBbox.height, projected: aiBbox.projected } : null,
+                corrected_bbox: null,
+                class_name: camData.class_name,
+                cross_camera_link_id: pred._ccLink ? pred._ccLink.id : pred.id,
+                timestamp: new Date().toISOString()
+            };
+
+            fetch('/api/ai/feedback/bbox-correction', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'X-Auth-Role': 'user' },
+                body: JSON.stringify(payload)
+            }).then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success) {
+                    self._showToast('Flagged as wrong vehicle', '#FF9800');
+                } else {
+                    self._showToast('Error: ' + (data.error || 'unknown'), '#f44336');
+                }
+            }).catch(function(err) {
+                self._showToast('Flag failed', '#f44336');
             });
 
             exitCorrectionMode();
@@ -6357,8 +6404,17 @@ var ReviewApp = {
         header.textContent = 'Choose correct type (' + pred.member_count + ' frames):';
         container.appendChild(header);
 
-        // Conflict option chips
-        var options = pred.conflict_options;
+        // Conflict option chips - include the displayed class if not already present
+        var options = pred.conflict_options.slice();
+        var predTags = pred.predicted_tags || {};
+        if (typeof predTags === 'string') { try { predTags = JSON.parse(predTags); } catch(e) { predTags = {}; } }
+        var displayedClass = predTags['class'] || predTags.class_name || '';
+        if (displayedClass) {
+            var optionsLower = options.map(function(o) { return o.toLowerCase(); });
+            if (optionsLower.indexOf(displayedClass.toLowerCase()) === -1) {
+                options.unshift(displayedClass);
+            }
+        }
         for (var i = 0; i < options.length; i++) {
             (function(option) {
                 var chip = document.createElement('button');

@@ -1696,11 +1696,14 @@ def submit_ai_feedback():
 
 @predictions_bp.route('/api/ai/feedback/bbox-correction', methods=['POST'])
 def submit_bbox_correction():
-    """Save a user-drawn bbox correction for retraining."""
+    """Save a user-drawn bbox correction or wrong-vehicle flag for retraining."""
     import json, datetime
     try:
         data = request.get_json()
-        if not data or not data.get('corrected_bbox'):
+        feedback_type = data.get('type', 'bbox_correction') if data else 'bbox_correction'
+        if not data:
+            return jsonify({'success': False, 'error': 'request body required'}), 400
+        if feedback_type == 'bbox_correction' and not data.get('corrected_bbox'):
             return jsonify({'success': False, 'error': 'corrected_bbox required'}), 400
 
         feedback_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'feedback')
@@ -1708,7 +1711,7 @@ def submit_bbox_correction():
 
         entry = {
             'timestamp': data.get('timestamp', datetime.datetime.utcnow().isoformat() + 'Z'),
-            'type': 'bbox_correction',
+            'type': feedback_type,
             'camera_id': data.get('camera_id'),
             'video_track_id': data.get('video_track_id'),
             'clip_url': data.get('clip_url'),
@@ -1726,7 +1729,7 @@ def submit_bbox_correction():
         with open(filepath, 'a') as f:
             f.write(json.dumps(entry) + '\n')
 
-        logger.info(f"BBox correction saved: camera={entry.get('camera_id')} track={entry.get('video_track_id')} t={entry.get('video_time')}")
+        logger.info(f"BBox feedback saved: type={feedback_type} camera={entry.get('camera_id')} track={entry.get('video_track_id')} t={entry.get('video_time')}")
         return jsonify({'success': True})
     except Exception as e:
         logger.error(f"Error saving bbox correction: {e}")
