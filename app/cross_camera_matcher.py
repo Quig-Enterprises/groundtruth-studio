@@ -210,7 +210,7 @@ def are_directions_compatible(dir_a, dir_b, camera_a_id=None, camera_b_id=None):
 class CrossCameraMatcher:
     """Matches entity tracks across different cameras."""
 
-    def __init__(self, reid_api_url='http://localhost:5061'):
+    def __init__(self, reid_api_url='http://localhost:5061'):  # FastReID API (vehicle + person)
         self.reid_api_url = reid_api_url
         self._topology_cache = {}
         self._embedding_cache = {}

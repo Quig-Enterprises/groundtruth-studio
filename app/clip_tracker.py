@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
 
 CLIPS_DIR = Path('/opt/groundtruth-studio/clips')
 CROPS_DIR = CLIPS_DIR / 'crops'
-REID_API_URL = 'http://localhost:5061'
+REID_API_URL = 'http://localhost:5061'  # FastReID API (vehicle + person)
 FRIGATE_URL = os.environ.get('FRIGATE_URL', 'http://localhost:5000')
 
 # Reuse the same model as vehicle_detect_runner

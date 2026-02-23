@@ -21,7 +21,7 @@ from db_connection import init_connection_pool, get_cursor
 logging.basicConfig(level=logging.INFO, format='%(asctime)s [%(levelname)s] %(message)s')
 logger = logging.getLogger(__name__)
 
-REID_API_URL = 'http://localhost:5061'
+REID_API_URL = 'http://localhost:5061'  # FastReID API (vehicle + person)
 BATCH_SIZE = 32
 TARGET_CAMERAS = ('mwcam8', 'mwcam9', 'mwparkinglot')
 
