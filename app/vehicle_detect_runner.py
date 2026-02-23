@@ -39,10 +39,11 @@ CLASS_CONF_THRESHOLDS = {
     "van": 0.15,
     # Land - Rural/Specialty (less common in pretraining, lower raw confidence)
     "tractor": 0.12,
-    "ATV": 0.10,
+    "ATV": 0.40,
     "UTV": 0.10,
     "snowmobile": 0.10,
     "golf cart": 0.10,
+    "skid loader": 0.12,
     "motorcycle": 0.12,
     "trailer": 0.12,
     # Land - Large (very distinct silhouettes)
@@ -58,9 +59,8 @@ CLASS_CONF_THRESHOLDS = {
     "canoe": 0.10,
     "sailboat": 0.12,
     "jet ski": 0.12,
-    # Decoy classes (low threshold to catch false positives)
-    "flag": 0.10,
-    "animal": 0.10,
+    # Stationary / infrastructure
+    "fence": 0.15,
 }
 DEFAULT_CONF_THRESHOLD = 0.15
 
@@ -89,6 +89,7 @@ ALL_CLASSES = [
     "UTV side by side utility vehicle",
     "snowmobile",
     "golf cart utility cart",
+    "skid loader skid steer bobcat",
     "motorcycle",
     "trailer flatbed trailer",
     # Land - Large
@@ -104,16 +105,21 @@ ALL_CLASSES = [
     "canoe",
     "sailboat",
     "jet ski personal watercraft",
-    # Decoy classes (absorb false positives — not submitted as vehicles)
-    "flag banner wind sock",
-    "animal dog deer bird",
+    # Stationary / infrastructure
+    "fence",
+    # POLICY: No decoy classes. Use hard negative training data instead.
+    # See clip analysis export for corrective training pipeline.
 ]
 
 # Index of person class (for filtering pre-screen vs vehicle predictions)
 PERSON_CLASS_ID = 0  # "person" is first in ALL_CLASSES
 
 # Classes excluded from vehicle predictions
-NON_VEHICLE_CLASSES = {"person", "flag", "animal"}
+NON_VEHICLE_CLASSES = {"person"}
+
+# Infrastructure classes — detected by the same model but not vehicles.
+# These get their own scenario instead of 'vehicle_detection'.
+INFRASTRUCTURE_CLASSES = {"fence"}
 
 # Map YOLO-World prompt text to clean display names for GT Studio
 VEHICLE_DISPLAY_NAMES = {
@@ -128,6 +134,7 @@ VEHICLE_DISPLAY_NAMES = {
     "UTV side by side utility vehicle": "UTV",
     "snowmobile": "snowmobile",
     "golf cart utility cart": "golf cart",
+    "skid loader skid steer bobcat": "skid loader",
     "motorcycle": "motorcycle",
     "trailer flatbed trailer": "trailer",
     "bus school bus": "bus",
@@ -141,8 +148,8 @@ VEHICLE_DISPLAY_NAMES = {
     "canoe": "canoe",
     "sailboat": "sailboat",
     "jet ski personal watercraft": "jet ski",
-    "flag banner wind sock": "flag",
-    "animal dog deer bird": "animal",
+    # Stationary / infrastructure
+    "fence": "fence",
 }
 
 
@@ -675,8 +682,6 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
         inference_time_ms = (time.time() - start_time) * 1000
 
         vehicle_predictions = []
-        flag_predictions = []
-        animal_predictions = []
         person_count = 0
         person_bboxes = []
         result = results[0]
@@ -715,43 +720,11 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
                 if confidence < min_conf:
                     continue
 
-                # Route decoy classes to separate lists
-                if class_name == "flag":
-                    flag_predictions.append({
-                        'prediction_type': 'keyframe',
-                        'confidence': round(confidence, 4),
-                        'timestamp': 0.0,
-                        'scenario': 'flag_detection',
-                        'tags': {
-                            'class': class_name,
-                            'class_id': class_id,
-                            'yolo_world_prompt': raw_class
-                        },
-                        'bbox': bbox,
-                        'inference_time_ms': round(inference_time_ms, 2)
-                    })
-                    continue
-                elif class_name == "animal":
-                    animal_predictions.append({
-                        'prediction_type': 'keyframe',
-                        'confidence': round(confidence, 4),
-                        'timestamp': 0.0,
-                        'scenario': 'animal_detection',
-                        'tags': {
-                            'class': class_name,
-                            'class_id': class_id,
-                            'yolo_world_prompt': raw_class
-                        },
-                        'bbox': bbox,
-                        'inference_time_ms': round(inference_time_ms, 2)
-                    })
-                    continue
-
                 vehicle_predictions.append({
                     'prediction_type': 'keyframe',
                     'confidence': round(confidence, 4),
                     'timestamp': 0.0,
-                    'scenario': 'vehicle_detection',
+                    'scenario': 'infrastructure_detection' if class_name in INFRASTRUCTURE_CLASSES else 'vehicle_detection',
                     'tags': {
                         'class': class_name,
                         'class_id': class_id,
@@ -797,8 +770,7 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
         vehicle_count = len(vehicle_predictions)
         logger.info(
             f"Pre-screen video {video_id}: {person_count} persons, "
-            f"{vehicle_count} vehicles, {len(flag_predictions)} flags, "
-            f"{len(animal_predictions)} animals ({inference_time_ms:.0f}ms)"
+            f"{vehicle_count} vehicles ({inference_time_ms:.0f}ms)"
         )
 
         # --- Conditional person-face-v1 trigger ---
@@ -846,59 +818,10 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
             # No vehicles found — store a scan marker so we don't re-process this video
             _store_scan_marker(video_id, person_count, inference_time_ms)
 
-        # --- Submit decoy detections ---
-        if flag_predictions:
-            batch_id = f"flag-detect-{int(time.time())}"
-            flag_payload = {
-                'video_id': video_id,
-                'model_name': MODEL_NAME,
-                'model_version': MODEL_VERSION,
-                'model_type': MODEL_TYPE,
-                'batch_id': batch_id,
-                'predictions': flag_predictions,
-                'force_review': False
-            }
-            try:
-                resp = requests.post(
-                    f"{API_BASE_URL}/api/ai/predictions/batch",
-                    json=flag_payload,
-                    headers={'X-Auth-Role': 'admin'},
-                    timeout=30
-                )
-                resp.raise_for_status()
-                _auto_reject_batch(batch_id)
-                logger.info(f"Auto-rejected {len(flag_predictions)} flag detections for video {video_id}")
-            except Exception as e:
-                logger.error(f"Failed to submit flag detections for video {video_id}: {e}")
-
-        if animal_predictions:
-            animal_payload = {
-                'video_id': video_id,
-                'model_name': MODEL_NAME,
-                'model_version': MODEL_VERSION,
-                'model_type': MODEL_TYPE,
-                'batch_id': f"animal-detect-{int(time.time())}",
-                'predictions': animal_predictions,
-                'force_review': force_review
-            }
-            try:
-                resp = requests.post(
-                    f"{API_BASE_URL}/api/ai/predictions/batch",
-                    json=animal_payload,
-                    headers={'X-Auth-Role': 'admin'},
-                    timeout=30
-                )
-                resp.raise_for_status()
-                logger.info(f"Submitted {len(animal_predictions)} animal detections for video {video_id}")
-            except Exception as e:
-                logger.error(f"Failed to submit animal detections for video {video_id}: {e}")
-
         result = {
             'video_id': video_id,
             'persons_prescreened': person_count,
             'vehicles': vehicle_count,
-            'flags': len(flag_predictions),
-            'animals': len(animal_predictions),
             'submitted': len(vehicle_predictions),
             'person_face_triggered': person_count > 0
         }
@@ -1008,8 +931,6 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
         logger.info(f"Multi-frame video {video_id}: sampling {len(sample_times)} frames from {duration:.1f}s video")
 
         all_vehicle_detections = []
-        all_flag_detections = []
-        all_animal_detections = []
         total_person_count = 0
         total_inference_ms = 0.0
         frames_processed = 0
@@ -1077,42 +998,6 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
                 if confidence < min_conf:
                     continue
 
-                # Route decoy classes to separate lists
-                if class_name == "flag":
-                    all_flag_detections.append({
-                        'prediction_type': 'keyframe',
-                        'confidence': round(confidence, 4),
-                        'timestamp': round(timestamp, 2),
-                        'scenario': 'flag_detection',
-                        'tags': {
-                            'class': class_name,
-                            'class_id': class_id,
-                            'yolo_world_prompt': raw_class,
-                            'source': 'multiframe',
-                            'source_frame_time': round(timestamp, 2)
-                        },
-                        'bbox': bbox,
-                        'inference_time_ms': round(frame_inference_ms, 2)
-                    })
-                    continue
-                elif class_name == "animal":
-                    all_animal_detections.append({
-                        'prediction_type': 'keyframe',
-                        'confidence': round(confidence, 4),
-                        'timestamp': round(timestamp, 2),
-                        'scenario': 'animal_detection',
-                        'tags': {
-                            'class': class_name,
-                            'class_id': class_id,
-                            'yolo_world_prompt': raw_class,
-                            'source': 'multiframe',
-                            'source_frame_time': round(timestamp, 2)
-                        },
-                        'bbox': bbox,
-                        'inference_time_ms': round(frame_inference_ms, 2)
-                    })
-                    continue
-
                 # Tree filter: skip if bbox is predominantly foliage
                 if _is_likely_tree(pil_img, bbox):
                     continue
@@ -1125,7 +1010,7 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
                     'prediction_type': 'keyframe',
                     'confidence': round(confidence, 4),
                     'timestamp': round(timestamp, 2),
-                    'scenario': 'vehicle_detection',
+                    'scenario': 'infrastructure_detection' if class_name in INFRASTRUCTURE_CLASSES else 'vehicle_detection',
                     'tags': {
                         'class': class_name,
                         'class_id': class_id,
@@ -1140,8 +1025,7 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
 
         logger.info(
             f"Multi-frame video {video_id}: {frames_processed}/{len(sample_times)} frames processed, "
-            f"{len(all_vehicle_detections)} vehicles, {len(all_flag_detections)} flags, "
-            f"{len(all_animal_detections)} animals, {total_person_count} persons "
+            f"{len(all_vehicle_detections)} vehicles, {total_person_count} persons "
             f"({total_inference_ms:.0f}ms total)"
         )
 
@@ -1204,59 +1088,10 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
             # No vehicles found across any frame - store multiframe scan marker
             _store_multiframe_scan_marker(video_id, total_person_count, total_inference_ms, frames_processed)
 
-        # --- Submit decoy detections from multiframe ---
-        if all_flag_detections:
-            batch_id = f"video-multiframe-flag-{int(time.time())}"
-            flag_payload = {
-                'video_id': video_id,
-                'model_name': MODEL_NAME,
-                'model_version': MODEL_VERSION,
-                'model_type': MODEL_TYPE,
-                'batch_id': batch_id,
-                'predictions': all_flag_detections,
-                'force_review': False
-            }
-            try:
-                resp = requests.post(
-                    f"{API_BASE_URL}/api/ai/predictions/batch",
-                    json=flag_payload,
-                    headers={'X-Auth-Role': 'admin'},
-                    timeout=30
-                )
-                resp.raise_for_status()
-                _auto_reject_batch(batch_id)
-                logger.info(f"Multi-frame auto-rejected {len(all_flag_detections)} flag detections for video {video_id}")
-            except Exception as e:
-                logger.error(f"Multi-frame: failed to submit flag detections for video {video_id}: {e}")
-
-        if all_animal_detections:
-            animal_payload = {
-                'video_id': video_id,
-                'model_name': MODEL_NAME,
-                'model_version': MODEL_VERSION,
-                'model_type': MODEL_TYPE,
-                'batch_id': f"video-multiframe-animal-{int(time.time())}",
-                'predictions': all_animal_detections,
-                'force_review': force_review
-            }
-            try:
-                resp = requests.post(
-                    f"{API_BASE_URL}/api/ai/predictions/batch",
-                    json=animal_payload,
-                    headers={'X-Auth-Role': 'admin'},
-                    timeout=30
-                )
-                resp.raise_for_status()
-                logger.info(f"Multi-frame submitted {len(all_animal_detections)} animal detections for video {video_id}")
-            except Exception as e:
-                logger.error(f"Multi-frame: failed to submit animal detections for video {video_id}: {e}")
-
         return {
             'video_id': video_id,
             'persons_prescreened': total_person_count,
             'vehicles': len(vehicle_predictions),
-            'flags': len(all_flag_detections),
-            'animals': len(all_animal_detections),
             'submitted': len(vehicle_predictions),
             'frames_sampled': len(sample_times),
             'frames_processed': frames_processed,

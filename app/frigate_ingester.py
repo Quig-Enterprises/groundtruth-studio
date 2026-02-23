@@ -25,6 +25,22 @@ from vehicle_detect_runner import trigger_vehicle_detect
 
 logger = logging.getLogger(__name__)
 
+# Cameras that should also trigger document detection (configurable)
+DOC_DETECT_CAMERAS = set(os.environ.get('DOC_DETECT_CAMERAS', '').split(',')) - {''}
+
+
+def _trigger_doc_detect_if_configured(camera, video_id, thumbnail_path):
+    """Trigger document detection on cameras configured for it."""
+    if not DOC_DETECT_CAMERAS or camera not in DOC_DETECT_CAMERAS:
+        return
+    try:
+        from doc_detect_runner import trigger_document_detect
+        trigger_document_detect(video_id, thumbnail_path, force_review=True, source_method='camera')
+    except ImportError:
+        pass
+    except Exception as e:
+        logger.warning(f"Doc detect trigger failed for {camera} video {video_id}: {e}")
+
 
 class FrigateEventIngester:
     """Subscribe to Frigate MQTT events and ingest snapshots on detection."""
@@ -37,6 +53,12 @@ class FrigateEventIngester:
 
     # Cooldown per camera to avoid flooding (seconds)
     CAMERA_COOLDOWN = 30
+
+    # Motion-based capture cooldown (seconds) — per camera
+    MOTION_COOLDOWN = 45
+    MOTION_COOLDOWN_OVERRIDES = {
+        'mwparkinglot': 15,
+    }
 
     def __init__(self, frigate_url: str = "http://localhost:5000",
                  mqtt_host: str = "127.0.0.1", mqtt_port: int = 1883,
@@ -73,7 +95,10 @@ class FrigateEventIngester:
             # Subscribe to Frigate event topics
             # frigate/events — JSON event data for new/update/end
             client.subscribe(f"{self.topic_prefix}/events")
-            logger.info(f"Subscribed to {self.topic_prefix}/events")
+            # Subscribe to motion topics for all cameras
+            # frigate/<camera>/motion — payload "ON" or "OFF"
+            client.subscribe(f"{self.topic_prefix}/+/motion")
+            logger.info(f"Subscribed to {self.topic_prefix}/events and {self.topic_prefix}/+/motion")
         else:
             logger.error(f"MQTT connection failed with code: {reason_code}")
 
@@ -87,6 +112,14 @@ class FrigateEventIngester:
         try:
             if msg.topic == f"{self.topic_prefix}/events":
                 self._handle_event(msg.payload)
+            elif msg.topic.endswith('/motion'):
+                # Extract camera name from topic: frigate/<camera>/motion
+                parts = msg.topic.split('/')
+                if len(parts) == 3:
+                    camera = parts[1]
+                    state = msg.payload.decode('utf-8', errors='ignore').strip()
+                    if state == 'ON':
+                        self._handle_motion(camera)
         except Exception as e:
             logger.error(f"Error handling MQTT message on {msg.topic}: {e}", exc_info=True)
             self.stats['errors'] += 1
@@ -160,6 +193,102 @@ class FrigateEventIngester:
             name=f"capture-{event_id[:8]}"
         )
         thread.start()
+
+    def _handle_motion(self, camera: str):
+        """Handle a motion ON event — capture snapshot for YOLO-World classification.
+
+        This catches objects that Frigate's COCO model doesn't recognize
+        (e.g. snowmobiles, ATVs) by triggering on raw motion.
+        """
+        with self._lock:
+            motion_key = f"motion_{camera}"
+            now = time.time()
+            last = self._last_capture.get(motion_key, 0)
+            cooldown = self.MOTION_COOLDOWN_OVERRIDES.get(camera, self.MOTION_COOLDOWN)
+            if now - last < cooldown:
+                return
+            self._last_capture[motion_key] = now
+
+        logger.info(f"Motion trigger: {camera}")
+
+        # Burst capture: take 3 snapshots over 4 seconds to catch fast-moving objects
+        def _burst_capture():
+            for i, delay in enumerate([0.5, 1.5, 2.0]):
+                time.sleep(delay)
+                self._capture_motion_snapshot(camera, burst_index=i)
+
+        thread = threading.Thread(
+            target=_burst_capture,
+            daemon=True,
+            name=f"motion-{camera}-{int(time.time())}"
+        )
+        thread.start()
+
+    def _capture_motion_snapshot(self, camera: str, burst_index: int = 0):
+        """Fetch a snapshot triggered by motion and run YOLO-World on it."""
+        try:
+            resp = requests.get(
+                f"{self.frigate_url}/api/{camera}/latest.jpg",
+                params={'quality': 95},
+                timeout=10
+            )
+            resp.raise_for_status()
+            image_bytes = resp.content
+
+            if len(image_bytes) < 1000:
+                logger.debug(f"Motion snapshot too small for {camera}, skipping")
+                return
+
+            np_arr = np.frombuffer(image_bytes, np.uint8)
+            img = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+            if img is None:
+                logger.warning(f"Failed to decode motion snapshot for {camera}")
+                return
+
+            height, width = img.shape[:2]
+
+            timestamp = datetime.now()
+            ts_str = timestamp.strftime("%Y%m%d_%H%M%S")
+            filename = f"frigate_{camera}_motion_{ts_str}_b{burst_index}.jpg"
+            thumbnail_path = os.path.join(self.thumbnail_dir, filename)
+
+            with open(thumbnail_path, 'wb') as f:
+                f.write(image_bytes)
+
+            title = f"{camera} - motion {timestamp.strftime('%Y-%m-%d %H:%M:%S')} (burst {burst_index})"
+
+            metadata = {
+                'source': 'frigate',
+                'frigate_camera': camera,
+                'frigate_label': 'motion',
+                'trigger': 'motion',
+            }
+
+            video_id = self.db.add_video(
+                filename=filename,
+                title=title,
+                thumbnail_path=thumbnail_path,
+                width=width,
+                height=height,
+                file_size=len(image_bytes),
+                camera_id=camera,
+                notes=f"Motion-triggered capture {timestamp.strftime('%H:%M:%S')}",
+                metadata=metadata
+            )
+
+            # Run YOLO-World — this is the key: it knows snowmobile, ATV, UTV, etc.
+            trigger_vehicle_detect(video_id, thumbnail_path, force_review=True)
+            _trigger_doc_detect_if_configured(camera, video_id, thumbnail_path)
+
+            self.stats['snapshots_captured'] += 1
+            logger.info(
+                f"Motion capture: {camera} -> video_id={video_id} "
+                f"({width}x{height}, {len(image_bytes)//1024}KB)"
+            )
+
+        except Exception as e:
+            logger.error(f"Failed motion snapshot for {camera}: {e}", exc_info=True)
+            self.stats['errors'] += 1
 
     def _capture_event_snapshot(self, camera: str, label: str, score: float,
                                  event_id: str, has_snapshot: bool,
@@ -258,8 +387,34 @@ class FrigateEventIngester:
                 metadata=metadata
             )
 
+            # Proactively cache the event clip (prevents expiration before review)
+            if metadata.get('has_clip', False) and event_id:
+                def _cache_clip(_frigate_url, _event_id, _camera):
+                    try:
+                        from video_utils import VideoProcessor
+                        vp = VideoProcessor()
+                        clip_result = vp.fetch_frigate_clip(
+                            frigate_url=_frigate_url,
+                            event_id=_event_id,
+                            camera=_camera
+                        )
+                        if clip_result['success']:
+                            logger.info(f"Cached clip for event {_event_id}")
+                        else:
+                            logger.debug(f"Clip not available for event {_event_id}: {clip_result.get('error')}")
+                    except Exception as e:
+                        logger.debug(f"Clip cache failed for {_event_id}: {e}")
+
+                threading.Thread(
+                    target=_cache_clip,
+                    args=(self.frigate_url, event_id, camera),
+                    daemon=True,
+                    name=f"clip-cache-{event_id[:8]}"
+                ).start()
+
             # Trigger our YOLO-World pipeline for detailed classification
             trigger_vehicle_detect(video_id, thumbnail_path, force_review=True)
+            _trigger_doc_detect_if_configured(camera, video_id, thumbnail_path)
 
             self.stats['snapshots_captured'] += 1
             logger.info(

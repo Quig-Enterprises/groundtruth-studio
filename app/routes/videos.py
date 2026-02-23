@@ -400,8 +400,50 @@ def serve_video(filename):
 
 @videos_bp.route('/thumbnails/<path:filename>')
 def serve_thumbnail(filename):
-    """Serve thumbnail file"""
-    return send_from_directory(THUMBNAIL_DIR, filename)
+    """Serve thumbnail file - resized for web or full-res"""
+    # Check for ?full=1 to serve original
+    if request.args.get('full'):
+        response = send_from_directory(THUMBNAIL_DIR, filename)
+        response.cache_control.max_age = 86400
+        response.cache_control.public = True
+        return response
+
+    # Serve web-optimized version from cache, or generate on first request
+    cache_dir = os.path.join(THUMBNAIL_DIR, '.web_cache')
+    cached_path = os.path.join(cache_dir, filename)
+    original_path = os.path.join(THUMBNAIL_DIR, filename)
+
+    if not os.path.exists(original_path):
+        return send_from_directory(THUMBNAIL_DIR, filename)  # 404 handled by Flask
+
+    if os.path.exists(cached_path):
+        response = send_from_directory(cache_dir, filename)
+        response.cache_control.max_age = 86400
+        response.cache_control.public = True
+        return response
+
+    # Generate resized thumbnail
+    try:
+        from PIL import Image
+        os.makedirs(os.path.dirname(cached_path), exist_ok=True)
+        with Image.open(original_path) as img:
+            # Resize to max 480px wide, preserving aspect ratio
+            max_w = 480
+            if img.width > max_w:
+                ratio = max_w / img.width
+                new_size = (max_w, int(img.height * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
+            img.save(cached_path, 'JPEG', quality=75, optimize=True)
+        response = send_from_directory(cache_dir, filename)
+        response.cache_control.max_age = 86400
+        response.cache_control.public = True
+        return response
+    except Exception as e:
+        logger.warning(f"Thumbnail resize failed for {filename}: {e}")
+        response = send_from_directory(THUMBNAIL_DIR, filename)
+        response.cache_control.max_age = 86400
+        response.cache_control.public = True
+        return response
 
 @videos_bp.route('/clips/<path:filename>')
 def serve_clip(filename):

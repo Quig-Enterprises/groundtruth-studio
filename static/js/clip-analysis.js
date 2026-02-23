@@ -20,6 +20,7 @@
         'semi truck':   '#5c6bc0',
         'dump truck':   '#8d6e63',
         'golf cart':    '#aed581',
+        'skid loader':  '#ffab40',
         'snowmobile':   '#80deea',
         'trailer':      '#bcaaa4',
         'rowboat':      '#4dd0e1',

@@ -183,6 +183,21 @@ def complete_training_job(job_id):
                 except Exception as e:
                     logger.warning(f'Failed to save training metrics for job {job_id}: {e}')
 
+        # Handle clip_analysis job completion — update in-memory status cache
+        try:
+            job = training_queue.get_job(job_id)
+            if job and job.get('job_type') == 'clip_analysis':
+                config = job.get('config') or {}
+                if not config and job.get('config_json'):
+                    config = json.loads(job['config_json'])
+                vid = config.get('video_id')
+                if vid:
+                    from routes.clip_analysis import _analysis_status
+                    _analysis_status[int(vid)] = {'status': 'completed'}
+                    logger.info(f'Updated clip analysis status for video {vid} (job {job_id})')
+        except Exception as e:
+            logger.warning(f'Failed to update clip analysis status for job {job_id}: {e}')
+
         return jsonify({'success': True, 'job_id': job_id, 'status': 'completed'})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
@@ -198,6 +213,20 @@ def fail_training_job(job_id):
         success = training_queue.fail_job(job_id, error_message)
         if not success:
             return jsonify({'success': False, 'error': 'Job not found'}), 404
+
+        # Handle clip_analysis failure — update in-memory status cache
+        try:
+            job = training_queue.get_job(job_id)
+            if job and job.get('job_type') == 'clip_analysis':
+                config = job.get('config') or {}
+                if not config and job.get('config_json'):
+                    config = json.loads(job['config_json'])
+                vid = config.get('video_id')
+                if vid:
+                    from routes.clip_analysis import _analysis_status
+                    _analysis_status[int(vid)] = {'status': 'failed', 'error': error_message}
+        except Exception as exc:
+            logger.warning(f'Failed to update clip analysis status for job {job_id}: {exc}')
 
         return jsonify({'success': True, 'job_id': job_id, 'status': 'failed'})
     except Exception as e:

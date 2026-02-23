@@ -481,7 +481,7 @@
             }
 
             .stats-panel {
-                grid-template-columns: repeat(4, 1fr);
+                grid-template-columns: repeat(5, 1fr);
                 gap: 15px;
                 margin-bottom: 30px;
             }
@@ -610,6 +610,151 @@
                 height: 28px;
             }
         }
+
+        /* Category section labels */
+        .sidebar-section-label {
+            font-size: 11px;
+            text-transform: uppercase;
+            color: #666;
+            padding: 10px 12px 4px;
+            letter-spacing: 0.5px;
+            font-weight: 600;
+        }
+
+        /* Category color classes for sidebar items */
+        .category-unidentified { border-left: 3px solid #FF9800; }
+        .category-unidentified .name { color: #FF9800; }
+        .category-ambiguous { border-left: 3px solid #9E9E9E; }
+        .category-ambiguous .name { color: #9E9E9E; }
+        .category-anonymous { border-left: 3px solid #9C27B0; }
+        .category-anonymous .name { color: #9C27B0; }
+        .category-named { border-left: 3px solid #4CAF50; }
+        .category-named .name { color: #4CAF50; }
+
+        .person-name-item.category-unidentified.active { background: #3a3020; border-left: 3px solid #FF9800; }
+        .person-name-item.category-ambiguous.active { background: #2a2a2a; border-left: 3px solid #9E9E9E; }
+        .person-name-item.category-anonymous.active { background: #2a1a30; border-left: 3px solid #9C27B0; }
+        .person-name-item.category-named.active { background: #3a4a3a; border-left: 3px solid #4CAF50; }
+
+        /* Tag color classes for detection cards */
+        .tag-unidentified { background: #4a3000 !important; color: #FF9800 !important; }
+        .tag-ambiguous { background: #3a3a3a !important; color: #9E9E9E !important; }
+        .tag-anonymous { background: #2a0a3a !important; color: #9C27B0 !important; }
+        .tag-named { background: #1a3a1a !important; color: #4CAF50 !important; }
+        .tag-source-prediction { background: #1a2a3a !important; color: #64B5F6 !important; font-size: 0.75em; }
+
+        /* Button styles */
+        .btn-warning {
+            background: #FF9800;
+            color: white;
+        }
+        .btn-warning:hover {
+            background: #F57C00;
+        }
+        .btn-anonymous {
+            background: #9C27B0;
+            color: white;
+        }
+        .btn-anonymous:hover {
+            background: #7B1FA2;
+        }
+
+        /* Show All button */
+        .show-all-item {
+            padding: 10px 12px;
+            margin: 5px 0;
+            background: #252525;
+            border-radius: 4px;
+            cursor: pointer;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            transition: background 0.2s;
+            font-size: 13px;
+            color: #888;
+            border: 1px dashed #444;
+        }
+        .show-all-item:hover {
+            background: #333;
+            color: #ccc;
+        }
+        .show-all-item.active {
+            background: #333;
+            color: #fff;
+            border: 1px solid #555;
+        }
+
+        /* Clickable stat cards */
+        .stat-clickable {
+            cursor: pointer;
+            transition: transform 0.15s, box-shadow 0.15s, background 0.2s;
+        }
+        .stat-clickable:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+            background: #333;
+        }
+        .stat-clickable.active {
+            outline: 2px solid #4CAF50;
+            background: #333;
+        }
+
+        /* Group cards (clustered person view) */
+        .group-card {
+            background: #1a1a1a;
+            border-radius: 8px;
+            overflow: hidden;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            display: flex;
+            flex-direction: column;
+        }
+        .group-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.3);
+        }
+        .group-card-thumbnails {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 1px;
+            background: #000;
+            aspect-ratio: 3/2;
+            overflow: hidden;
+        }
+        .group-card-thumbnails img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+        .group-card-thumbnails .thumb-slot {
+            background: #222;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #555;
+            font-size: 11px;
+        }
+        .group-card-info {
+            padding: 10px 12px;
+        }
+        .group-card-info .group-name {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 4px;
+        }
+        .group-card-info .group-meta {
+            font-size: 12px;
+            color: #888;
+        }
+        .group-card-info .group-count {
+            display: inline-block;
+            background: #333;
+            padding: 2px 8px;
+            border-radius: 10px;
+            font-size: 11px;
+            color: #aaa;
+            margin-left: 6px;
+        }
     </style>
 </head>
 <body>
@@ -625,21 +770,25 @@
         </div>
 
         <div class="stats-panel">
-            <div class="stat-card">
+            <div class="stat-card stat-clickable" onclick="filterByStat(null)">
                 <div class="number" id="stat-total-detections">0</div>
                 <div class="label">Total Detections</div>
             </div>
-            <div class="stat-card">
-                <div class="number" id="stat-named-people">0</div>
+            <div class="stat-card stat-clickable" onclick="filterByStat('named')">
+                <div class="number" id="stat-named-people" style="color: #4CAF50;">0</div>
                 <div class="label">Named People</div>
             </div>
-            <div class="stat-card">
-                <div class="number" id="stat-unknown">0</div>
-                <div class="label">Unknown</div>
+            <div class="stat-card stat-clickable" onclick="filterByStat('unidentified')">
+                <div class="number" id="stat-unidentified" style="color: #FF9800;">0</div>
+                <div class="label">Unidentified</div>
             </div>
-            <div class="stat-card">
-                <div class="number" id="stat-videos">0</div>
-                <div class="label">Videos with People</div>
+            <div class="stat-card stat-clickable" onclick="filterByStat('ambiguous')">
+                <div class="number" id="stat-ambiguous" style="color: #9E9E9E;">0</div>
+                <div class="label">Ambiguous</div>
+            </div>
+            <div class="stat-card stat-clickable" onclick="filterByStat('anonymous')">
+                <div class="number" id="stat-anonymous-groups" style="color: #9C27B0;">0</div>
+                <div class="label">Anonymous Groups</div>
             </div>
         </div>
 
@@ -672,6 +821,9 @@
                         <button id="select-all-btn" class="btn btn-secondary btn-small">Select All</button>
                         <button id="bulk-assign-btn" class="btn btn-primary btn-small" disabled>Assign Name</button>
                         <button id="bulk-unassign-btn" class="btn btn-secondary btn-small" disabled>Unassign</button>
+                        <button id="bulk-group-anonymous-btn" class="btn btn-anonymous btn-small" disabled>Group Anonymous</button>
+                        <button id="bulk-mark-ambiguous-btn" class="btn btn-warning btn-small" disabled>Mark Ambiguous</button>
+                        <button id="auto-cluster-btn" class="btn btn-secondary btn-small">Auto-Cluster</button>
                     </div>
                     {% endif %}
                 </div>

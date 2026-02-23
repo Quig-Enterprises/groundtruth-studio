@@ -773,10 +773,91 @@ const annotationScenarios = {
             'class': {
                 type: 'configurable_dropdown',
                 label: 'Object Class',
-                defaultOptions: ['sedan', 'pickup truck', 'SUV', 'minivan', 'van', 'tractor', 'ATV', 'UTV', 'motorcycle', 'trailer', 'bus', 'semi truck', 'dump truck', 'rowboat', 'fishing boat', 'speed boat', 'pontoon boat', 'kayak', 'canoe', 'sailboat', 'jet ski', 'person', 'other'],
+                defaultOptions: ['sedan', 'pickup truck', 'SUV', 'minivan', 'van', 'tractor', 'ATV', 'UTV', 'skid loader', 'motorcycle', 'trailer', 'bus', 'semi truck', 'dump truck', 'rowboat', 'fishing boat', 'speed boat', 'pontoon boat', 'kayak', 'canoe', 'sailboat', 'jet ski', 'person', 'other'],
                 required: true,
                 allowCustom: true,
                 customPrompt: 'Enter object class'
+            }
+        }
+    },
+
+    // AI-detected identity document
+    'document_detection': {
+        label: 'Document Detection',
+        description: 'AI-detected identity document (passport, license, TWIC, MMC)',
+        category: 'Document Verification',
+        requiresBoundingBox: true,
+        allowEventBoundaries: false,
+        steps: [
+            {
+                id: 'document',
+                label: 'Document',
+                prompt: 'Bounding box around the detected identity document',
+                optional: false,
+                notVisibleOption: false
+            }
+        ],
+        tags: {
+            'document_type': {
+                type: 'dropdown',
+                label: 'Document Type',
+                options: ['passport', 'drivers_license', 'twic_card', 'merchant_mariner_credential', 'id_card_generic'],
+                required: true
+            }
+        }
+    },
+
+    // AI-extracted OCR fields from identity document
+    'document_ocr': {
+        label: 'Document OCR',
+        description: 'AI-extracted text fields from identity document for verification',
+        category: 'Document Verification',
+        requiresBoundingBox: true,
+        allowEventBoundaries: false,
+        steps: [
+            {
+                id: 'text_region',
+                label: 'Text Region',
+                prompt: 'Bounding box around the extracted text region',
+                optional: false,
+                notVisibleOption: false
+            }
+        ],
+        tags: {
+            'holder_name': {
+                type: 'text_autocomplete',
+                label: 'Holder Name',
+                placeholder: 'Full name on document...',
+                required: false,
+                showRecentValues: false
+            },
+            'document_number': {
+                type: 'text_autocomplete',
+                label: 'Document Number',
+                placeholder: 'License/passport/card number...',
+                required: false,
+                showRecentValues: false
+            },
+            'date_of_birth': {
+                type: 'text_autocomplete',
+                label: 'Date of Birth',
+                placeholder: 'MM/DD/YYYY',
+                required: false,
+                showRecentValues: false
+            },
+            'expiry_date': {
+                type: 'text_autocomplete',
+                label: 'Expiration Date',
+                placeholder: 'MM/DD/YYYY',
+                required: false,
+                showRecentValues: false
+            },
+            'issuing_authority': {
+                type: 'text_autocomplete',
+                label: 'Issuing Authority',
+                placeholder: 'State or agency...',
+                required: false,
+                showRecentValues: false
             }
         }
     },
@@ -817,6 +898,7 @@ const scenarioCategories = {
     'Person Activity': ['person_identification'],
     'Environmental': ['environmental_conditions', 'camera_quality', 'location_context'],
     'Compliance': ['compliance_violation'],
+    'Document Verification': ['document_detection', 'document_ocr'],
     'Events': ['interesting_event', 'audio_event'],
     'Tracking': ['movement_tracking'],
     'Other': ['other']

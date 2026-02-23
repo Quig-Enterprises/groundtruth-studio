@@ -6,7 +6,7 @@ var TrainingGallery = {
     perPage: 60,
     totalPages: 0,
     loading: false,
-    filters: { scenario: '', classification: '', sort: 'confidence', status: 'approved' },
+    filters: { scenario: '', classification: '', sort: 'confidence', status: 'approved', camera: '' },
     selected: new Set(),         // individual prediction IDs
     selectedClusters: new Set(), // "type:id" strings
     clusterMembers: {},          // cache: "type:id" -> [items]
@@ -32,6 +32,7 @@ var TrainingGallery = {
     async loadFilters() {
         try {
             const filterParams = new URLSearchParams({ status: this.filters.status });
+            if (this.filters.camera) filterParams.set('camera', this.filters.camera);
             const resp = await fetch('/api/training-gallery/filters?' + filterParams);
             const data = await resp.json();
 
@@ -62,6 +63,27 @@ var TrainingGallery = {
             } else if (pendingBtn) {
                 var oldBadge = pendingBtn.querySelector('.count-badge');
                 if (oldBadge) oldBadge.remove();
+            }
+
+            // Load camera list
+            try {
+                const camResp = await fetch('/api/training-gallery/cameras?status=' + this.filters.status);
+                const camData = await camResp.json();
+                if (camData.success) {
+                    const camSel = document.getElementById('camera-filter');
+                    if (camSel) {
+                        while (camSel.options.length > 1) camSel.remove(1);
+                        camData.cameras.forEach(c => {
+                            const opt = document.createElement('option');
+                            opt.value = c.name;
+                            opt.textContent = c.name + ' (' + c.count + ')';
+                            camSel.appendChild(opt);
+                        });
+                        camSel.value = this.filters.camera;
+                    }
+                }
+            } catch (e) {
+                console.error('Failed to load cameras:', e);
             }
         } catch (e) {
             console.error('Failed to load filters:', e);
@@ -101,6 +123,7 @@ var TrainingGallery = {
         });
         if (this.filters.scenario) params.set('scenario', this.filters.scenario);
         if (this.filters.classification) params.set('classification', this.filters.classification);
+        if (this.filters.camera) params.set('camera', this.filters.camera);
 
         try {
             const resp = await fetch('/api/training-gallery/items?' + params);
@@ -158,6 +181,7 @@ var TrainingGallery = {
             card.dataset.clusterType = item.cluster_type;
             card.dataset.clusterId = item.cluster_id;
         }
+        if (item.scenario) card.dataset.scenario = item.scenario;
 
         // Checkbox wrapper
         const checkWrap = document.createElement('div');
@@ -177,23 +201,89 @@ var TrainingGallery = {
         const imgWrap = document.createElement('div');
         imgWrap.className = 'card-image';
 
-        const img = document.createElement('img');
-        img.alt = '';
-        img.dataset.src = '/api/training-gallery/crop/' + item.id;
-        img.dataset.retries = '0';
-        img.onerror = function() {
-            var r = parseInt(this.dataset.retries || '0');
-            if (r < 3) {
-                this.dataset.retries = r + 1;
-                setTimeout(() => { this.src = this.src.split('?')[0] + '?r=' + (r + 1); }, 500 * (r + 1));
+        // Check if this is a document prediction that should show full image + bbox
+        var isDocScenario = item.scenario && (item.scenario.indexOf('document') === 0);
+
+        if (isDocScenario) {
+            // Use canvas for bbox overlay on full image
+            var canvas = document.createElement('canvas');
+            canvas.className = 'bbox-canvas';
+            var loadImg = new Image();
+
+            var drawBbox = function() {
+                var displayW = imgWrap.clientWidth || 200;
+                var displayH = displayW;
+                canvas.width = displayW;
+                canvas.height = displayH;
+
+                var ctx = canvas.getContext('2d');
+                var scale = Math.min(displayW / loadImg.width, displayH / loadImg.height);
+                var drawW = loadImg.width * scale;
+                var drawH = loadImg.height * scale;
+                var offX = (displayW - drawW) / 2;
+                var offY = (displayH - drawH) / 2;
+                ctx.drawImage(loadImg, offX, offY, drawW, drawH);
+
+                // Draw bbox
+                if (item.bbox_x != null && item.bbox_width != null) {
+                    var vidW = item.video_width || loadImg.width;
+                    var vidH = item.video_height || loadImg.height;
+                    // bbox coords are in video pixel space
+                    var bx = offX + (item.bbox_x / vidW) * drawW;
+                    var by = offY + (item.bbox_y / vidH) * drawH;
+                    var bw = (item.bbox_width / vidW) * drawW;
+                    var bh = (item.bbox_height / vidH) * drawH;
+
+                    ctx.strokeStyle = '#7C3AED';
+                    ctx.lineWidth = 2;
+                    ctx.strokeRect(bx, by, bw, bh);
+
+                    // Label
+                    var label = item.classification || 'document';
+                    ctx.font = '11px system-ui';
+                    var tw = ctx.measureText(label).width;
+                    ctx.fillStyle = '#7C3AED';
+                    ctx.fillRect(bx, by - 16, tw + 8, 16);
+                    ctx.fillStyle = '#fff';
+                    ctx.fillText(label, bx + 4, by - 4);
+                }
+            };
+
+            loadImg.onload = drawBbox;
+            // Use data-src for lazy loading
+            loadImg.dataset.src = '/api/training-gallery/full-image/' + item.id;
+            canvas.dataset.loadImg = 'pending';
+
+            imgWrap.appendChild(canvas);
+
+            // Store reference for lazy loading
+            canvas._loadImg = loadImg;
+
+            if (this.imageObserver) {
+                this.imageObserver.observe(canvas);
+            } else {
+                loadImg.src = loadImg.dataset.src;
             }
-        };
-        if (this.imageObserver) {
-            this.imageObserver.observe(img);
         } else {
-            img.src = img.dataset.src;
+            // Existing img element code for non-document predictions
+            var img = document.createElement('img');
+            img.alt = '';
+            img.dataset.src = '/api/training-gallery/crop/' + item.id;
+            img.dataset.retries = '0';
+            img.onerror = function() {
+                var r = parseInt(this.dataset.retries || '0');
+                if (r < 3) {
+                    this.dataset.retries = r + 1;
+                    setTimeout(() => { this.src = this.src.split('?')[0] + '?r=' + (r + 1); }, 500 * (r + 1));
+                }
+            };
+            if (this.imageObserver) {
+                this.imageObserver.observe(img);
+            } else {
+                img.src = img.dataset.src;
+            }
+            imgWrap.appendChild(img);
         }
-        imgWrap.appendChild(img);
 
         // Cluster badge (static SVG + count text — no user data in markup)
         if (isCluster) {
@@ -268,12 +358,15 @@ var TrainingGallery = {
         this.imageObserver = new IntersectionObserver((entries) => {
             entries.forEach(entry => {
                 if (entry.isIntersecting) {
-                    const img = entry.target;
-                    if (img.dataset.src) {
-                        img.src = img.dataset.src;
-                        delete img.dataset.src;
+                    var el = entry.target;
+                    if (el.tagName === 'IMG' && el.dataset.src) {
+                        el.src = el.dataset.src;
+                        delete el.dataset.src;
+                    } else if (el.tagName === 'CANVAS' && el._loadImg && el._loadImg.dataset.src) {
+                        el._loadImg.src = el._loadImg.dataset.src;
+                        delete el._loadImg.dataset.src;
                     }
-                    this.imageObserver.unobserve(img);
+                    this.imageObserver.unobserve(el);
                 }
             });
         }, { rootMargin: '200px' });
@@ -516,11 +609,12 @@ var TrainingGallery = {
 
     // ── Bulk Actions ─────────────────────────────────────────────────────
 
-    async executeBulkAction(action, predictionIds, newClassification) {
+    async executeBulkAction(action, predictionIds, newClassification, actualClass) {
         if (!predictionIds.length) return;
 
         const body = { action: action, prediction_ids: predictionIds };
         if (newClassification) body.new_classification = newClassification;
+        if (actualClass) body.actual_class = actualClass;
 
         try {
             const resp = await fetch('/api/training-gallery/bulk-action', {
@@ -638,6 +732,155 @@ var TrainingGallery = {
         setTimeout(() => { if (toast.parentNode) toast.remove(); }, 3200);
     },
 
+    showRejectPrompt(count, onConfirm) {
+        var noun = count !== 1 ? 'images' : 'image';
+        var dialog = document.getElementById('confirm-dialog');
+        document.getElementById('confirm-message').textContent =
+            'Remove ' + count.toLocaleString() + ' ' + noun + ' from training data?';
+        dialog.style.display = 'flex';
+
+        // Add reject reason UI if not already present
+        var reasonWrap = document.getElementById('reject-reason-wrap');
+        if (!reasonWrap) {
+            reasonWrap = document.createElement('div');
+            reasonWrap.id = 'reject-reason-wrap';
+            reasonWrap.style.cssText = 'margin-top:12px;text-align:left';
+
+            var label = document.createElement('label');
+            label.textContent = 'What is this actually? (optional, helps training)';
+            label.style.cssText = 'display:block;font-size:13px;color:#94a3b8;margin-bottom:4px';
+            reasonWrap.appendChild(label);
+
+            var select = document.createElement('select');
+            select.id = 'reject-reason-select';
+            select.style.cssText = 'width:100%;padding:6px 8px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;font-size:14px';
+            var options = [
+                ['', '— Skip (no reason) —'],
+                ['tree', 'Tree / Bush'],
+                ['shadow', 'Shadow'],
+                ['animal', 'Animal'],
+                ['person', 'Person (not vehicle)'],
+                ['reflection', 'Reflection'],
+                ['sign', 'Sign / Post'],
+                ['building', 'Building / Structure'],
+                ['other', 'Other']
+            ];
+            options.forEach(function(o) {
+                var opt = document.createElement('option');
+                opt.value = o[0];
+                opt.textContent = o[1];
+                select.appendChild(opt);
+            });
+            reasonWrap.appendChild(select);
+
+            var msgEl = document.getElementById('confirm-message');
+            msgEl.parentNode.insertBefore(reasonWrap, msgEl.nextSibling);
+        } else {
+            reasonWrap.style.display = '';
+            document.getElementById('reject-reason-select').value = '';
+        }
+
+        var okBtn = document.getElementById('confirm-ok');
+        var cancelBtn = document.getElementById('confirm-cancel');
+        var newOk = okBtn.cloneNode(true);
+        var newCancel = cancelBtn.cloneNode(true);
+        okBtn.replaceWith(newOk);
+        cancelBtn.replaceWith(newCancel);
+
+        var close = function() {
+            dialog.style.display = 'none';
+            if (reasonWrap) reasonWrap.style.display = 'none';
+        };
+        newOk.addEventListener('click', function() {
+            var reason = document.getElementById('reject-reason-select').value || null;
+            close();
+            onConfirm(reason);
+        });
+        newCancel.addEventListener('click', close);
+    },
+
+    showSubtypePrompt(count, onConfirm) {
+        var noun = count !== 1 ? 'images' : 'image';
+        var dialog = document.getElementById('confirm-dialog');
+        document.getElementById('confirm-message').textContent =
+            'Approve ' + count.toLocaleString() + ' ' + noun + '. Classify vehicle type?';
+        dialog.style.display = 'flex';
+
+        // Add subtype picker UI
+        var subtypeWrap = document.getElementById('subtype-picker-wrap');
+        if (!subtypeWrap) {
+            subtypeWrap = document.createElement('div');
+            subtypeWrap.id = 'subtype-picker-wrap';
+            subtypeWrap.style.cssText = 'margin-top:12px;text-align:left';
+
+            var label = document.createElement('label');
+            label.textContent = 'Vehicle subtype (optional, skip to approve as-is)';
+            label.style.cssText = 'display:block;font-size:13px;color:#94a3b8;margin-bottom:4px';
+            subtypeWrap.appendChild(label);
+
+            var select = document.createElement('select');
+            select.id = 'subtype-picker-select';
+            select.style.cssText = 'width:100%;padding:6px 8px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;font-size:14px';
+            var options = [
+                ['', '— Skip (approve without classifying) —'],
+                ['sedan', 'Sedan'],
+                ['pickup truck', 'Pickup Truck'],
+                ['suv', 'SUV'],
+                ['minivan', 'Minivan'],
+                ['van', 'Van'],
+                ['semi truck', 'Semi Truck'],
+                ['dump truck', 'Dump Truck'],
+                ['bus', 'Bus'],
+                ['motorcycle', 'Motorcycle'],
+                ['atv', 'ATV'],
+                ['utv', 'UTV'],
+                ['tractor', 'Tractor'],
+                ['trailer', 'Trailer'],
+                ['golf cart', 'Golf Cart'],
+                ['skid loader', 'Skid Loader'],
+                ['boat', 'Boat'],
+                ['person', 'Person']
+            ];
+            options.forEach(function(o) {
+                var opt = document.createElement('option');
+                opt.value = o[0];
+                opt.textContent = o[1];
+                select.appendChild(opt);
+            });
+            subtypeWrap.appendChild(select);
+
+            var msgEl = document.getElementById('confirm-message');
+            msgEl.parentNode.insertBefore(subtypeWrap, msgEl.nextSibling);
+        } else {
+            subtypeWrap.style.display = '';
+            document.getElementById('subtype-picker-select').value = '';
+        }
+
+        // Hide reject reason if visible
+        var rejectWrap = document.getElementById('reject-reason-wrap');
+        if (rejectWrap) rejectWrap.style.display = 'none';
+
+        var okBtn = document.getElementById('confirm-ok');
+        var cancelBtn = document.getElementById('confirm-cancel');
+        var newOk = okBtn.cloneNode(true);
+        var newCancel = cancelBtn.cloneNode(true);
+        newOk.textContent = 'Approve';
+        newOk.className = 'btn btn-primary';
+        okBtn.replaceWith(newOk);
+        cancelBtn.replaceWith(newCancel);
+
+        var close = function() {
+            dialog.style.display = 'none';
+            if (subtypeWrap) subtypeWrap.style.display = 'none';
+        };
+        newOk.addEventListener('click', function() {
+            var subtype = document.getElementById('subtype-picker-select').value || null;
+            close();
+            onConfirm(subtype);
+        });
+        newCancel.addEventListener('click', close);
+    },
+
     // ── Stats ────────────────────────────────────────────────────────────
 
     updateModeButtons() {
@@ -669,6 +912,9 @@ var TrainingGallery = {
                 this.filters.classification = '';
                 document.getElementById('scenario-filter').value = '';
                 document.getElementById('classification-filter').value = '';
+                this.filters.camera = '';
+                var cameraFilter = document.getElementById('camera-filter');
+                if (cameraFilter) cameraFilter.value = '';
                 this.page = 1;
                 this.items = [];
                 this.selected.clear();
@@ -695,6 +941,15 @@ var TrainingGallery = {
             this.filters.classification = e.target.value;
             this.resetAndReload();
         });
+
+        // Camera filter
+        var cameraFilter = document.getElementById('camera-filter');
+        if (cameraFilter) {
+            cameraFilter.addEventListener('change', (e) => {
+                this.filters.camera = e.target.value;
+                this.resetAndReload();
+            });
+        }
 
         document.getElementById('sort-select').addEventListener('change', (e) => {
             this.filters.sort = e.target.value;
@@ -723,26 +978,32 @@ var TrainingGallery = {
             this.executeBulkAction('reclassify', ids, newClass);
         });
 
-        // Action bar — Requeue / Approve
+        // Action bar — Requeue / Approve (with subtype picker in pending mode)
         document.getElementById('btn-requeue').addEventListener('click', async () => {
             const ids = await this.getSelectedPredictionIds();
             const n = ids.length;
             const isPending = this.filters.status === 'pending';
-            const action = isPending ? 'approve' : 'requeue';
-            const msg = isPending
-                ? 'Approve ' + n.toLocaleString() + ' image' + (n !== 1 ? 's' : '') + '?'
-                : 'Requeue ' + n.toLocaleString() + ' image' + (n !== 1 ? 's' : '') + ' for review?';
-            this.showConfirm(msg, () => this.executeBulkAction(action, ids));
+            if (isPending) {
+                this.showSubtypePrompt(n, (subtype) => {
+                    if (subtype) {
+                        this.executeBulkAction('reclassify', ids, subtype);
+                    } else {
+                        this.executeBulkAction('approve', ids);
+                    }
+                });
+            } else {
+                var msg = 'Requeue ' + n.toLocaleString() + ' image' + (n !== 1 ? 's' : '') + ' for review?';
+                this.showConfirm(msg, () => this.executeBulkAction('requeue', ids));
+            }
         });
 
-        // Action bar — Remove
+        // Action bar — Remove (with optional reject reason)
         document.getElementById('btn-remove').addEventListener('click', async () => {
             const ids = await this.getSelectedPredictionIds();
             const n = ids.length;
-            this.showConfirm(
-                'Permanently remove ' + n.toLocaleString() + ' image' + (n !== 1 ? 's' : '') + ' from training data?',
-                () => this.executeBulkAction('remove', ids)
-            );
+            this.showRejectPrompt(n, (actualClass) => {
+                this.executeBulkAction('remove', ids, null, actualClass);
+            });
         });
 
         // Modal — close
@@ -778,26 +1039,32 @@ var TrainingGallery = {
             this.executeBulkAction('reclassify', Array.from(this.modalSelected), newClass);
         });
 
-        // Modal — Requeue / Approve
+        // Modal — Requeue / Approve (with subtype picker in pending mode)
         document.getElementById('modal-btn-requeue').addEventListener('click', () => {
             const ids = Array.from(this.modalSelected);
             const n = ids.length;
             const isPending = this.filters.status === 'pending';
-            const action = isPending ? 'approve' : 'requeue';
-            const msg = isPending
-                ? 'Approve ' + n + ' image' + (n !== 1 ? 's' : '') + '?'
-                : 'Requeue ' + n + ' image' + (n !== 1 ? 's' : '') + ' for review?';
-            this.showConfirm(msg, () => this.executeBulkAction(action, ids));
+            if (isPending) {
+                this.showSubtypePrompt(n, (subtype) => {
+                    if (subtype) {
+                        this.executeBulkAction('reclassify', ids, subtype);
+                    } else {
+                        this.executeBulkAction('approve', ids);
+                    }
+                });
+            } else {
+                var msg = 'Requeue ' + n + ' image' + (n !== 1 ? 's' : '') + ' for review?';
+                this.showConfirm(msg, () => this.executeBulkAction('requeue', ids));
+            }
         });
 
-        // Modal — Remove
+        // Modal — Remove (with optional reject reason)
         document.getElementById('modal-btn-remove').addEventListener('click', () => {
             const ids = Array.from(this.modalSelected);
             const n = ids.length;
-            this.showConfirm(
-                'Permanently remove ' + n + ' image' + (n !== 1 ? 's' : '') + ' from training data?',
-                () => this.executeBulkAction('remove', ids)
-            );
+            this.showRejectPrompt(n, (actualClass) => {
+                this.executeBulkAction('remove', ids, null, actualClass);
+            });
         });
 
         // Keyboard

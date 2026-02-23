@@ -121,7 +121,7 @@ const predictionReview = {
 
         const scenario = document.createElement('span');
         scenario.className = 'prediction-scenario';
-        scenario.textContent = p.scenario === 'person_identification' ? 'Person ID' : p.scenario;
+        scenario.textContent = p.scenario === 'person_identification' ? 'Person ID' : p.scenario === 'document_ocr' ? 'Doc OCR' : p.scenario === 'document_detection' ? 'Doc Detect' : p.scenario;
 
         const confClass = p.confidence >= 0.9 ? 'conf-high' : p.confidence >= 0.7 ? 'conf-medium' : 'conf-low';
         const confPill = document.createElement('span');
@@ -152,6 +152,55 @@ const predictionReview = {
                 personInfo.appendChild(match);
 
                 header.appendChild(personInfo);
+            }
+        }
+
+        // Document OCR field summary
+        if (p.scenario === 'document_ocr' && p.predicted_tags) {
+            const tags = typeof p.predicted_tags === 'string' ? JSON.parse(p.predicted_tags) : p.predicted_tags;
+            const ocrFields = tags.ocr_fields;
+            if (ocrFields) {
+                const docInfo = document.createElement('div');
+                docInfo.style.cssText = 'padding:6px 8px;background:#1a1a2e;border-radius:4px;margin-top:4px;font-size:12px;';
+
+                const docType = tags.document_type || p.predicted_class || 'Document';
+                const typeLabel = document.createElement('div');
+                typeLabel.style.cssText = 'color:#9333EA;font-weight:600;margin-bottom:3px;font-size:13px;';
+                typeLabel.textContent = docType.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+                docInfo.appendChild(typeLabel);
+
+                const fieldKeys = Object.keys(ocrFields).slice(0, 4);
+                fieldKeys.forEach(key => {
+                    const field = ocrFields[key];
+                    const row = document.createElement('div');
+                    row.style.cssText = 'display:flex;justify-content:space-between;padding:1px 0;';
+
+                    const label = document.createElement('span');
+                    label.style.color = '#95a5a6';
+                    label.textContent = key.replace(/_/g, ' ') + ':';
+
+                    const val = document.createElement('span');
+                    val.style.color = '#ecf0f1';
+                    const fieldVal = typeof field === 'object' ? (field.value || '') : field;
+                    val.textContent = fieldVal;
+
+                    if (typeof field === 'object' && field.confidence != null && field.confidence < 0.7) {
+                        val.style.color = '#f39c12';
+                    }
+
+                    row.appendChild(label);
+                    row.appendChild(val);
+                    docInfo.appendChild(row);
+                });
+
+                if (Object.keys(ocrFields).length > 4) {
+                    const more = document.createElement('div');
+                    more.style.cssText = 'color:#7f8c8d;font-size:11px;margin-top:2px;';
+                    more.textContent = '+' + (Object.keys(ocrFields).length - 4) + ' more fields';
+                    docInfo.appendChild(more);
+                }
+
+                header.appendChild(docInfo);
             }
         }
 

@@ -35,7 +35,7 @@ VEHICLE_CLASSES = {
     'sedan', 'pickup truck', 'suv', 'minivan', 'van', 'tractor', 'atv', 'utv',
     'snowmobile', 'golf cart', 'motorcycle', 'trailer', 'bus', 'semi truck',
     'dump truck', 'rowboat', 'fishing boat', 'speed boat', 'pontoon boat',
-    'kayak', 'canoe', 'sailboat', 'jet ski', 'person'
+    'kayak', 'canoe', 'sailboat', 'jet ski', 'person', 'fence'
 }
 
 HUMAN_REVIEWERS = {'mobile_reviewer', 'studio_user', 'test_reviewer'}

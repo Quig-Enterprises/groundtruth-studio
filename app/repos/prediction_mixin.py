@@ -11,7 +11,7 @@ VEHICLE_CLASSES = {
     'sedan', 'pickup truck', 'suv', 'minivan', 'van', 'tractor', 'atv', 'utv',
     'snowmobile', 'golf cart', 'motorcycle', 'trailer', 'bus', 'semi truck',
     'dump truck', 'rowboat', 'fishing boat', 'speed boat', 'pontoon boat',
-    'kayak', 'canoe', 'sailboat', 'jet ski', 'person'
+    'kayak', 'canoe', 'sailboat', 'jet ski', 'person', 'fence'
 }
 
 
@@ -41,12 +41,18 @@ class PredictionMixin:
         ids = []
         with get_cursor() as cursor:
             for pred in predictions:
+                # Extract classification from tags if available
+                classification = pred.get('tags', {}).get('class') or pred.get('tags', {}).get('vehicle_type')
+                if classification:
+                    classification = classification.lower()
+
                 cursor.execute('''
                     INSERT INTO ai_predictions
                     (video_id, model_name, model_version, prediction_type, confidence,
                      timestamp, start_time, end_time, bbox_x, bbox_y, bbox_width, bbox_height,
-                     scenario, predicted_tags, batch_id, inference_time_ms, review_status, parent_prediction_id)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     scenario, predicted_tags, batch_id, inference_time_ms, review_status, parent_prediction_id,
+                     classification)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 ''', (
                     video_id, model_name, model_version,
@@ -59,7 +65,8 @@ class PredictionMixin:
                     batch_id,
                     pred.get('inference_time_ms'),
                     initial_status,
-                    pred.get('parent_prediction_id')
+                    pred.get('parent_prediction_id'),
+                    classification
                 ))
                 result = cursor.fetchone()
                 ids.append(result['id'])
@@ -409,7 +416,7 @@ class PredictionMixin:
             # params repeated 5x (predictions, vehicles, people, plates, boat_reg) + camera_params per filter
             # Each FILTER clause uses conf_filter params + camera_params
             filter_params = params + camera_params
-            all_params = filter_params * 5 + camera_params  # needs_reclassification only uses camera_params
+            all_params = filter_params * 6 + camera_params  # needs_reclassification only uses camera_params
 
             cursor.execute('''
                 SELECT
@@ -418,6 +425,7 @@ class PredictionMixin:
                     COUNT(*) FILTER (WHERE p.review_status = 'pending' AND p.scenario IN ('person_detection', 'face_detection', 'person_identification') ''' + conf_filter + ' ' + camera_filter + ''') as people,
                     COUNT(*) FILTER (WHERE p.review_status = 'pending' AND p.scenario = 'license_plate' ''' + conf_filter + ' ' + camera_filter + ''') as plates,
                     COUNT(*) FILTER (WHERE p.review_status = 'pending' AND p.scenario = 'boat_registration' ''' + conf_filter + ' ' + camera_filter + ''') as boat_reg,
+                    COUNT(*) FILTER (WHERE p.review_status = 'pending' AND p.scenario IN ('document_detection', 'document_ocr') ''' + conf_filter + ' ' + camera_filter + ''') as documents,
                     COUNT(*) FILTER (WHERE p.review_status = 'needs_reclassification' ''' + camera_filter + ''') as needs_reclassification
                 ''' + from_clause + '''
             ''', all_params)
@@ -638,11 +646,13 @@ class PredictionMixin:
                 if not pred_id or not vehicle_subtype:
                     results['failed'] += 1
                     continue
+                vehicle_subtype_normalized = vehicle_subtype.lower().strip()
                 # Merge into existing corrected_tags (or create new)
                 # Also set review_status to approved if still pending
                 cursor.execute('''
                     UPDATE ai_predictions
                     SET corrected_tags = COALESCE(corrected_tags, '{}'::jsonb) || %s::jsonb,
+                        classification = %s,
                         review_status = 'approved',
                         reviewed_by = COALESCE(reviewed_by, %s),
                         reviewed_at = COALESCE(reviewed_at, NOW())
@@ -652,10 +662,11 @@ class PredictionMixin:
                     RETURNING id, review_status
                 ''', (
                     extras.Json({
-                        'vehicle_subtype': vehicle_subtype,
+                        'vehicle_subtype': vehicle_subtype_normalized,
                         'classified_by': classifier,
                         'classified_at': datetime.utcnow().isoformat()
                     }),
+                    vehicle_subtype_normalized,
                     classifier,
                     pred_id
                 ))
@@ -731,12 +742,14 @@ class PredictionMixin:
 
     def batch_update_vehicle_class(self, prediction_ids, vehicle_subtype, updater='studio_user'):
         """Bulk reclassify predictions to a new vehicle_subtype."""
+        vehicle_subtype_normalized = vehicle_subtype.lower().strip()
         results = {'updated': 0, 'failed': 0}
         with get_cursor() as cursor:
             for pred_id in prediction_ids:
                 cursor.execute('''
                     UPDATE ai_predictions
                     SET corrected_tags = COALESCE(corrected_tags, '{}'::jsonb) || %s::jsonb,
+                        classification = %s,
                         review_status = 'approved',
                         reviewed_by = COALESCE(reviewed_by, %s),
                         reviewed_at = COALESCE(reviewed_at, NOW())
@@ -746,10 +759,11 @@ class PredictionMixin:
                     RETURNING id
                 ''', (
                     extras.Json({
-                        'vehicle_subtype': vehicle_subtype,
+                        'vehicle_subtype': vehicle_subtype_normalized,
                         'classified_by': updater,
                         'classified_at': datetime.utcnow().isoformat()
                     }),
+                    vehicle_subtype_normalized,
                     updater,
                     pred_id
                 ))

@@ -300,8 +300,19 @@ class TrackMixin:
             ''', values)
             return cursor.rowcount > 0
 
-    def get_interpolation_tracks(self, video_id: int = None, status: str = None) -> List[Dict]:
-        """Get interpolation tracks, optionally filtered by video_id and/or status."""
+    def get_interpolation_tracks(self, video_id: int = None, status: str = None,
+                                  limit: int = 50, offset: int = 0) -> Dict:
+        """Get interpolation tracks, optionally filtered by video_id and/or status.
+
+        Args:
+            video_id: Optional video ID filter
+            status: Optional status filter
+            limit: Number of tracks to return (default 50)
+            offset: Number of tracks to skip (default 0)
+
+        Returns:
+            Dict with 'tracks', 'total', and 'has_more' keys
+        """
         with get_cursor(commit=False) as cursor:
             conditions = []
             params = []
@@ -313,15 +324,34 @@ class TrackMixin:
                 params.append(status)
 
             where = ('WHERE ' + ' AND '.join(conditions)) if conditions else ''
+
+            # Get total count first
+            cursor.execute(f'''
+                SELECT COUNT(*) as count
+                FROM interpolation_tracks t
+                JOIN videos v ON t.video_id = v.id
+                {where}
+            ''', params)
+            total = cursor.fetchone()['count']
+
+            # Get paginated results
+            paginated_params = params + [limit, offset]
             cursor.execute(f'''
                 SELECT t.*, v.filename as video_filename, v.title as video_title
                 FROM interpolation_tracks t
                 JOIN videos v ON t.video_id = v.id
                 {where}
                 ORDER BY t.created_at DESC
-            ''', params)
+                LIMIT %s OFFSET %s
+            ''', paginated_params)
             rows = cursor.fetchall()
-            return [dict(row) for row in rows]
+            tracks = [dict(row) for row in rows]
+
+            return {
+                'tracks': tracks,
+                'total': total,
+                'has_more': offset + len(tracks) < total
+            }
 
     def get_interpolation_track(self, track_id: int) -> Optional[Dict]:
         """Get a single interpolation track with anchor prediction details."""

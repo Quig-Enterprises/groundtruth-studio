@@ -12,6 +12,8 @@ import cv2
 from database import VideoDatabase
 from psycopg2 import extras
 from db_connection import get_connection
+import logging
+logger = logging.getLogger(__name__)
 
 
 class YOLOExporter:
@@ -168,6 +170,79 @@ class YOLOExporter:
 
         return list(video_ids)
 
+    def _try_upgrade_placeholder(self, video: dict) -> Optional[Path]:
+        """
+        If video is an EcoEye placeholder, attempt to download the full video
+        clip from the relay, upgrade the DB record, and return the path to the
+        downloaded file.  Returns None on failure (caller falls through to thumbnail).
+        """
+        if not video['filename'].endswith('.placeholder'):
+            return None
+        original_url = video.get('original_url') or ''
+        if not original_url.startswith('ecoeye://'):
+            return None
+
+        event_id = original_url.replace('ecoeye://', '', 1)
+        video_id = video['id']
+
+        try:
+            # Lazy imports to avoid circular dependency (exporter is created in services.py)
+            from services import ecoeye_request, ECOEYE_API_BASE, downloader, processor, DOWNLOAD_DIR
+
+            # Query EcoEye for event details
+            resp = ecoeye_request('GET', 'api-thumbnails.php',
+                params={'event_id': event_id},
+                timeout=30
+            )
+            result = resp.json()
+            events = result.get('events', [])
+            if not events:
+                logger.warning("EcoEye upgrade: event %s not found on relay", event_id)
+                return None
+
+            event = events[0]
+            video_path_remote = event.get('video_path')
+            if not video_path_remote:
+                logger.warning("EcoEye upgrade: no video_path for event %s", event_id)
+                return None
+
+            # Build download URL (same logic as routes/ecoeye.py line 223-224)
+            video_filename = video_path_remote.split('/videos/')[-1] if '/videos/' in video_path_remote else video_path_remote
+            video_url = f'{ECOEYE_API_BASE}/videos/{video_filename}'
+
+            # Download the video
+            dl_result = downloader.download_video(video_url)
+            if not dl_result.get('success'):
+                logger.warning("EcoEye upgrade: download failed for event %s: %s",
+                    event_id, dl_result.get('error', 'unknown'))
+                return None
+
+            # Upgrade the database record
+            self.db.update_video(video_id, filename=dl_result['filename'])
+
+            # Extract and update thumbnail
+            thumb = processor.extract_thumbnail(str(DOWNLOAD_DIR / dl_result['filename']))
+            if thumb.get('success'):
+                self.db.update_video(video_id, thumbnail_path=thumb['thumbnail_path'])
+
+            # Stamp upgrade metadata
+            from db_connection import get_connection
+            from datetime import datetime
+            with get_connection() as conn:
+                cursor = conn.cursor()
+                cursor.execute(
+                    "UPDATE videos SET metadata = COALESCE(metadata, '{}'::jsonb) || %s WHERE id = %s",
+                    (json.dumps({"upgraded_at": datetime.now().isoformat(), "upgraded_by": "yolo_export"}), video_id)
+                )
+                conn.commit()
+
+            logger.info("EcoEye upgrade: placeholder %s upgraded to %s", event_id, dl_result['filename'])
+            return self.videos_dir / dl_result['filename']
+
+        except Exception:
+            logger.warning("EcoEye upgrade: failed for event %s", event_id, exc_info=True)
+            return None
+
     def export_dataset(self, config_id: int, output_name: Optional[str] = None,
                        val_split: float = 0.2, seed: int = 42) -> Dict:
         """
@@ -214,6 +289,7 @@ class YOLOExporter:
         train_count = 0
         val_count = 0
         negative_frame_count = 0
+        upgraded_count = 0
 
         # Collect annotations grouped by frame (video_id + timestamp)
         # Each unique frame gets one image file with all its bboxes in one label file
@@ -251,6 +327,12 @@ class YOLOExporter:
                     if not is_neg and ann['activity_tag'] not in config['class_mapping']:
                         continue
 
+                    # Skip tiny bboxes that are too small for useful training data
+                    min_bbox_dim = config.get('min_bbox_dim', 32)
+                    if not is_neg and min_bbox_dim > 0:
+                        if (ann.get('bbox_width') or 0) < min_bbox_dim or (ann.get('bbox_height') or 0) < min_bbox_dim:
+                            continue
+
                     key = (video_id, ann['timestamp'])
                     if key not in frame_groups:
                         frame_groups[key] = {'video': video, 'positive': [], 'negative': []}
@@ -269,6 +351,7 @@ class YOLOExporter:
         # Process each frame
         image_exts = {'.jpg', '.jpeg', '.png', '.bmp', '.tiff', '.webp'}
         open_caps = {}
+        upgraded_videos = {}  # video_id -> refreshed video dict (avoid duplicate upgrades)
         for idx, ((video_id, timestamp), group) in enumerate(all_frames):
             split = 'val' if idx in val_set else 'train'
             images_dir = export_dir / split / 'images'
@@ -276,6 +359,23 @@ class YOLOExporter:
 
             video = group['video']
             video_path = self.videos_dir / video['filename']
+            # Try to upgrade EcoEye placeholder to full video
+            if video['filename'].endswith('.placeholder'):
+                if video_id in upgraded_videos:
+                    # Already upgraded in a previous frame iteration
+                    video = upgraded_videos[video_id]
+                    video_path = self.videos_dir / video['filename']
+                else:
+                    upgraded_path = self._try_upgrade_placeholder(video)
+                    if upgraded_path:
+                        video_path = upgraded_path
+                        # Re-fetch video record with updated filename/thumbnail
+                        with get_connection() as conn2:
+                            up_cursor = conn2.cursor(cursor_factory=extras.RealDictCursor)
+                            up_cursor.execute('SELECT * FROM videos WHERE id = %s', (video_id,))
+                            video = dict(up_cursor.fetchone())
+                        upgraded_videos[video_id] = video
+                        upgraded_count += 1
             thumbnail_path = Path(video['thumbnail_path']) if video.get('thumbnail_path') else None
             frame = None
             img_width = None
@@ -382,6 +482,7 @@ names:
 - Total Frames: {total_frames} (train: {train_count}, val: {val_count})
 - Total Annotations: {total_annotations}
 - Negative Frames (hard negatives): {negative_frame_count}
+- Upgraded Placeholders: {upgraded_count}
 
 ## Class Mapping
 
@@ -452,6 +553,7 @@ python train.py --data {yaml_path.absolute()} --weights yolov5s.pt --epochs 100
             'train_count': train_count,
             'val_count': val_count,
             'negative_frame_count': negative_frame_count,
+            'upgraded_count': upgraded_count,
             'class_mapping': config['class_mapping']
         }
 

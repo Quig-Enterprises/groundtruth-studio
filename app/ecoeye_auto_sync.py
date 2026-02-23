@@ -167,7 +167,7 @@ class EcoEyeAutoSync:
                     cursor = conn.cursor()
                     cursor.execute(
                         "UPDATE ecoeye_alerts SET video_downloaded = true, "
-                        "local_video_path = %s WHERE alert_id = %s",
+                        "local_video_path = %s, downloaded_at = NOW() WHERE alert_id = %s",
                         (filepath, alert_id),
                     )
                     conn.commit()
@@ -235,7 +235,7 @@ class EcoEyeAutoSync:
             cursor = conn.cursor()
             cursor.execute(
                 "SELECT alert_id, local_video_path FROM ecoeye_alerts "
-                "WHERE video_downloaded = true AND timestamp < %s",
+                "WHERE video_downloaded = true AND COALESCE(downloaded_at, timestamp) < %s",
                 (cutoff,),
             )
             rows = cursor.fetchall()
@@ -264,7 +264,57 @@ class EcoEyeAutoSync:
                     exc_info=True,
                 )
 
-        return {"cleaned": cleaned}
+        # Second pass: clean up exporter-upgraded EcoEye videos past retention
+        upgraded_cleaned = 0
+        with get_connection() as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                SELECT id, filename FROM videos
+                WHERE original_url LIKE 'ecoeye://%%'
+                  AND filename NOT LIKE '%%.placeholder'
+                  AND (metadata->>'upgraded_at') IS NOT NULL
+                  AND (metadata->>'upgraded_at')::timestamp < %s
+                  AND COALESCE((metadata->>'retain')::boolean, false) = false
+            """, (cutoff,))
+            upgraded_rows = cursor.fetchall()
+
+        for row in upgraded_rows:
+            vid_id = row[0]
+            filename = row[1]
+
+            try:
+                # Delete the downloaded video file
+                video_file = self.download_dir / filename
+                video_file.unlink(missing_ok=True)
+
+                # Revert to placeholder state
+                with get_connection() as conn:
+                    cursor = conn.cursor()
+                    cursor.execute(
+                        "SELECT original_url FROM videos WHERE id = %s", (vid_id,)
+                    )
+                    url_row = cursor.fetchone()
+                    if url_row and url_row[0]:
+                        event_id = url_row[0].replace('ecoeye://', '', 1)
+                        placeholder_name = f'ecoeye_metadata_{event_id}.placeholder'
+                        cursor.execute(
+                            "UPDATE videos SET filename = %s, "
+                            "metadata = COALESCE(metadata, '{}'::jsonb) - 'upgraded_at' - 'upgraded_by' "
+                            "WHERE id = %s",
+                            (placeholder_name, vid_id)
+                        )
+                        conn.commit()
+
+                upgraded_cleaned += 1
+                logger.debug("EcoEye cleanup: reverted upgraded video %s to placeholder", vid_id)
+
+            except Exception:
+                logger.warning(
+                    "EcoEye cleanup: error reverting upgraded video %s", vid_id,
+                    exc_info=True,
+                )
+
+        return {"cleaned": cleaned, "upgraded_cleaned": upgraded_cleaned}
 
     # ------------------------------------------------------------------
     # Status reporting

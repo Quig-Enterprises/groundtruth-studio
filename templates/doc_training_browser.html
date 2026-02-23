@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groundtruth Studio - Document Training Data</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="{{ static_v('css/doc-training-browser.css') }}">
+</head>
+<body>
+    {% include 'partials/nav.html' %}
+
+    <!-- Page Header -->
+    <div class="gallery-header">
+        <h1>Document Training Data</h1>
+        <p class="subtitle">Browse YOLO training images with bounding box annotations</p>
+    </div>
+
+    <!-- Filter Bar (sticky) -->
+    <div class="filter-bar" id="filter-bar">
+        <div class="filter-group">
+            <div class="status-toggle" id="split-toggle">
+                <button class="toggle-btn active" data-split="train">Train</button>
+                <button class="toggle-btn" data-split="val">Val</button>
+                <button class="toggle-btn" data-split="test">Test</button>
+            </div>
+            <select id="class-filter" class="filter-select">
+                <option value="">All Classes</option>
+                <option value="0">passport</option>
+                <option value="1">drivers_license</option>
+                <option value="2">twic_card</option>
+                <option value="3">merchant_mariner_credential</option>
+                <option value="4">id_card_generic</option>
+            </select>
+            <select id="source-filter" class="filter-select">
+                <option value="">All Sources</option>
+            </select>
+            <select id="issuer-filter" class="filter-select">
+                <option value="">All Issuers</option>
+            </select>
+        </div>
+        <div class="filter-stats" id="filter-stats"></div>
+    </div>
+
+    <!-- Main Gallery Grid -->
+    <div class="gallery-grid" id="gallery-grid">
+        <div class="loading-state" id="initial-loading">Loading training images...</div>
+    </div>
+
+    <!-- Scroll sentinel for infinite scroll -->
+    <div id="scroll-sentinel" style="height:1px"></div>
+
+    <!-- Image Detail Modal -->
+    <div class="modal-overlay" id="image-modal" style="display:none">
+        <div class="modal-content image-detail-modal">
+            <div class="modal-header">
+                <div class="modal-title">
+                    <h2 id="modal-filename">Image</h2>
+                    <span class="modal-count" id="modal-dimensions"></span>
+                </div>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="modal-image-wrap">
+                    <canvas id="modal-canvas" class="modal-bbox-canvas"></canvas>
+                </div>
+                <div class="modal-bbox-table" id="modal-bbox-table"></div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ static_v('js/doc-training-browser.js') }}"></script>
+</body>
+</html>

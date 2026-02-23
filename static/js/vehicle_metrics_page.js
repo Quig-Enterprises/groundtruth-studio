@@ -45,7 +45,7 @@ const vehicleMetrics = {
     // Current per-class thresholds from vehicle_detect_runner.py
     CURRENT_THRESHOLDS: {
         'sedan': 0.15, 'pickup truck': 0.15, 'SUV': 0.15, 'minivan': 0.15, 'van': 0.15,
-        'tractor': 0.12, 'ATV': 0.10, 'UTV': 0.10, 'snowmobile': 0.10, 'golf cart': 0.10,
+        'tractor': 0.12, 'ATV': 0.10, 'UTV': 0.10, 'snowmobile': 0.10, 'golf cart': 0.10, 'skid loader': 0.12,
         'motorcycle': 0.12, 'trailer': 0.12,
         'bus': 0.20, 'semi truck': 0.20, 'dump truck': 0.18,
         'rowboat': 0.12, 'fishing boat': 0.12, 'speed boat': 0.12, 'pontoon boat': 0.12,

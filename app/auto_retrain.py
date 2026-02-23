@@ -46,6 +46,7 @@ VEHICLE_CLASS_MAPPING = {
     "utv": 7,
     "snowmobile": 8,
     "golf cart": 9,
+    "skid loader": 24,
     "motorcycle": 10,
     "trailer": 11,
     "bus": 12,

@@ -155,7 +155,7 @@ class EcoEyeSyncClient:
                     params=params,
                     json=json_data,
                     stream=stream,
-                    timeout=30
+                    timeout=(10, 300) if stream else 30
                 )
                 response.raise_for_status()
                 return response
@@ -388,6 +388,15 @@ class EcoEyeSyncClient:
                         if total_size > 0 and downloaded % (1024 * 1024) == 0:
                             progress = (downloaded / total_size) * 100
                             logger.debug(f"Download progress: {progress:.1f}%")
+
+            # Verify download integrity
+            if total_size > 0 and downloaded != total_size:
+                logger.error(
+                    f"Download truncated for alert {alert_id}: "
+                    f"expected {total_size} bytes, got {downloaded} bytes"
+                )
+                filepath.unlink(missing_ok=True)
+                return False, f"Download truncated: {downloaded}/{total_size} bytes"
 
             logger.info(f"Successfully downloaded video to {filepath} ({downloaded} bytes)")
             return True, str(filepath)

@@ -2,10 +2,13 @@ from flask import Blueprint, request, jsonify
 from frigate_ingester import get_ingester, start_background_ingester, stop_background_ingester
 from db_connection import get_cursor
 import logging
+import os
 import requests as http_requests
 
 frigate_bp = Blueprint('frigate', __name__)
 logger = logging.getLogger(__name__)
+
+FRIGATE_URL = os.environ.get('FRIGATE_URL', 'http://localhost:5000')
 
 # ==================== Frigate Ingester Endpoints ====================
 
@@ -112,7 +115,7 @@ def frigate_backfill_metadata():
 
     data = request.get_json() or {}
     camera_filter = data.get('camera_id')  # Optional: only backfill specific camera
-    frigate_url = data.get('frigate_url', 'http://localhost:5000')
+    frigate_url = data.get('frigate_url', FRIGATE_URL)
     dry_run = data.get('dry_run', False)
 
     try:

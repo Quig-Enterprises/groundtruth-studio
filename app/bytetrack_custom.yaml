@@ -1,0 +1,10 @@
+# Groundtruth Studio — Custom ByteTrack config
+# Increased track_buffer for longer track persistence through detection gaps
+
+tracker_type: bytetrack
+track_high_thresh: 0.25
+track_low_thresh: 0.1
+new_track_thresh: 0.25
+track_buffer: 90          # Increased from 30 to 90 — keep lost tracks alive 3x longer
+match_thresh: 0.8
+fuse_score: True

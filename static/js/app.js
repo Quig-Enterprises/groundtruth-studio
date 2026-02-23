@@ -127,7 +127,7 @@ function displayVideos(videos) {
             : '';
         if (video.thumbnail_path) {
             const thumbName = video.thumbnail_path.split('/').pop();
-            thumbnailHtml = `<div class="thumbnail-container"${bboxAttr}${dimsAttr}><img src="/thumbnails/${encodeURIComponent(thumbName)}" class="video-thumbnail" alt="${escapeHtml(video.title)}"></div>`;
+            thumbnailHtml = `<div class="thumbnail-container"${bboxAttr}${dimsAttr}><img src="/thumbnails/${encodeURIComponent(thumbName)}" class="video-thumbnail" alt="${escapeHtml(video.title)}" loading="lazy"></div>`;
         } else {
             thumbnailHtml = '<div class="thumbnail-container"><div class="video-thumbnail"></div></div>';
         }

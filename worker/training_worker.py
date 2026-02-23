@@ -63,6 +63,7 @@ DEFAULT_TRAINING_COMMANDS = {
     'vibration': 'python3 train_bearing_fault.py --train {train_file} --val {val_file} --model {model_type} --epochs {epochs} --labels "{labels}"',
     'location': 'python3 -m torchvision.models --data {data_dir} --model {model_type} --epochs {epochs}',
     'custom': 'echo "Custom job {job_id}: data at {data_dir}"',
+    'clip_analysis': 'python3 /opt/groundtruth-studio/worker/clip_analysis_worker.py --video-id {video_id} --camera-id {camera_id} --clip-path "{clip_path}" --studio-url {studio_url}',
 }
 
 
@@ -436,6 +437,7 @@ class TrainingWorker:
             'epochs': str(config.get('epochs', 100)),
             'labels': config.get('labels', ''),
             'gpu_device': str(config.get('gpu_device', 0)),
+            'studio_url': self.studio_url,
         }
 
         # Auto-detect vibration/bearing-fault data files

@@ -22,6 +22,7 @@ from context_engine import ContextEngine
 from violation_detector import ViolationDetector
 from visit_builder import VisitBuilder
 from face_clustering import FaceClusterer
+from static_cluster_generator import run_static_clustering
 
 logger = logging.getLogger('pipeline_worker')
 
@@ -43,6 +44,8 @@ class PipelineWorker:
         # Periodic job timers
         self.last_visit_run = 0.0
         self.last_clustering_run = 0.0
+        self.last_static_clustering_run = 0.0
+        self.last_video_xcam_run = 0.0
 
     # ── Configuration ─────────────────────────────────────────────
 
@@ -213,6 +216,30 @@ class PipelineWorker:
             except Exception as e:
                 logger.error("Face clustering error: %s", e, exc_info=True)
 
+        # Static spatial clustering (every 15 minutes)
+        static_clustering_interval = periodic.get('static_clustering_interval_seconds', 900)
+        if now - self.last_static_clustering_run >= static_clustering_interval:
+            self.last_static_clustering_run = now
+            try:
+                summary = run_static_clustering(min_cluster_size=3)
+                if summary.get('clusters_created'):
+                    logger.info("Static clustering: %s", summary)
+            except Exception as e:
+                logger.error("Static clustering error: %s", e, exc_info=True)
+
+        # Cross-camera matching via video tracks (every 30 minutes)
+        video_xcam_interval = periodic.get('video_xcam_interval_seconds', 1800)
+        if now - self.last_video_xcam_run >= video_xcam_interval:
+            self.last_video_xcam_run = now
+            try:
+                from cross_camera_matcher import CrossCameraMatcher
+                matcher = CrossCameraMatcher()
+                summary = matcher.match_video_tracks()
+                if summary and summary.get('links_created'):
+                    logger.info("Video track cross-camera matching: %s", summary)
+            except Exception as e:
+                logger.error("Video track cross-camera matching error: %s", e, exc_info=True)
+
     # ── Lifecycle ─────────────────────────────────────────────────
 
     def _signal_handler(self, signum, _frame):
@@ -251,6 +278,8 @@ class PipelineWorker:
             self.running = True
             self.last_visit_run = time.time()
             self.last_clustering_run = time.time()
+            self.last_static_clustering_run = time.time()
+            self.last_video_xcam_run = time.time()
             logger.info("Pipeline Worker running — waiting for messages")
 
             while self.running:

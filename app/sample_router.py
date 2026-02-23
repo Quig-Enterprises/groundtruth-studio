@@ -69,13 +69,23 @@ class SampleRouter:
             thresholds: Dict with 'auto_approve', 'review', 'auto_reject' keys
 
         Returns:
-            'auto_approve', 'review', or 'auto_reject'
+            'review' or 'auto_reject'
+
+        NOTE: auto_approve is DISABLED. All predictions above the auto_reject
+        threshold go to human review. No un-reviewed detections may enter
+        the training pipeline.
         """
         confidence = prediction['confidence']
 
-        if confidence >= thresholds['auto_approve']:
-            return 'auto_approve'
-        elif confidence < thresholds['auto_reject']:
+        # Reject tiny detections that can't contain useful features for training
+        bbox = prediction.get('bbox', {})
+        bbox_w = bbox.get('width', 0) or 0
+        bbox_h = bbox.get('height', 0) or 0
+        min_dim = thresholds.get('min_bbox_dim', 32)
+        if bbox_w < min_dim or bbox_h < min_dim:
+            return 'auto_reject'
+
+        if confidence < thresholds['auto_reject']:
             return 'auto_reject'
         else:
             return 'review'

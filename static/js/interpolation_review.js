@@ -6,30 +6,62 @@ const interpReview = {
     currentTrack: null,
     currentFrames: [],
     selectedFrameIdx: -1,
+    totalTracks: 0,
+    hasMore: false,
+    loading: false,
+    pageSize: 50,
+    currentOffset: 0,
 
     async init() {
         await this.loadTracks();
         this.setupKeyboardNav();
+        this.setupScrollHandler();
     },
 
-    async loadTracks() {
+    async loadTracks(append = false) {
+        if (this.loading) return;
+        this.loading = true;
+
         try {
             const status = document.getElementById('filter-status').value;
             const videoId = document.getElementById('filter-video').value;
+
+            if (!append) {
+                this.currentOffset = 0;
+                this.tracks = [];
+            }
+
             let url = '/api/interpolation/tracks?';
             if (status) url += `status=${status}&`;
             if (videoId) url += `video_id=${videoId}&`;
+            url += `limit=${this.pageSize}&offset=${this.currentOffset}`;
 
             const resp = await fetch(url);
             const data = await resp.json();
             if (data.success) {
-                this.tracks = data.tracks;
-                this.renderTrackList();
-                this.populateVideoFilter();
+                this.totalTracks = data.total;
+                this.hasMore = data.has_more;
+
+                if (append) {
+                    this.tracks.push(...data.tracks);
+                    this.renderTrackList(true);
+                } else {
+                    this.tracks = data.tracks;
+                    this.renderTrackList(false);
+                    this.populateVideoFilter();
+                }
+
+                this.currentOffset += data.tracks.length;
             }
         } catch (e) {
             console.error('Failed to load tracks:', e);
+        } finally {
+            this.loading = false;
         }
+    },
+
+    async loadMoreTracks() {
+        await this.loadTracks(true);
     },
 
     populateVideoFilter() {
@@ -52,17 +84,18 @@ const interpReview = {
     },
 
     filterTracks() {
-        this.loadTracks();
+        this.loadTracks(false);
     },
 
-    renderTrackList() {
+    renderTrackList(append = false) {
         const container = document.getElementById('track-list');
-        if (this.tracks.length === 0) {
+
+        if (this.tracks.length === 0 && !append) {
             container.innerHTML = '<div class="empty-tracks">No tracks found</div>';
             return;
         }
 
-        container.innerHTML = this.tracks.map(track => {
+        const trackHTML = this.tracks.map(track => {
             const rate = track.frames_generated > 0
                 ? Math.round((track.frames_detected / track.frames_generated) * 100)
                 : 0;
@@ -84,6 +117,22 @@ const interpReview = {
                 </div>
             `;
         }).join('');
+
+        if (append) {
+            const existingIndicator = container.querySelector('.loading-indicator, .end-indicator');
+            if (existingIndicator) {
+                existingIndicator.remove();
+            }
+            container.insertAdjacentHTML('beforeend', trackHTML);
+        } else {
+            container.innerHTML = trackHTML;
+        }
+
+        if (this.loading) {
+            container.insertAdjacentHTML('beforeend', '<div class="loading-indicator">Loading more tracks...</div>');
+        } else if (!this.hasMore && this.tracks.length > 0) {
+            container.insertAdjacentHTML('beforeend', '<div class="end-indicator">No more tracks</div>');
+        }
     },
 
     async selectTrack(trackId) {
@@ -351,6 +400,24 @@ const interpReview = {
                     e.preventDefault();
                     this.rejectTrack();
                     break;
+            }
+        });
+    },
+
+    setupScrollHandler() {
+        const container = document.getElementById('track-list');
+        if (!container) return;
+
+        container.addEventListener('scroll', () => {
+            if (this.loading || !this.hasMore) return;
+
+            const threshold = 200;
+            const scrollTop = container.scrollTop;
+            const scrollHeight = container.scrollHeight;
+            const clientHeight = container.clientHeight;
+
+            if (scrollTop + clientHeight >= scrollHeight - threshold) {
+                this.loadMoreTracks();
             }
         });
     },

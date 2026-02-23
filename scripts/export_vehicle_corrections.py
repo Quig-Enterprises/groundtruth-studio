@@ -23,7 +23,8 @@ VEHICLE_TYPES = [
     'sedan', 'pickup truck', 'SUV', 'minivan', 'van',
     'tractor', 'ATV', 'UTV', 'snowmobile', 'golf cart', 'motorcycle', 'trailer',
     'bus', 'semi truck', 'dump truck',
-    'rowboat', 'fishing boat', 'speed boat', 'pontoon boat', 'kayak', 'canoe', 'sailboat', 'jet ski'
+    'rowboat', 'fishing boat', 'speed boat', 'pontoon boat', 'kayak', 'canoe', 'sailboat', 'jet ski',
+    'fence'
 ]
 
 # Database connection string

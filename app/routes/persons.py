@@ -44,11 +44,22 @@ def get_person_detections():
                     ka.created_date,
                     v.title as video_title,
                     v.thumbnail_path,
-                    STRING_AGG(
-                        CASE WHEN at.tag_value LIKE '%%person_name%%'
-                        THEN at.tag_value::json->>'person_name'
-                        END, ','
-                    ) as person_name_json,
+                    COALESCE(
+                        (SELECT at_s.tag_value::json->>'person_name'
+                         FROM annotation_tags at_s
+                         WHERE at_s.annotation_id = ka.id
+                         AND at_s.annotation_type = 'keyframe'
+                         AND at_s.tag_value LIKE '%%person_identification%%'
+                         AND at_s.tag_value::json->>'person_name' IS NOT NULL
+                         LIMIT 1),
+                        (SELECT at_n.tag_value::json->>'person_name'
+                         FROM annotation_tags at_n
+                         WHERE at_n.annotation_id = ka.id
+                         AND at_n.annotation_type = 'keyframe'
+                         AND at_n.tag_value LIKE '%%person_name%%'
+                         AND at_n.tag_value NOT LIKE '%%person_identification%%'
+                         LIMIT 1)
+                    ) as person_name_val,
                     STRING_AGG(
                         CASE WHEN at.tag_value LIKE '%%pose%%'
                         THEN REPLACE(REPLACE(at.tag_value, '"pose":', ''), '"', '')
@@ -76,11 +87,24 @@ def get_person_detections():
             for row in cursor.fetchall():
                 # Parse person name from JSON-extracted value
                 person_name = None
-                if row['person_name_json']:
-                    # STRING_AGG may produce comma-separated names, take first
-                    name = row['person_name_json'].split(',')[0].strip()
+                if row['person_name_val']:
+                    name = row['person_name_val'].strip()
                     if name and name != 'Unknown':
                         person_name = name
+
+                # Classify detection status
+                if person_name == '__ambiguous__':
+                    person_status = 'ambiguous'
+                    display_name = 'Ambiguous'
+                elif person_name and person_name.startswith('Anonymous '):
+                    person_status = 'anonymous'
+                    display_name = person_name
+                elif person_name:
+                    person_status = 'named'
+                    display_name = person_name
+                else:
+                    person_status = 'unidentified'
+                    display_name = None
 
                 detections.append({
                     'id': row['id'],
@@ -93,48 +117,145 @@ def get_person_detections():
                     'bbox_height': row['bbox_height'],
                     'thumbnail_path': f"/thumbnails/{os.path.basename(row['thumbnail_path'])}" if row.get('thumbnail_path') else None,
                     'person_name': person_name,
+                    'person_status': person_status,
+                    'display_name': display_name,
                     'pose': row['pose'],
                     'distance_category': row['distance_category'],
-                    'created_date': row['created_date']
+                    'created_date': row['created_date'],
+                    'source': 'annotation'
+                })
+
+            # Get ai_predictions that are person identifications
+            cursor.execute('''
+                SELECT
+                    p.id,
+                    p.video_id,
+                    0 as timestamp,
+                    p.bbox_x,
+                    p.bbox_y,
+                    p.bbox_width,
+                    p.bbox_height,
+                    p.created_at as created_date,
+                    v.title as video_title,
+                    v.thumbnail_path,
+                    p.corrected_tags->>'person_name' as person_name_val,
+                    NULL as pose,
+                    NULL as distance_category,
+                    p.confidence,
+                    p.review_status
+                FROM ai_predictions p
+                JOIN classification_classes cc ON cc.name = p.classification
+                JOIN videos v ON v.id = p.video_id
+                WHERE cc.scenario = 'person_identification'
+                AND p.review_status IN ('approved', 'pending')
+                AND p.bbox_width * p.bbox_height >= 2500
+                ORDER BY p.created_at DESC
+            ''')
+
+            for row in cursor.fetchall():
+                # Parse person name from corrected_tags
+                person_name = None
+                if row['person_name_val']:
+                    name = row['person_name_val'].strip()
+                    if name and name != 'Unknown':
+                        person_name = name
+
+                # Classify detection status
+                if person_name == '__ambiguous__':
+                    person_status = 'ambiguous'
+                    display_name = 'Ambiguous'
+                elif person_name and person_name.startswith('Anonymous '):
+                    person_status = 'anonymous'
+                    display_name = person_name
+                elif person_name:
+                    person_status = 'named'
+                    display_name = person_name
+                else:
+                    person_status = 'unidentified'
+                    display_name = None
+
+                detections.append({
+                    'id': f"pred_{row['id']}",
+                    'video_id': row['video_id'],
+                    'video_title': row['video_title'],
+                    'timestamp': row['timestamp'],
+                    'bbox_x': row['bbox_x'],
+                    'bbox_y': row['bbox_y'],
+                    'bbox_width': row['bbox_width'],
+                    'bbox_height': row['bbox_height'],
+                    'thumbnail_path': f"/thumbnails/{os.path.basename(row['thumbnail_path'])}" if row.get('thumbnail_path') else None,
+                    'person_name': person_name,
+                    'person_status': person_status,
+                    'display_name': display_name,
+                    'pose': row['pose'],
+                    'distance_category': row['distance_category'],
+                    'created_date': row['created_date'],
+                    'source': 'prediction',
+                    'confidence': row['confidence'],
+                    'review_status': row['review_status']
                 })
 
             # Get statistics
             cursor.execute('''
-                SELECT COUNT(DISTINCT video_id) as count FROM keyframe_annotations
-                WHERE id IN (
-                    SELECT annotation_id FROM annotation_tags
-                    WHERE annotation_type = 'keyframe'
-                    AND (tag_value LIKE '%%person_identification%%' OR tag_value LIKE '%%person_name%%')
-                )
+                SELECT COUNT(DISTINCT video_id) as count FROM (
+                    SELECT video_id FROM keyframe_annotations
+                    WHERE id IN (
+                        SELECT annotation_id FROM annotation_tags
+                        WHERE annotation_type = 'keyframe'
+                        AND (tag_value LIKE '%%person_identification%%' OR tag_value LIKE '%%person_name%%')
+                    )
+                    UNION
+                    SELECT p.video_id FROM ai_predictions p
+                    JOIN classification_classes cc ON cc.name = p.classification
+                    WHERE cc.scenario = 'person_identification'
+                    AND p.review_status IN ('approved', 'pending')
+                    AND p.bbox_width * p.bbox_height >= 2500
+                ) combined
             ''')
             videos_with_people = cursor.fetchone()['count']
 
-            # Count distinct named people and unknown detections
-            named_set = set(d['person_name'] for d in detections if d['person_name'] and d['person_name'] != 'Unknown')
+            # Count distinct categories
+            named_set = set(d['person_name'] for d in detections if d['person_status'] == 'named')
             named_count = len(named_set)
-            unknown_count = len([d for d in detections if not d['person_name'] or d['person_name'] == 'Unknown'])
+            unidentified_count = len([d for d in detections if d['person_status'] == 'unidentified'])
+            ambiguous_count = len([d for d in detections if d['person_status'] == 'ambiguous'])
+            anonymous_groups = set(d['person_name'] for d in detections if d['person_status'] == 'anonymous')
 
-            # Get unique people
-            people = {}
+            # Build categorized people structure
+            named_people = {}
+            anonymous_people = {}
             for d in detections:
-                name = d['person_name'] or 'Unknown'
-                if name not in people:
-                    people[name] = {'name': name, 'count': 0}
-                people[name]['count'] += 1
+                if d['person_status'] == 'named':
+                    name = d['person_name']
+                    if name not in named_people:
+                        named_people[name] = {'name': name, 'count': 0}
+                    named_people[name]['count'] += 1
+                elif d['person_status'] == 'anonymous':
+                    name = d['person_name']
+                    if name not in anonymous_people:
+                        anonymous_people[name] = {'name': name, 'count': 0}
+                    anonymous_people[name]['count'] += 1
 
-            people_list = sorted(people.values(), key=lambda x: x['count'], reverse=True)
+            people = {
+                'named': sorted(named_people.values(), key=lambda x: x['count'], reverse=True),
+                'anonymous': sorted(anonymous_people.values(), key=lambda x: x['count'], reverse=True),
+                'unidentified': unidentified_count,
+                'ambiguous': ambiguous_count
+            }
 
             stats = {
                 'total_detections': len(detections),
                 'named_people': named_count,
-                'unknown': unknown_count,
+                'unidentified': unidentified_count,
+                'ambiguous': ambiguous_count,
+                'anonymous_groups': len(anonymous_groups),
                 'videos_with_people': videos_with_people
             }
 
         return jsonify({
             'success': True,
             'detections': detections,
-            'people': people_list,
+            'people': people,
             'stats': stats
         })
     except Exception as e:
@@ -149,17 +270,30 @@ def get_recent_person_names():
         with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-            # Get unique person names from annotation_tags
+            # Get unique person names from annotation_tags and ai_predictions
             cursor.execute('''
-                SELECT DISTINCT
-                    tag_value::json->>'person_name' as person_name,
-                    MAX(created_date) as last_used
-                FROM annotation_tags
-                WHERE annotation_type = 'keyframe'
-                AND tag_value LIKE '%%person_name%%'
-                AND tag_value NOT LIKE '%%Unknown%%'
-                AND tag_value != ''
-                GROUP BY tag_value::json->>'person_name'
+                SELECT DISTINCT person_name, MAX(last_used) as last_used FROM (
+                    SELECT
+                        tag_value::json->>'person_name' as person_name,
+                        created_date as last_used
+                    FROM annotation_tags
+                    WHERE annotation_type = 'keyframe'
+                    AND tag_value LIKE '%%person_name%%'
+                    AND tag_value LIKE '{%%'
+                    AND tag_value::json->>'person_name' IS NOT NULL
+                    AND tag_value::json->>'person_name' NOT IN ('', 'Unknown', '__ambiguous__')
+                    AND tag_value::json->>'person_name' NOT LIKE 'Anonymous %%'
+                    UNION
+                    SELECT
+                        corrected_tags->>'person_name' as person_name,
+                        created_at as last_used
+                    FROM ai_predictions
+                    WHERE corrected_tags->>'person_name' IS NOT NULL
+                    AND corrected_tags->>'person_name' NOT IN ('', 'Unknown', '__ambiguous__')
+                    AND corrected_tags->>'person_name' NOT LIKE 'Anonymous %%'
+                ) sub
+                WHERE person_name IS NOT NULL
+                GROUP BY person_name
                 ORDER BY last_used DESC
                 LIMIT %s
             ''', (limit,))
@@ -220,47 +354,71 @@ def assign_person_name():
 
             updated_count = 0
             for detection_id in detection_ids:
-                # Check if person_name tag already exists for this annotation
+                # Handle ai_prediction IDs (prefixed with pred_)
+                if isinstance(detection_id, str) and detection_id.startswith('pred_'):
+                    pred_id = int(detection_id.replace('pred_', ''))
+                    cursor.execute('''
+                        SELECT id, corrected_tags FROM ai_predictions WHERE id = %s
+                    ''', (pred_id,))
+                    pred = cursor.fetchone()
+                    if pred:
+                        tags = pred['corrected_tags'] or {}
+                        tags['person_name'] = person_name
+                        cursor.execute('''
+                            UPDATE ai_predictions SET corrected_tags = %s WHERE id = %s
+                        ''', (json.dumps(tags), pred_id))
+                        updated_count += 1
+                    continue
+
+                # First try to update the scenario_data tag (preferred)
                 cursor.execute('''
-                    SELECT id FROM annotation_tags
+                    SELECT id, tag_value FROM annotation_tags
                     WHERE annotation_id = %s AND annotation_type = 'keyframe'
-                    AND tag_value LIKE '%%person_name%%'
+                    AND tag_value LIKE '%%person_identification%%'
                 ''', (detection_id,))
+                scenario_tag = cursor.fetchone()
 
-                existing = cursor.fetchone()
-
-                tag_value = json.dumps({'person_name': person_name})
-
-                if existing:
-                    # Update existing tag
+                if scenario_tag:
+                    # Merge person_name into existing scenario_data JSON
+                    tag_data = json.loads(scenario_tag['tag_value'])
+                    tag_data['person_name'] = person_name
                     cursor.execute('''
                         UPDATE annotation_tags
                         SET tag_value = %s, created_date = CURRENT_TIMESTAMP
                         WHERE id = %s
-                    ''', (tag_value, existing['id']))
+                    ''', (json.dumps(tag_data), scenario_tag['id']))
                 else:
-                    # Create new tag (need to get or create tag group first)
+                    # Fallback: update or create legacy person_name tag
                     cursor.execute('''
-                        SELECT id FROM tag_groups WHERE group_name = 'person_name'
-                    ''')
-                    group = cursor.fetchone()
+                        SELECT id FROM annotation_tags
+                        WHERE annotation_id = %s AND annotation_type = 'keyframe'
+                        AND tag_value LIKE '%%person_name%%'
+                    ''', (detection_id,))
+                    existing = cursor.fetchone()
+                    tag_value = json.dumps({'person_name': person_name})
 
-                    if not group:
-                        # Create tag group for person names
+                    if existing:
                         cursor.execute('''
-                            INSERT INTO tag_groups (group_name, display_name, group_type, description)
-                            VALUES ('person_name', 'Person Name', 'text', 'Name of identified person')
-                            RETURNING id
-                        ''')
-                        group_id = cursor.fetchone()['id']
+                            UPDATE annotation_tags
+                            SET tag_value = %s, created_date = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        ''', (tag_value, existing['id']))
                     else:
-                        group_id = group['id']
-
-                    # Insert tag
-                    cursor.execute('''
-                        INSERT INTO annotation_tags (annotation_id, annotation_type, group_id, tag_value)
-                        VALUES (%s, 'keyframe', %s, %s)
-                    ''', (detection_id, group_id, tag_value))
+                        cursor.execute('SELECT id FROM tag_groups WHERE group_name = %s', ('person_name',))
+                        group = cursor.fetchone()
+                        if not group:
+                            cursor.execute('''
+                                INSERT INTO tag_groups (group_name, display_name, group_type, description)
+                                VALUES ('person_name', 'Person Name', 'text', 'Name of identified person')
+                                RETURNING id
+                            ''')
+                            group_id = cursor.fetchone()['id']
+                        else:
+                            group_id = group['id']
+                        cursor.execute('''
+                            INSERT INTO annotation_tags (annotation_id, annotation_type, group_id, tag_value)
+                            VALUES (%s, 'keyframe', %s, %s)
+                        ''', (detection_id, group_id, tag_value))
 
                 updated_count += 1
 
@@ -284,20 +442,399 @@ def unassign_person_name():
         with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
 
-            # Delete person_name tags for these detections
-            placeholders = ','.join(['%s'] * len(detection_ids))
-            cursor.execute(f'''
-                DELETE FROM annotation_tags
-                WHERE annotation_id IN ({placeholders})
-                AND annotation_type = 'keyframe'
-                AND tag_value LIKE '%%person_name%%'
-            ''', detection_ids)
+            updated_count = 0
+            for detection_id in detection_ids:
+                # Handle ai_prediction IDs (prefixed with pred_)
+                if isinstance(detection_id, str) and detection_id.startswith('pred_'):
+                    pred_id = int(detection_id.replace('pred_', ''))
+                    cursor.execute('''
+                        SELECT id, corrected_tags FROM ai_predictions WHERE id = %s
+                    ''', (pred_id,))
+                    pred = cursor.fetchone()
+                    if pred:
+                        tags = pred['corrected_tags'] or {}
+                        tags.pop('person_name', None)
+                        cursor.execute('''
+                            UPDATE ai_predictions SET corrected_tags = %s WHERE id = %s
+                        ''', (json.dumps(tags), pred_id))
+                        updated_count += 1
+                    continue
 
-            updated_count = cursor.rowcount
+                # First try to clear person_name from scenario_data tag
+                cursor.execute('''
+                    SELECT id, tag_value FROM annotation_tags
+                    WHERE annotation_id = %s AND annotation_type = 'keyframe'
+                    AND tag_value LIKE '%%person_identification%%'
+                    AND tag_value LIKE '%%person_name%%'
+                ''', (detection_id,))
+                scenario_tag = cursor.fetchone()
+
+                if scenario_tag:
+                    tag_data = json.loads(scenario_tag['tag_value'])
+                    tag_data.pop('person_name', None)
+                    cursor.execute('''
+                        UPDATE annotation_tags
+                        SET tag_value = %s, created_date = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    ''', (json.dumps(tag_data), scenario_tag['id']))
+                    updated_count += 1
+                else:
+                    # Fallback: delete legacy person_name tag
+                    cursor.execute('''
+                        DELETE FROM annotation_tags
+                        WHERE annotation_id = %s AND annotation_type = 'keyframe'
+                        AND tag_value LIKE '%%person_name%%'
+                        AND tag_value NOT LIKE '%%person_identification%%'
+                    ''', (detection_id,))
+                    updated_count += cursor.rowcount
+
             conn.commit()
 
         return jsonify({'success': True, 'updated_count': updated_count})
     except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _get_next_anonymous_number():
+    """Get the next available Anonymous N number"""
+    with get_connection() as conn:
+        cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+        # Check annotation_tags
+        cursor.execute('''
+            SELECT tag_value::json->>'person_name' as person_name
+            FROM annotation_tags
+            WHERE annotation_type = 'keyframe'
+            AND tag_value::json->>'person_name' LIKE 'Anonymous %%'
+        ''')
+        existing = [row['person_name'] for row in cursor.fetchall()]
+        # Also check ai_predictions corrected_tags
+        cursor.execute('''
+            SELECT corrected_tags->>'person_name' as person_name
+            FROM ai_predictions
+            WHERE corrected_tags->>'person_name' LIKE 'Anonymous %%'
+        ''')
+        existing.extend([row['person_name'] for row in cursor.fetchall()])
+        max_num = 0
+        for name in existing:
+            try:
+                num = int(name.replace('Anonymous ', ''))
+                max_num = max(max_num, num)
+            except (ValueError, AttributeError):
+                pass
+        return max_num + 1
+
+
+@persons_bp.route('/api/person-detections/mark-ambiguous', methods=['POST'])
+def mark_ambiguous():
+    """Mark detections as ambiguous (poor quality, unclassifiable)"""
+    try:
+        data = request.get_json()
+        detection_ids = data.get('detection_ids', [])
+
+        if not detection_ids:
+            return jsonify({'success': False, 'error': 'No detection IDs provided'}), 400
+
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+            updated_count = 0
+            for detection_id in detection_ids:
+                # Handle ai_prediction IDs (prefixed with pred_)
+                if isinstance(detection_id, str) and detection_id.startswith('pred_'):
+                    pred_id = int(detection_id.replace('pred_', ''))
+                    cursor.execute('''
+                        SELECT id, corrected_tags FROM ai_predictions WHERE id = %s
+                    ''', (pred_id,))
+                    pred = cursor.fetchone()
+                    if pred:
+                        tags = pred['corrected_tags'] or {}
+                        tags['person_name'] = '__ambiguous__'
+                        cursor.execute('''
+                            UPDATE ai_predictions SET corrected_tags = %s WHERE id = %s
+                        ''', (json.dumps(tags), pred_id))
+                        updated_count += 1
+                    continue
+
+                # First try to update scenario_data tag
+                cursor.execute('''
+                    SELECT id, tag_value FROM annotation_tags
+                    WHERE annotation_id = %s AND annotation_type = 'keyframe'
+                    AND tag_value LIKE '%%person_identification%%'
+                ''', (detection_id,))
+                scenario_tag = cursor.fetchone()
+
+                if scenario_tag:
+                    tag_data = json.loads(scenario_tag['tag_value'])
+                    tag_data['person_name'] = '__ambiguous__'
+                    cursor.execute('''
+                        UPDATE annotation_tags
+                        SET tag_value = %s, created_date = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    ''', (json.dumps(tag_data), scenario_tag['id']))
+                else:
+                    # Fallback: legacy tag
+                    cursor.execute('''
+                        SELECT id FROM annotation_tags
+                        WHERE annotation_id = %s AND annotation_type = 'keyframe'
+                        AND tag_value LIKE '%%person_name%%'
+                    ''', (detection_id,))
+                    existing = cursor.fetchone()
+                    tag_value = json.dumps({'person_name': '__ambiguous__'})
+
+                    if existing:
+                        cursor.execute('''
+                            UPDATE annotation_tags
+                            SET tag_value = %s, created_date = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        ''', (tag_value, existing['id']))
+                    else:
+                        cursor.execute('SELECT id FROM tag_groups WHERE group_name = %s', ('person_name',))
+                        group = cursor.fetchone()
+                        if not group:
+                            cursor.execute('''
+                                INSERT INTO tag_groups (group_name, display_name, group_type, description)
+                                VALUES ('person_name', 'Person Name', 'text', 'Name of identified person')
+                                RETURNING id
+                            ''')
+                            group_id = cursor.fetchone()['id']
+                        else:
+                            group_id = group['id']
+                        cursor.execute('''
+                            INSERT INTO annotation_tags (annotation_id, annotation_type, group_id, tag_value)
+                            VALUES (%s, 'keyframe', %s, %s)
+                        ''', (detection_id, group_id, tag_value))
+
+                updated_count += 1
+
+            conn.commit()
+
+        return jsonify({'success': True, 'updated_count': updated_count})
+    except Exception as e:
+        logger.error(f"Error in mark_ambiguous: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@persons_bp.route('/api/person-detections/group-anonymous', methods=['POST'])
+def group_anonymous():
+    """Group selected detections under a new Anonymous N name"""
+    try:
+        data = request.get_json()
+        detection_ids = data.get('detection_ids', [])
+
+        if not detection_ids:
+            return jsonify({'success': False, 'error': 'No detection IDs provided'}), 400
+
+        next_num = _get_next_anonymous_number()
+        anonymous_name = f'Anonymous {next_num}'
+
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+            updated_count = 0
+            for detection_id in detection_ids:
+                # Handle ai_prediction IDs (prefixed with pred_)
+                if isinstance(detection_id, str) and detection_id.startswith('pred_'):
+                    pred_id = int(detection_id.replace('pred_', ''))
+                    cursor.execute('''
+                        SELECT id, corrected_tags FROM ai_predictions WHERE id = %s
+                    ''', (pred_id,))
+                    pred = cursor.fetchone()
+                    if pred:
+                        tags = pred['corrected_tags'] or {}
+                        tags['person_name'] = anonymous_name
+                        cursor.execute('''
+                            UPDATE ai_predictions SET corrected_tags = %s WHERE id = %s
+                        ''', (json.dumps(tags), pred_id))
+                        updated_count += 1
+                    continue
+
+                # First try to update scenario_data tag
+                cursor.execute('''
+                    SELECT id, tag_value FROM annotation_tags
+                    WHERE annotation_id = %s AND annotation_type = 'keyframe'
+                    AND tag_value LIKE '%%person_identification%%'
+                ''', (detection_id,))
+                scenario_tag = cursor.fetchone()
+
+                if scenario_tag:
+                    tag_data = json.loads(scenario_tag['tag_value'])
+                    tag_data['person_name'] = anonymous_name
+                    cursor.execute('''
+                        UPDATE annotation_tags
+                        SET tag_value = %s, created_date = CURRENT_TIMESTAMP
+                        WHERE id = %s
+                    ''', (json.dumps(tag_data), scenario_tag['id']))
+                else:
+                    # Fallback: legacy tag
+                    cursor.execute('''
+                        SELECT id FROM annotation_tags
+                        WHERE annotation_id = %s AND annotation_type = 'keyframe'
+                        AND tag_value LIKE '%%person_name%%'
+                    ''', (detection_id,))
+                    existing = cursor.fetchone()
+                    tag_value = json.dumps({'person_name': anonymous_name})
+
+                    if existing:
+                        cursor.execute('''
+                            UPDATE annotation_tags
+                            SET tag_value = %s, created_date = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        ''', (tag_value, existing['id']))
+                    else:
+                        cursor.execute('SELECT id FROM tag_groups WHERE group_name = %s', ('person_name',))
+                        group = cursor.fetchone()
+                        if not group:
+                            cursor.execute('''
+                                INSERT INTO tag_groups (group_name, display_name, group_type, description)
+                                VALUES ('person_name', 'Person Name', 'text', 'Name of identified person')
+                                RETURNING id
+                            ''')
+                            group_id = cursor.fetchone()['id']
+                        else:
+                            group_id = group['id']
+                        cursor.execute('''
+                            INSERT INTO annotation_tags (annotation_id, annotation_type, group_id, tag_value)
+                            VALUES (%s, 'keyframe', %s, %s)
+                        ''', (detection_id, group_id, tag_value))
+
+                updated_count += 1
+
+            conn.commit()
+
+        return jsonify({'success': True, 'updated_count': updated_count, 'group_name': anonymous_name})
+    except Exception as e:
+        logger.error(f"Error in group_anonymous: {e}")
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@persons_bp.route('/api/person-detections/auto-cluster', methods=['POST'])
+def auto_cluster():
+    """Run face clustering and bridge results to annotation_tags as Anonymous groups"""
+    try:
+        # Run clustering
+        params = request.get_json() or {}
+        min_cluster_size = params.get('min_cluster_size', 3)
+        min_samples = params.get('min_samples', 2)
+
+        clusterer = FaceClusterer(
+            min_cluster_size=min_cluster_size,
+            min_samples=min_samples
+        )
+        summary = clusterer.run_clustering()
+
+        if not summary or summary.get('num_clusters', 0) == 0:
+            return jsonify({
+                'success': True,
+                'message': 'No clusters found',
+                'clusters_created': 0
+            })
+
+        # Bridge cluster results to annotation_tags
+        clusters_created = 0
+        detections_assigned = 0
+
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+            # Get cluster details - each cluster has embeddings with source_image_path
+            clusters = face_clusterer.get_clusters_summary()
+
+            for cluster in clusters:
+                identity_id = cluster.get('identity_id')
+                if not identity_id:
+                    continue
+
+                # Get embeddings for this cluster
+                embeddings = db.get_embeddings(identity_id=identity_id, limit=1000)
+                if not embeddings:
+                    continue
+
+                # Map source_image_paths back to keyframe_annotations
+                source_paths = [e.get('source_image_path') for e in embeddings if e.get('source_image_path')]
+                if not source_paths:
+                    continue
+
+                # Find keyframe annotations whose video thumbnails match these source paths
+                # source_image_path typically corresponds to the thumbnail used for face detection
+                next_num = _get_next_anonymous_number()
+                anonymous_name = f'Anonymous {next_num}'
+
+                matched_ids = []
+                for source_path in source_paths:
+                    basename = os.path.basename(source_path)
+                    cursor.execute('''
+                        SELECT ka.id FROM keyframe_annotations ka
+                        JOIN videos v ON ka.video_id = v.id
+                        WHERE v.thumbnail_path LIKE %s
+                        AND EXISTS (
+                            SELECT 1 FROM annotation_tags at2
+                            WHERE at2.annotation_id = ka.id
+                            AND at2.annotation_type = 'keyframe'
+                            AND (at2.tag_value LIKE '%%person_identification%%' OR at2.tag_value LIKE '%%person_name%%')
+                        )
+                        AND NOT EXISTS (
+                            SELECT 1 FROM annotation_tags at3
+                            WHERE at3.annotation_id = ka.id
+                            AND at3.annotation_type = 'keyframe'
+                            AND at3.tag_value LIKE '%%person_name%%'
+                            AND at3.tag_value::json->>'person_name' IS NOT NULL
+                            AND at3.tag_value::json->>'person_name' != 'Unknown'
+                            AND at3.tag_value::json->>'person_name' != ''
+                        )
+                    ''', (f'%{basename}',))
+                    matched_ids.extend([row['id'] for row in cursor.fetchall()])
+
+                if not matched_ids:
+                    continue
+
+                # Assign anonymous name to matched detections
+                tag_value = json.dumps({'person_name': anonymous_name})
+                cursor.execute('SELECT id FROM tag_groups WHERE group_name = %s', ('person_name',))
+                group = cursor.fetchone()
+                if not group:
+                    cursor.execute('''
+                        INSERT INTO tag_groups (group_name, display_name, group_type, description)
+                        VALUES ('person_name', 'Person Name', 'text', 'Name of identified person')
+                        RETURNING id
+                    ''')
+                    group_id = cursor.fetchone()['id']
+                else:
+                    group_id = group['id']
+
+                for annotation_id in set(matched_ids):
+                    cursor.execute('''
+                        SELECT id FROM annotation_tags
+                        WHERE annotation_id = %s AND annotation_type = 'keyframe'
+                        AND tag_value LIKE '%%person_name%%'
+                    ''', (annotation_id,))
+                    existing = cursor.fetchone()
+
+                    if existing:
+                        cursor.execute('''
+                            UPDATE annotation_tags
+                            SET tag_value = %s, created_date = CURRENT_TIMESTAMP
+                            WHERE id = %s
+                        ''', (tag_value, existing['id']))
+                    else:
+                        cursor.execute('''
+                            INSERT INTO annotation_tags (annotation_id, annotation_type, group_id, tag_value)
+                            VALUES (%s, 'keyframe', %s, %s)
+                        ''', (annotation_id, group_id, tag_value))
+                    detections_assigned += 1
+
+                clusters_created += 1
+
+            conn.commit()
+
+        return jsonify({
+            'success': True,
+            'message': f'Created {clusters_created} anonymous groups from clustering',
+            'clusters_created': clusters_created,
+            'detections_assigned': detections_assigned,
+            'clustering_summary': summary
+        })
+    except Exception as e:
+        logger.error(f"Error in auto_cluster: {e}")
         return jsonify({'success': False, 'error': str(e)}), 500
 
 

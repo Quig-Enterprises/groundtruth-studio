@@ -24,7 +24,7 @@ var ReviewApp = {
     skippedIds: new Set(),
     imageCache: {},
     activeFilter: 'all',
-    _scenarioFilterMap: { 'vehicles': 'vehicle_detection', 'people': 'person_detection,face_detection,person_identification', 'plates': 'license_plate', 'boat_reg': 'boat_registration', 'other': '_other' },
+    _scenarioFilterMap: { 'vehicles': 'vehicle_detection', 'people': 'person_detection,face_detection,person_identification', 'plates': 'license_plate', 'boat_reg': 'boat_registration', 'documents': 'document_detection,document_ocr', 'other': '_other' },
     queueData: null,
     _maskIdCounter: 0,
     classifyMode: false,
@@ -51,7 +51,7 @@ var ReviewApp = {
     // Known detection classes for reclassification
     knownClasses: [
         'sedan', 'pickup truck', 'SUV', 'minivan', 'van',
-        'tractor', 'ATV', 'UTV', 'snowmobile', 'golf cart', 'motorcycle', 'trailer',
+        'tractor', 'ATV', 'UTV', 'snowmobile', 'golf cart', 'skid loader', 'motorcycle', 'trailer',
         'bus', 'semi truck', 'dump truck', 'multiple_vehicles',
         'rowboat', 'fishing boat', 'speed boat', 'pontoon boat', 'kayak', 'canoe', 'sailboat', 'jet ski',
         'person', 'animal', 'flag', 'tree', 'snow', 'roof'
@@ -67,7 +67,9 @@ var ReviewApp = {
         'license_plate': 'Is there a legible license plate inside the bounding box? The plate text should be readable.',
         'boat_registration': 'Is there a visible boat registration number/name inside the bounding box?',
         'animal_detection': 'Is there an animal inside the bounding box? The box should tightly wrap the animal.',
-        'object_detection': 'Is there a recognizable object inside the bounding box? The box should tightly wrap the detected item.'
+        'object_detection': 'Is there a recognizable object inside the bounding box? The box should tightly wrap the detected item.',
+        'document_detection': 'Is there an identity document (license, passport, TWIC, MMC) inside the bounding box?',
+        'document_ocr': 'Are the extracted text fields correct? Edit any misread values before approving.'
     },
 
     // Touch state
@@ -2856,6 +2858,14 @@ var ReviewApp = {
             video.addEventListener('canplay', function() {
                 progressWrap.style.display = 'none';
             });
+            video.addEventListener('error', function() {
+                progressWrap.style.display = 'none';
+                video.style.display = 'none';
+                var errMsg = document.createElement('div');
+                errMsg.className = 'cc-no-clip';
+                errMsg.textContent = 'Clip no longer available';
+                playerWrap.appendChild(errMsg);
+            });
 
             playerWrap.appendChild(video);
 
@@ -2978,6 +2988,325 @@ var ReviewApp = {
         if (this.els.reviewGuidance) this.els.reviewGuidance.textContent = 'Approve all detections in this cluster, or reject to reclassify.';
     },
 
+    renderDocumentOcrCard: function(pred) {
+        if (!this.els.cardContainer) return;
+        var self = this;
+        var card = document.createElement('div');
+        card.className = 'review-card document-ocr-card';
+        card.style.willChange = 'transform';
+
+        // Document crop image
+        var imgWrap = document.createElement('div');
+        imgWrap.className = 'card-image-container';
+        imgWrap.style.maxHeight = '40vh';
+
+        var thumbUrl = this.getThumbUrl(pred.thumbnail_path);
+        // Try crop image from parent detection first
+        var cropUrl = '/thumbnails/crop/' + (pred.parent_prediction_id || pred.id);
+
+        var img = document.createElement('img');
+        img.className = 'card-image';
+        img.alt = 'Document scan';
+        img.src = cropUrl;
+        img.onerror = function() { this.src = thumbUrl; };
+        imgWrap.appendChild(img);
+        card.appendChild(imgWrap);
+
+        // OCR fields section
+        var tags = pred.predicted_tags || {};
+        if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch(e) { tags = {}; } }
+        var ocrFields = tags.ocr_fields || {};
+        var docType = tags.document_type || tags['class'] || 'document';
+
+        var DOC_TYPE_LABELS = {
+            'passport': 'Passport',
+            'drivers_license': "Driver's License",
+            'twic_card': 'TWIC Card',
+            'merchant_mariner_credential': 'Merchant Mariner Credential',
+            'id_card_generic': 'Identity Document'
+        };
+
+        // Document type header
+        var typeHeader = document.createElement('div');
+        typeHeader.style.cssText = 'padding:8px 12px;background:rgba(124,58,237,0.15);border-radius:8px;margin:8px 12px 4px;display:flex;align-items:center;gap:8px;';
+        var typeIcon = document.createElement('span');
+        typeIcon.textContent = '\uD83D\uDCC4';
+        typeHeader.appendChild(typeIcon);
+        var typeLabel = document.createElement('span');
+        typeLabel.style.cssText = 'color:#c4b5fd;font-weight:600;font-size:0.95rem;';
+        typeLabel.textContent = DOC_TYPE_LABELS[docType] || docType;
+        typeHeader.appendChild(typeLabel);
+        card.appendChild(typeHeader);
+
+        // Scrollable field list
+        var fieldList = document.createElement('div');
+        fieldList.className = 'doc-ocr-fields';
+        fieldList.style.cssText = 'padding:4px 12px 12px;max-height:35vh;overflow-y:auto;';
+
+        var fieldNames = Object.keys(ocrFields);
+        var fieldInputs = {};
+
+        for (var i = 0; i < fieldNames.length; i++) {
+            var name = fieldNames[i];
+            var field = ocrFields[name];
+            var conf = field.confidence || 0;
+            var isLowConf = conf < 0.7;
+
+            var row = document.createElement('div');
+            row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid rgba(71,85,105,0.4);';
+
+            var label = document.createElement('label');
+            label.style.cssText = 'color:#94a3b8;font-size:0.75rem;text-transform:uppercase;letter-spacing:0.05em;min-width:90px;flex-shrink:0;';
+            label.textContent = name.replace(/_/g, ' ');
+            row.appendChild(label);
+
+            var input = document.createElement('input');
+            input.type = 'text';
+            input.value = field.value || '';
+            input.dataset.fieldName = name;
+            input.style.cssText = 'flex:1;background:#1e293b;color:#f1f5f9;border:1px solid ' + (isLowConf ? '#f59e0b' : '#334155') + ';border-radius:4px;padding:4px 8px;font-size:0.9rem;';
+            if (isLowConf) {
+                input.style.boxShadow = '0 0 0 1px rgba(245,158,11,0.3)';
+            }
+            fieldInputs[name] = input;
+            row.appendChild(input);
+
+            // Confidence indicator
+            var confDot = document.createElement('span');
+            confDot.style.cssText = 'width:8px;height:8px;border-radius:50%;flex-shrink:0;background:' + (conf >= 0.8 ? '#22c55e' : (conf >= 0.5 ? '#f59e0b' : '#ef4444')) + ';';
+            confDot.title = Math.round(conf * 100) + '% confidence';
+            row.appendChild(confDot);
+
+            fieldList.appendChild(row);
+        }
+
+        if (fieldNames.length === 0) {
+            var noFields = document.createElement('div');
+            noFields.style.cssText = 'color:#64748b;padding:12px 0;text-align:center;';
+            noFields.textContent = 'No text fields extracted';
+            fieldList.appendChild(noFields);
+        }
+
+        card.appendChild(fieldList);
+
+        // Store reference to field inputs for collecting corrections on approve
+        card._docFieldInputs = fieldInputs;
+        card._docOcrFields = ocrFields;
+
+        // Swipe labels
+        var approveLabel = document.createElement('div');
+        approveLabel.className = 'swipe-label swipe-label-approve';
+        approveLabel.textContent = 'APPROVE';
+        card.appendChild(approveLabel);
+
+        var rejectLabel = document.createElement('div');
+        rejectLabel.className = 'swipe-label swipe-label-reject';
+        rejectLabel.textContent = 'REJECT';
+        card.appendChild(rejectLabel);
+
+        var skipLabel = document.createElement('div');
+        skipLabel.className = 'swipe-label swipe-label-skip';
+        skipLabel.textContent = 'EDIT';
+        card.appendChild(skipLabel);
+
+        this.els.cardContainer.appendChild(card);
+
+        // Entry animation
+        card.style.opacity = '0';
+        card.style.transform = 'scale(0.95)';
+        requestAnimationFrame(function() {
+            requestAnimationFrame(function() {
+                card.style.transition = 'opacity 0.2s ease, transform 0.2s ease';
+                card.style.opacity = '1';
+                card.style.transform = 'translateX(0) rotate(0deg)';
+            });
+        });
+    },
+
+    _collectDocOcrCorrections: function() {
+        var card = this.els.cardContainer ? this.els.cardContainer.querySelector('.document-ocr-card') : null;
+        if (!card || !card._docFieldInputs || !card._docOcrFields) return null;
+
+        var inputs = card._docFieldInputs;
+        var original = card._docOcrFields;
+        var corrected = {};
+        var hasChanges = false;
+
+        var names = Object.keys(inputs);
+        for (var i = 0; i < names.length; i++) {
+            var name = names[i];
+            var newVal = inputs[name].value.trim();
+            var origVal = (original[name] && original[name].value) ? original[name].value.trim() : '';
+            corrected[name] = {
+                value: newVal,
+                confidence: (original[name] && original[name].confidence) || 0,
+                bbox: (original[name] && original[name].bbox) || null
+            };
+            if (newVal !== origVal) hasChanges = true;
+        }
+
+        return hasChanges ? { ocr_fields: corrected } : null;
+    },
+
+    showDocumentLinkSheet: function(pred) {
+        var self = this;
+        var overlay = document.createElement('div');
+        overlay.id = 'doc-link-overlay';
+        overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:1000;display:flex;align-items:flex-end;';
+
+        var sheet = document.createElement('div');
+        sheet.style.cssText = 'width:100%;max-height:70vh;background:#1e293b;border-radius:16px 16px 0 0;padding:16px;overflow-y:auto;animation:slideUp 0.3s ease;';
+
+        // Header
+        var hdr = document.createElement('div');
+        hdr.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;';
+        var title = document.createElement('h3');
+        title.style.cssText = 'margin:0;color:#c4b5fd;font-size:1.1rem;';
+        title.textContent = 'Link to Identity';
+        hdr.appendChild(title);
+        var closeBtn = document.createElement('button');
+        closeBtn.style.cssText = 'background:none;border:none;color:#94a3b8;font-size:1.5rem;cursor:pointer;padding:4px;';
+        closeBtn.textContent = '\u00D7';
+        closeBtn.onclick = function() { overlay.remove(); };
+        hdr.appendChild(closeBtn);
+        sheet.appendChild(hdr);
+
+        // All OCR fields display (read-only summary)
+        var tags = pred.predicted_tags || {};
+        if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch(e) { tags = {}; } }
+        var ocrFields = tags.ocr_fields || {};
+        var fieldKeys = Object.keys(ocrFields);
+        if (fieldKeys.length > 0) {
+            var fieldSummary = document.createElement('div');
+            fieldSummary.style.cssText = 'background:#0f172a;border-radius:8px;padding:8px 12px;margin-bottom:12px;';
+            for (var i = 0; i < fieldKeys.length; i++) {
+                var row = document.createElement('div');
+                row.style.cssText = 'display:flex;justify-content:space-between;padding:2px 0;font-size:0.85rem;';
+                var lbl = document.createElement('span');
+                lbl.style.color = '#94a3b8';
+                lbl.textContent = fieldKeys[i].replace(/_/g, ' ') + ':';
+                var val = document.createElement('span');
+                val.style.color = '#f1f5f9';
+                val.textContent = (typeof ocrFields[fieldKeys[i]] === 'object') ? (ocrFields[fieldKeys[i]].value || '') : ocrFields[fieldKeys[i]];
+                row.appendChild(lbl);
+                row.appendChild(val);
+                fieldSummary.appendChild(row);
+            }
+            sheet.appendChild(fieldSummary);
+        }
+
+        // Person search
+        var searchWrap = document.createElement('div');
+        searchWrap.style.cssText = 'margin-bottom:12px;';
+        var searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.placeholder = 'Search existing identities...';
+        searchInput.style.cssText = 'width:100%;box-sizing:border-box;background:#0f172a;color:#f1f5f9;border:1px solid #334155;border-radius:8px;padding:10px 12px;font-size:0.95rem;';
+        searchWrap.appendChild(searchInput);
+
+        var searchResults = document.createElement('div');
+        searchResults.style.cssText = 'max-height:30vh;overflow-y:auto;';
+        searchWrap.appendChild(searchResults);
+        sheet.appendChild(searchWrap);
+
+        var searchTimeout = null;
+        searchInput.oninput = function() {
+            clearTimeout(searchTimeout);
+            var q = searchInput.value.trim();
+            if (q.length < 2) { searchResults.textContent = ''; return; }
+            searchTimeout = setTimeout(function() {
+                fetch('/api/persons/search?q=' + encodeURIComponent(q))
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        searchResults.textContent = '';
+                        var persons = (data.success && data.persons) ? data.persons : [];
+                        if (persons.length === 0) {
+                            var noRes = document.createElement('div');
+                            noRes.style.cssText = 'color:#64748b;padding:8px 0;text-align:center;font-size:0.85rem;';
+                            noRes.textContent = 'No matching identities found';
+                            searchResults.appendChild(noRes);
+                            return;
+                        }
+                        for (var j = 0; j < persons.length; j++) {
+                            (function(person) {
+                                var pRow = document.createElement('div');
+                                pRow.style.cssText = 'padding:10px;margin:4px 0;background:#16213e;border-radius:6px;cursor:pointer;display:flex;align-items:center;gap:8px;';
+                                var pName = document.createElement('span');
+                                pName.style.cssText = 'color:#e0e0e0;font-size:0.95rem;flex:1;';
+                                pName.textContent = person.name || 'Unnamed';
+                                pRow.appendChild(pName);
+                                var linkBtn = document.createElement('span');
+                                linkBtn.style.cssText = 'color:#7c3aed;font-size:0.8rem;font-weight:600;';
+                                linkBtn.textContent = 'LINK';
+                                pRow.appendChild(linkBtn);
+                                pRow.onclick = function() {
+                                    self._linkDocToIdentity(pred, person.id, overlay);
+                                };
+                                searchResults.appendChild(pRow);
+                            })(persons[j]);
+                        }
+                    })
+                    .catch(function() {});
+            }, 300);
+        };
+
+        // Create New Identity button
+        var newBtn = document.createElement('button');
+        newBtn.style.cssText = 'width:100%;padding:12px;background:#7c3aed;color:#fff;border:none;border-radius:8px;font-size:1rem;font-weight:600;cursor:pointer;margin-top:8px;';
+        newBtn.textContent = 'Create New Identity';
+        newBtn.onclick = function() {
+            var holderName = '';
+            if (ocrFields.holder_name) holderName = (typeof ocrFields.holder_name === 'object') ? (ocrFields.holder_name.value || '') : ocrFields.holder_name;
+            else if (ocrFields.surname) {
+                var sn = (typeof ocrFields.surname === 'object') ? (ocrFields.surname.value || '') : ocrFields.surname;
+                var gn = ocrFields.given_names ? ((typeof ocrFields.given_names === 'object') ? (ocrFields.given_names.value || '') : ocrFields.given_names) : '';
+                holderName = (gn + ' ' + sn).trim();
+            }
+            else if (ocrFields.name) holderName = (typeof ocrFields.name === 'object') ? (ocrFields.name.value || '') : ocrFields.name;
+
+            self._linkDocToIdentity(pred, null, overlay, holderName);
+        };
+        sheet.appendChild(newBtn);
+
+        overlay.appendChild(sheet);
+        overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+        document.body.appendChild(overlay);
+        searchInput.focus();
+    },
+
+    _linkDocToIdentity: function(pred, identityId, overlay, newName) {
+        var self = this;
+        var body = identityId
+            ? { identity_id: identityId }
+            : { create_new: true, name: newName || '', identity_type: 'person' };
+
+        // Get doc_id from document_scans if available, otherwise use prediction id
+        var docId = (pred.predicted_tags && pred.predicted_tags.document_scan_id) || pred.id;
+
+        fetch('/api/documents/' + docId + '/link-identity', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body)
+        })
+        .then(function(r) { return r.json(); })
+        .then(function(data) {
+            if (data.success) {
+                overlay.remove();
+                // Show brief success toast
+                var toast = document.createElement('div');
+                toast.style.cssText = 'position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#059669;color:#fff;padding:10px 20px;border-radius:8px;z-index:1001;font-size:0.9rem;';
+                toast.textContent = data.duplicate_warning ? 'Linked (duplicate doc number warning)' : 'Identity linked successfully';
+                document.body.appendChild(toast);
+                setTimeout(function() { toast.remove(); }, 2500);
+            } else {
+                alert('Link failed: ' + (data.error || 'Unknown error'));
+            }
+        })
+        .catch(function(err) {
+            alert('Link failed: ' + err.message);
+        });
+    },
+
     renderEmptyState: function() {
         if (!this.els.cardContainer) return;
         this.els.cardContainer.textContent = '';
@@ -3050,6 +3379,14 @@ var ReviewApp = {
         if (pred._reviewType === 'cluster') {
             this.renderClusterCard(pred);
             this.updateActionZone();
+            return;
+        }
+        if (pred.scenario === 'document_ocr') {
+            this.renderDocumentOcrCard(pred);
+            this.updateActionZone();
+            this.updateMetadata(pred);
+            this.updateProgress();
+            this.updateDots();
             return;
         }
 
@@ -3320,6 +3657,8 @@ var ReviewApp = {
         'flag_detection':         '#6B7280', // gray
         'license_plate':          '#EF4444', // red
         'boat_registration':      '#0EA5E9', // sky blue
+        'document_detection':     '#7C3AED', // purple
+        'document_ocr':           '#9333EA', // violet
     },
 
     getScenarioColor: function(scenario) {
@@ -3545,7 +3884,7 @@ var ReviewApp = {
             'sedan', 'SUV', 'pickup truck', 'van', 'minivan',
             'semi truck', 'dump truck', 'tractor',
             'ATV', 'UTV', 'motorcycle', 'snowmobile',
-            'golf cart', 'bus', 'trailer',
+            'golf cart', 'skid loader', 'bus', 'trailer',
             'ambulance', 'fire truck', 'other'
         ];
 
@@ -4245,6 +4584,11 @@ var ReviewApp = {
         }
 
         if (action === 'skip') {
+            // For document_ocr, swipe-up opens identity linking sheet instead of skip
+            if (pred.scenario === 'document_ocr') {
+                this.showDocumentLinkSheet(pred);
+                return;
+            }
             this.skippedIds.add(pred.id);
         }
 
@@ -4271,6 +4615,13 @@ var ReviewApp = {
             }
             if (pred.group_id) {
                 syncItem.group_id = pred.group_id;
+            }
+            // Collect OCR field corrections for document_ocr predictions
+            if (pred.scenario === 'document_ocr' && action === 'approve') {
+                var docCorrections = this._collectDocOcrCorrections();
+                if (docCorrections) {
+                    syncItem.corrected_tags = docCorrections;
+                }
             }
             this.syncQueue.push(syncItem);
             // Don't flush sync queue yet if reject sheet will open —

@@ -8,8 +8,10 @@ from repos.person_mixin import PersonMixin
 from repos.fleet_mixin import FleetMixin
 from repos.yolo_export_mixin import YoloExportMixin
 from repos.violation_mixin import ViolationMixin
+from repos.document_mixin import DocumentMixin
 
 __all__ = [
     'VideoMixin', 'AnnotationMixin', 'PredictionMixin', 'TrackMixin',
     'ModelMixin', 'PersonMixin', 'FleetMixin', 'YoloExportMixin', 'ViolationMixin',
+    'DocumentMixin',
 ]

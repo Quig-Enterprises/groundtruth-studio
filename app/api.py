@@ -16,7 +16,8 @@ from routes import (
     videos_bp, annotations_bp, ecoeye_bp, unifi_bp,
     training_bp, yolo_export_bp, predictions_bp, tracks_bp,
     models_bp, persons_bp, frigate_bp, locations_bp, vibration_bp,
-    camera_map_bp, clip_analysis_bp, training_gallery_bp,
+    camera_map_bp, clip_analysis_bp, training_gallery_bp, documents_bp,
+    doc_training_browser_bp,
 )
 
 app = Flask(__name__,
@@ -95,6 +96,8 @@ app.register_blueprint(vibration_bp)
 app.register_blueprint(camera_map_bp)
 app.register_blueprint(clip_analysis_bp)
 app.register_blueprint(training_gallery_bp)
+app.register_blueprint(documents_bp)
+app.register_blueprint(doc_training_browser_bp)
 
 
 # ---- Home Page ----

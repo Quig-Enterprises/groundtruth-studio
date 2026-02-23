@@ -160,11 +160,21 @@
         return `/thumbnails/crop/${predId}`;
     }
 
+    function linkCropUrl(link, side) {
+        // For video_track links, use the crop endpoint; for camera_object, use prediction crop
+        if (link.source_track_type === 'video_track') {
+            const trackId = side === 'a' ? link.track_a_id : link.track_b_id;
+            return trackId ? `/api/ai/video-tracks/${trackId}/crop` : '';
+        }
+        const predId = side === 'a' ? link.pred_id_a : link.pred_id_b;
+        return cropUrl(predId);
+    }
+
     function renderCard(link) {
         if (!link) return;
 
         // Camera A (top)
-        const urlA = cropUrl(link.pred_id_a);
+        const urlA = linkCropUrl(link, 'a');
         if (urlA) {
             dom.imgA.src = urlA;
             dom.imgA.style.display = '';
@@ -183,7 +193,7 @@
         }
 
         // Camera B (bottom)
-        const urlB = cropUrl(link.pred_id_b);
+        const urlB = linkCropUrl(link, 'b');
         if (urlB) {
             dom.imgB.src = urlB;
             dom.imgB.style.display = '';
@@ -229,8 +239,10 @@
         const nextIdx = state.currentIndex + 1;
         if (nextIdx < state.filtered.length) {
             const next = state.filtered[nextIdx];
-            if (next.pred_id_a) new Image().src = cropUrl(next.pred_id_a);
-            if (next.pred_id_b) new Image().src = cropUrl(next.pred_id_b);
+            const urlA = linkCropUrl(next, 'a');
+            const urlB = linkCropUrl(next, 'b');
+            if (urlA) new Image().src = urlA;
+            if (urlB) new Image().src = urlB;
         }
     }
 

@@ -8,12 +8,14 @@ VideoDatabase inherits every mixin so existing call-sites
 from repos import (
     VideoMixin, AnnotationMixin, PredictionMixin, TrackMixin,
     ModelMixin, PersonMixin, FleetMixin, YoloExportMixin, ViolationMixin,
+    DocumentMixin,
 )
 
 
 class VideoDatabase(
     VideoMixin, AnnotationMixin, PredictionMixin, TrackMixin,
     ModelMixin, PersonMixin, FleetMixin, YoloExportMixin, ViolationMixin,
+    DocumentMixin,
 ):
     def __init__(self, db_path=None):
         """

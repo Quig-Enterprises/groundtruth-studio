@@ -6,7 +6,6 @@ cameras, violations, and departure.
 """
 
 from db_connection import get_cursor, get_connection
-from psycopg2 import extras
 import json
 import logging
 import uuid
@@ -92,7 +91,7 @@ class VisitBuilder:
             ORDER BY t.start_time ASC
         """
 
-        with get_cursor(cursor_factory=extras.RealDictCursor) as cur:
+        with get_cursor() as cur:
             cur.execute(query)
             return cur.fetchall()
 
@@ -351,7 +350,7 @@ class VisitBuilder:
             ORDER BY arrival_time DESC
         """
 
-        with get_cursor(cursor_factory=extras.RealDictCursor) as cur:
+        with get_cursor() as cur:
             cur.execute(query)
             return cur.fetchall()
 
@@ -397,7 +396,7 @@ class VisitBuilder:
             WHERE v.visit_id = %s
         """
 
-        with get_cursor(cursor_factory=extras.RealDictCursor) as cur:
+        with get_cursor() as cur:
             cur.execute(query, (visit_id,))
             visit = cur.fetchone()
 
@@ -463,7 +462,7 @@ class VisitBuilder:
             violation_id: UUID of the violation
         """
         # Get the violation details
-        with get_cursor(cursor_factory=extras.RealDictCursor) as cur:
+        with get_cursor() as cur:
             cur.execute("""
                 SELECT timestamp, person_id, vehicle_id, boat_id
                 FROM violations

@@ -284,7 +284,7 @@ const classDetail = {
         // Combine known classes with reclassification classes
         const knownClasses = [
             'sedan', 'pickup truck', 'SUV', 'minivan', 'van',
-            'tractor', 'ATV', 'UTV', 'snowmobile', 'golf cart',
+            'tractor', 'ATV', 'UTV', 'snowmobile', 'golf cart', 'skid loader',
             'motorcycle', 'trailer', 'bus', 'semi truck', 'dump truck',
             'rowboat', 'fishing boat', 'speed boat', 'pontoon boat',
             'kayak', 'canoe', 'sailboat', 'jet ski'

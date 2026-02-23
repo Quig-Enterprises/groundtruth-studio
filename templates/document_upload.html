@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Document Upload - Groundtruth Studio</title>
+    <link rel="stylesheet" href="{{ static_v('css/style.css') }}">
+    <style>
+        .upload-container {
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 1rem;
+        }
+        .upload-header { margin-bottom: 2rem; }
+        .upload-header h1 { font-size: 1.5rem; color: #f1f5f9; margin: 0 0 0.5rem 0; }
+        .upload-header p { color: #94a3b8; margin: 0; }
+        .drop-zone {
+            border: 2px dashed #475569;
+            border-radius: 12px;
+            padding: 3rem 2rem;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: rgba(30, 41, 59, 0.5);
+            margin-bottom: 1.5rem;
+        }
+        .drop-zone:hover, .drop-zone.dragover {
+            border-color: #7C3AED;
+            background: rgba(124, 58, 237, 0.08);
+        }
+        .drop-zone-icon { font-size: 3rem; margin-bottom: 1rem; color: #64748b; }
+        .drop-zone-text { color: #94a3b8; font-size: 1rem; margin-bottom: 0.5rem; }
+        .drop-zone-hint { color: #64748b; font-size: 0.85rem; }
+        .drop-zone input[type="file"] { display: none; }
+        .upload-options {
+            display: flex; gap: 1rem; margin-bottom: 1.5rem; flex-wrap: wrap;
+        }
+        .upload-options label { color: #94a3b8; font-size: 0.9rem; }
+        .upload-options select {
+            background: #1e293b; color: #f1f5f9; border: 1px solid #334155;
+            border-radius: 6px; padding: 0.5rem; font-size: 0.9rem;
+        }
+        .camera-capture-btn {
+            display: inline-flex; align-items: center; gap: 0.5rem;
+            padding: 0.75rem 1.5rem; background: #7C3AED; color: white;
+            border: none; border-radius: 8px; font-size: 1rem; cursor: pointer;
+        }
+        .camera-capture-btn:hover { background: #6D28D9; }
+        .upload-progress { display: none; margin: 1.5rem 0; }
+        .progress-bar-wrap {
+            background: #1e293b; border-radius: 8px; overflow: hidden;
+            height: 8px; margin-bottom: 0.5rem;
+        }
+        .progress-bar {
+            height: 100%; background: #7C3AED; width: 0%;
+            transition: width 0.3s; border-radius: 8px;
+        }
+        .progress-text { color: #94a3b8; font-size: 0.85rem; }
+        .results-section { display: none; margin-top: 2rem; }
+        .result-card {
+            background: #1e293b; border-radius: 10px; padding: 1.5rem;
+            margin-bottom: 1rem; border: 1px solid #334155;
+        }
+        .result-card h3 { color: #f1f5f9; margin: 0 0 1rem 0; font-size: 1.1rem; }
+        .result-field {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 0.5rem 0; border-bottom: 1px solid #334155;
+        }
+        .result-field:last-child { border-bottom: none; }
+        .result-field-label {
+            color: #94a3b8; font-size: 0.85rem;
+            text-transform: uppercase; letter-spacing: 0.05em;
+        }
+        .result-field-value { color: #f1f5f9; font-size: 0.95rem; font-weight: 500; }
+        .confidence-dot {
+            display: inline-block; width: 8px; height: 8px;
+            border-radius: 50%; margin-right: 0.5rem;
+        }
+        .conf-high { background: #22c55e; }
+        .conf-medium { background: #f59e0b; }
+        .conf-low { background: #ef4444; }
+        .export-section {
+            margin-top: 2rem; padding-top: 1.5rem; border-top: 1px solid #334155;
+        }
+        .export-btn {
+            padding: 0.6rem 1.2rem; background: #334155; color: #f1f5f9;
+            border: 1px solid #475569; border-radius: 6px; cursor: pointer; font-size: 0.9rem;
+        }
+        .export-btn:hover { background: #475569; }
+        @media (max-width: 600px) {
+            .upload-container { padding: 0 0.5rem; }
+            .drop-zone { padding: 2rem 1rem; }
+        }
+    </style>
+</head>
+<body>
+    {% include 'partials/nav.html' %}
+
+    <div class="upload-container">
+        <div class="upload-header">
+            <h1>Document Upload</h1>
+            <p>Upload identity documents for detection and OCR processing</p>
+        </div>
+
+        <div class="drop-zone" id="drop-zone">
+            <div class="drop-zone-icon">&#128196;</div>
+            <div class="drop-zone-text">Drop document image here or click to browse</div>
+            <div class="drop-zone-hint">Supports JPEG, PNG, TIFF, PDF</div>
+            <input type="file" id="file-input" accept=".jpg,.jpeg,.png,.tiff,.tif,.pdf">
+        </div>
+
+        <div class="upload-options">
+            <div>
+                <label for="doc-type">Document Type (optional)</label><br>
+                <select id="doc-type">
+                    <option value="">Auto-detect</option>
+                    <option value="passport">Passport</option>
+                    <option value="drivers_license">Driver's License</option>
+                    <option value="twic_card">TWIC Card</option>
+                    <option value="merchant_mariner_credential">Merchant Mariner Credential</option>
+                    <option value="id_card_generic">Other ID</option>
+                </select>
+            </div>
+            <div style="display:flex;align-items:flex-end;">
+                <button class="camera-capture-btn" id="camera-btn">&#128247; Camera Capture</button>
+            </div>
+        </div>
+
+        <div class="upload-progress" id="upload-progress">
+            <div class="progress-bar-wrap">
+                <div class="progress-bar" id="progress-bar"></div>
+            </div>
+            <div class="progress-text" id="progress-text">Uploading...</div>
+        </div>
+
+        <div class="results-section" id="results-section"></div>
+
+        <div class="export-section">
+            <button class="export-btn" id="export-detection-btn">Export Detection Training Data</button>
+            <button class="export-btn" id="export-ocr-btn" style="margin-left:0.5rem;">Export OCR Training Data</button>
+        </div>
+    </div>
+
+    <input type="file" id="camera-input" accept="image/*" capture="environment" style="display:none;">
+
+    <script>
+    (function() {
+        var dropZone = document.getElementById('drop-zone');
+        var fileInput = document.getElementById('file-input');
+        var cameraBtn = document.getElementById('camera-btn');
+        var cameraInput = document.getElementById('camera-input');
+        var progressEl = document.getElementById('upload-progress');
+        var progressBar = document.getElementById('progress-bar');
+        var progressText = document.getElementById('progress-text');
+        var resultsSection = document.getElementById('results-section');
+        var docTypeSelect = document.getElementById('doc-type');
+
+        var DOC_TYPE_LABELS = {
+            'passport': 'Passport',
+            'drivers_license': "Driver's License",
+            'twic_card': 'TWIC Card',
+            'merchant_mariner_credential': 'Merchant Mariner Credential',
+            'id_card_generic': 'Identity Document'
+        };
+
+        dropZone.addEventListener('click', function() { fileInput.click(); });
+        dropZone.addEventListener('dragover', function(e) {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        dropZone.addEventListener('dragleave', function() {
+            dropZone.classList.remove('dragover');
+        });
+        dropZone.addEventListener('drop', function(e) {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            if (e.dataTransfer.files.length > 0) uploadFile(e.dataTransfer.files[0]);
+        });
+        fileInput.addEventListener('change', function() {
+            if (fileInput.files.length > 0) uploadFile(fileInput.files[0]);
+        });
+        cameraBtn.addEventListener('click', function() { cameraInput.click(); });
+        cameraInput.addEventListener('change', function() {
+            if (cameraInput.files.length > 0) uploadFile(cameraInput.files[0]);
+        });
+
+        function uploadFile(file) {
+            var formData = new FormData();
+            formData.append('file', file);
+            var docType = docTypeSelect.value;
+            if (docType) formData.append('document_type', docType);
+
+            progressEl.style.display = 'block';
+            progressBar.style.width = '10%';
+            progressText.textContent = 'Uploading...';
+
+            var xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/documents/upload');
+            xhr.setRequestHeader('X-Auth-Role', 'user');
+
+            xhr.upload.addEventListener('progress', function(e) {
+                if (e.lengthComputable) {
+                    var pct = Math.round((e.loaded / e.total) * 60);
+                    progressBar.style.width = pct + '%';
+                    progressText.textContent = 'Uploading... ' + pct + '%';
+                }
+            });
+
+            xhr.addEventListener('load', function() {
+                if (xhr.status === 200) {
+                    var data = JSON.parse(xhr.responseText);
+                    if (data.success) {
+                        progressBar.style.width = '70%';
+                        progressText.textContent = 'Processing document...';
+                        pollForResults(data.video_id);
+                    } else {
+                        progressText.textContent = 'Error: ' + (data.error || 'Upload failed');
+                    }
+                } else {
+                    progressText.textContent = 'Upload failed (HTTP ' + xhr.status + ')';
+                }
+            });
+            xhr.addEventListener('error', function() {
+                progressText.textContent = 'Upload failed (network error)';
+            });
+            xhr.send(formData);
+        }
+
+        function pollForResults(videoId) {
+            var attempts = 0;
+            var maxAttempts = 30;
+
+            function check() {
+                attempts++;
+                fetch('/api/ai/predictions/pending?video_id=' + videoId + '&include_all=1')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) {
+                        var preds = data.predictions || [];
+                        var ocrPred = null;
+                        var detPred = null;
+                        for (var i = 0; i < preds.length; i++) {
+                            if (preds[i].scenario === 'document_ocr') ocrPred = preds[i];
+                            if (preds[i].scenario === 'document_detection') detPred = preds[i];
+                        }
+
+                        if (ocrPred) {
+                            progressBar.style.width = '100%';
+                            progressText.textContent = 'OCR complete!';
+                            setTimeout(function() { progressEl.style.display = 'none'; }, 1500);
+                            showResults(ocrPred);
+                        } else if (attempts < maxAttempts) {
+                            var pct = 70 + Math.round((attempts / maxAttempts) * 25);
+                            progressBar.style.width = pct + '%';
+                            progressText.textContent = 'Processing... (' + attempts + 's)';
+                            setTimeout(check, 1000);
+                        } else {
+                            progressBar.style.width = '100%';
+                            if (detPred) {
+                                progressText.textContent = 'Detection complete. OCR still processing...';
+                                showResults(detPred);
+                            } else {
+                                progressText.textContent = 'No document detected. Try a clearer image.';
+                            }
+                        }
+                    })
+                    .catch(function() {
+                        if (attempts < maxAttempts) setTimeout(check, 2000);
+                    });
+            }
+            setTimeout(check, 2000);
+        }
+
+        function showResults(pred) {
+            resultsSection.style.display = 'block';
+            resultsSection.textContent = '';
+
+            var tags = pred.predicted_tags || {};
+            if (typeof tags === 'string') { try { tags = JSON.parse(tags); } catch(e) { tags = {}; } }
+
+            var card = document.createElement('div');
+            card.className = 'result-card';
+
+            var title = document.createElement('h3');
+            title.textContent = DOC_TYPE_LABELS[tags.document_type || tags['class']] || 'Document';
+            card.appendChild(title);
+
+            var fields = tags.ocr_fields || {};
+            var fieldNames = Object.keys(fields);
+            if (fieldNames.length > 0) {
+                for (var i = 0; i < fieldNames.length; i++) {
+                    var name = fieldNames[i];
+                    var field = fields[name];
+                    var conf = field.confidence || 0;
+                    var confClass = conf >= 0.8 ? 'conf-high' : (conf >= 0.5 ? 'conf-medium' : 'conf-low');
+
+                    var row = document.createElement('div');
+                    row.className = 'result-field';
+
+                    var label = document.createElement('span');
+                    label.className = 'result-field-label';
+                    label.textContent = name.replace(/_/g, ' ');
+                    row.appendChild(label);
+
+                    var value = document.createElement('span');
+                    value.className = 'result-field-value';
+                    var dot = document.createElement('span');
+                    dot.className = 'confidence-dot ' + confClass;
+                    value.appendChild(dot);
+                    value.appendChild(document.createTextNode(field.value || ''));
+                    row.appendChild(value);
+
+                    card.appendChild(row);
+                }
+            } else {
+                var msg = document.createElement('div');
+                msg.style.color = '#94a3b8';
+                msg.textContent = 'Detection complete. OCR fields not yet available.';
+                card.appendChild(msg);
+            }
+
+            resultsSection.appendChild(card);
+
+            var link = document.createElement('a');
+            link.href = '/review?filter=documents';
+            link.style.color = '#a78bfa';
+            link.style.fontSize = '0.9rem';
+            link.textContent = 'Review in queue \u2192';
+            resultsSection.appendChild(link);
+        }
+
+        // Export buttons
+        document.getElementById('export-detection-btn').addEventListener('click', function() {
+            fetch('/api/documents/export-training', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'detection' })
+            }).then(function(r) { return r.json(); }).then(function(d) {
+                alert(d.success ? d.message : 'Export failed: ' + d.error);
+            });
+        });
+        document.getElementById('export-ocr-btn').addEventListener('click', function() {
+            fetch('/api/documents/export-training', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ type: 'ocr' })
+            }).then(function(r) { return r.json(); }).then(function(d) {
+                alert(d.success ? d.message : 'Export failed: ' + d.error);
+            });
+        });
+    })();
+    </script>
+</body>
+</html>

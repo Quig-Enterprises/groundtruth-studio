@@ -1,0 +1,22 @@
+{
+  "mwcam8": {
+    "sample_count": 4,
+    "avg_position_error_x": 363.0,
+    "avg_position_error_y": 44.25,
+    "avg_velocity_error_x": 356.17,
+    "avg_velocity_error_y": 38.35,
+    "velocity_multiplier_x": 4.56,
+    "velocity_multiplier_y": 1.38,
+    "last_updated": "2026-02-19T20:12:32.341786Z"
+  },
+  "mwparkinglot": {
+    "sample_count": 4,
+    "avg_position_error_x": 350.0,
+    "avg_position_error_y": 21.75,
+    "avg_velocity_error_x": -68.99,
+    "avg_velocity_error_y": 10.36,
+    "velocity_multiplier_x": 0.31,
+    "velocity_multiplier_y": 1.1,
+    "last_updated": "2026-02-19T20:12:32.341816Z"
+  }
+}

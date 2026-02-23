@@ -757,6 +757,49 @@ CREATE INDEX IF NOT EXISTS idx_video_tracks_camera_epoch ON video_tracks(camera_
 CREATE INDEX IF NOT EXISTS idx_video_tracks_xcam_identity ON video_tracks(cross_camera_identity_id);
 CREATE INDEX IF NOT EXISTS idx_video_tracks_status ON video_tracks(status);
 CREATE INDEX IF NOT EXISTS idx_video_tracks_video ON video_tracks(video_id);
+
+-- Document scans (OCR pipeline tracking for detected documents)
+CREATE TABLE IF NOT EXISTS document_scans (
+    id BIGSERIAL PRIMARY KEY,
+    prediction_id BIGINT REFERENCES ai_predictions(id) ON DELETE SET NULL,
+    video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+    document_type VARCHAR(50),
+    source_method VARCHAR(30) NOT NULL DEFAULT 'manual_upload'
+        CHECK (source_method IN ('camera', 'scanner', 'manual_upload')),
+    crop_image_path TEXT,
+    ocr_status VARCHAR(20) DEFAULT 'pending'
+        CHECK (ocr_status IN ('pending', 'processing', 'completed', 'failed')),
+    ocr_completed_at TIMESTAMP WITH TIME ZONE,
+    identity_id UUID REFERENCES identities(identity_id) ON DELETE SET NULL,
+    metadata JSONB DEFAULT '{}',
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_doc_scans_prediction ON document_scans(prediction_id);
+CREATE INDEX IF NOT EXISTS idx_doc_scans_video ON document_scans(video_id);
+CREATE INDEX IF NOT EXISTS idx_doc_scans_status ON document_scans(ocr_status);
+CREATE INDEX IF NOT EXISTS idx_doc_scans_type ON document_scans(document_type);
+CREATE INDEX IF NOT EXISTS idx_doc_scans_identity ON document_scans(identity_id);
+
+-- Identity documents (extracted document info from OCR)
+CREATE TABLE IF NOT EXISTS identity_documents (
+    id BIGSERIAL PRIMARY KEY,
+    identity_id UUID REFERENCES identities(identity_id) ON DELETE SET NULL,
+    document_scan_id BIGINT NOT NULL REFERENCES document_scans(id) ON DELETE CASCADE,
+    document_type VARCHAR(50) NOT NULL,
+    document_number TEXT,
+    holder_name TEXT,
+    expiry_date DATE,
+    issuing_authority TEXT,
+    extracted_fields JSONB DEFAULT '{}',
+    verified_by VARCHAR(255),
+    verified_at TIMESTAMP WITH TIME ZONE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(document_scan_id, document_type)
+);
+CREATE INDEX IF NOT EXISTS idx_identity_docs_identity ON identity_documents(identity_id);
+CREATE INDEX IF NOT EXISTS idx_identity_docs_scan ON identity_documents(document_scan_id);
+CREATE INDEX IF NOT EXISTS idx_identity_docs_number ON identity_documents(document_number);
+CREATE INDEX IF NOT EXISTS idx_identity_docs_holder ON identity_documents(holder_name);
 """
 
 
@@ -1436,6 +1479,54 @@ def run_migrations():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_ecoeye_alerts_download_status ON ecoeye_alerts(video_available, video_downloaded)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_ecoeye_alerts_timestamp ON ecoeye_alerts(timestamp)")
             logger.info("EcoEye auto-sync indexes ready")
+
+            # Migration: Document scanning and identity document tables
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS document_scans (
+                    id BIGSERIAL PRIMARY KEY,
+                    prediction_id BIGINT REFERENCES ai_predictions(id) ON DELETE SET NULL,
+                    video_id INTEGER NOT NULL REFERENCES videos(id) ON DELETE CASCADE,
+                    document_type VARCHAR(50),
+                    source_method VARCHAR(30) NOT NULL DEFAULT 'manual_upload'
+                        CHECK (source_method IN ('camera', 'scanner', 'manual_upload')),
+                    crop_image_path TEXT,
+                    ocr_status VARCHAR(20) DEFAULT 'pending'
+                        CHECK (ocr_status IN ('pending', 'processing', 'completed', 'failed')),
+                    ocr_completed_at TIMESTAMP WITH TIME ZONE,
+                    identity_id UUID REFERENCES identities(identity_id) ON DELETE SET NULL,
+                    metadata JSONB DEFAULT '{}',
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_scans_prediction ON document_scans(prediction_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_scans_video ON document_scans(video_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_scans_status ON document_scans(ocr_status)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_scans_type ON document_scans(document_type)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_doc_scans_identity ON document_scans(identity_id)")
+            logger.info("Document scans table ready")
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS identity_documents (
+                    id BIGSERIAL PRIMARY KEY,
+                    identity_id UUID REFERENCES identities(identity_id) ON DELETE SET NULL,
+                    document_scan_id BIGINT NOT NULL REFERENCES document_scans(id) ON DELETE CASCADE,
+                    document_type VARCHAR(50) NOT NULL,
+                    document_number TEXT,
+                    holder_name TEXT,
+                    expiry_date DATE,
+                    issuing_authority TEXT,
+                    extracted_fields JSONB DEFAULT '{}',
+                    verified_by VARCHAR(255),
+                    verified_at TIMESTAMP WITH TIME ZONE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    UNIQUE(document_scan_id, document_type)
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_identity_docs_identity ON identity_documents(identity_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_identity_docs_scan ON identity_documents(document_scan_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_identity_docs_number ON identity_documents(document_number)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_identity_docs_holder ON identity_documents(holder_name)")
+            logger.info("Identity documents table ready")
 
         logger.info("Migrations completed successfully")
     except Exception as e:

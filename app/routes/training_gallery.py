@@ -26,46 +26,61 @@ def get_gallery_filters():
     try:
         scenario_param = request.args.get('scenario')
         status_param = request.args.get('status', 'approved')
+        camera_param = request.args.get('camera')
 
         if status_param == 'pending':
             status_list = ('pending', 'processing')
         else:
             status_list = ('approved', 'auto_approved')
 
+        camera_join = ''
+        camera_filter = ''
+        camera_params = []
+        if camera_param:
+            camera_join = 'JOIN videos v ON v.id = p.video_id'
+            camera_filter = ' AND v.camera_id = %s'
+            camera_params = [camera_param]
+
         with get_cursor(commit=False) as cursor:
             # Scenarios with counts
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT cc.scenario, COUNT(DISTINCT p.id) as count
                 FROM ai_predictions p
                 JOIN classification_classes cc ON cc.name = p.classification
+                {camera_join}
                 WHERE p.review_status IN %s
+                  {camera_filter}
                 GROUP BY cc.scenario
                 ORDER BY count DESC
-            ''', (status_list,))
+            ''', (status_list,) + tuple(camera_params))
             scenarios = [dict(row) for row in cursor.fetchall()]
 
             # Classifications with counts, optionally filtered by scenario
             if scenario_param:
-                cursor.execute('''
+                cursor.execute(f'''
                     SELECT p.classification as name, cc.scenario, cc.display_name,
                            COUNT(*) as count
                     FROM ai_predictions p
                     JOIN classification_classes cc ON cc.name = p.classification
+                    {camera_join}
                     WHERE p.review_status IN %s
                       AND cc.scenario = %s
+                      {camera_filter}
                     GROUP BY p.classification, cc.scenario, cc.display_name
                     ORDER BY count DESC
-                ''', (status_list, scenario_param))
+                ''', (status_list, scenario_param) + tuple(camera_params))
             else:
-                cursor.execute('''
+                cursor.execute(f'''
                     SELECT p.classification as name, cc.scenario, cc.display_name,
                            COUNT(*) as count
                     FROM ai_predictions p
                     JOIN classification_classes cc ON cc.name = p.classification
+                    {camera_join}
                     WHERE p.review_status IN %s
+                      {camera_filter}
                     GROUP BY p.classification, cc.scenario, cc.display_name
                     ORDER BY count DESC
-                ''', (status_list,))
+                ''', (status_list,) + tuple(camera_params))
             classifications = [dict(row) for row in cursor.fetchall()]
 
             # All configured classes for reclassify suggestions
@@ -78,11 +93,13 @@ def get_gallery_filters():
             all_classes = [dict(row) for row in cursor.fetchall()]
 
             # Pending count for badge
-            cursor.execute('''
+            cursor.execute(f'''
                 SELECT COUNT(*) AS cnt
-                FROM ai_predictions
-                WHERE review_status IN ('pending', 'processing')
-            ''')
+                FROM ai_predictions p
+                {camera_join}
+                WHERE p.review_status IN ('pending', 'processing')
+                  {camera_filter}
+            ''', tuple(camera_params))
             pending_count = cursor.fetchone()['cnt']
 
         return jsonify({
@@ -108,6 +125,7 @@ def get_gallery_items():
         page = request.args.get('page', 1, type=int)
         per_page = request.args.get('per_page', 60, type=int)
         sort = request.args.get('sort', 'confidence')
+        camera = request.args.get('camera')
 
         offset = (page - 1) * per_page
 
@@ -144,6 +162,11 @@ def get_gallery_items():
             if scenario:
                 scenario_join = 'JOIN classification_classes cc ON cc.name = p.classification'
 
+            camera_filter = ''
+            if camera:
+                camera_filter = ' AND v.camera_id = %s'
+                filter_params.append(camera)
+
             pending_query = f'''
                 SELECT
                     NULL::text AS cluster_type,
@@ -168,6 +191,7 @@ def get_gallery_items():
                 {scenario_join}
                 WHERE p.review_status IN ('pending', 'processing')
                   {filter_sql}
+                  {camera_filter}
                 ORDER BY {order_by}
             '''
 
@@ -211,6 +235,12 @@ def get_gallery_items():
         scenario_join = ''
         if scenario:
             scenario_join = 'JOIN classification_classes cc ON cc.name = p.classification'
+
+        camera_filter_sql = ''
+        camera_params = []
+        if camera:
+            camera_filter_sql = ' AND v.camera_id = %s'
+            camera_params = [camera]
 
         union_query = f'''
             SELECT *
@@ -262,6 +292,7 @@ def get_gallery_items():
                              ) < 0.1
                       )
                       {filter_sql}
+                      {camera_filter_sql}
                     ORDER BY p.camera_object_track_id, p.confidence DESC
                 ) AS track_clusters
 
@@ -315,6 +346,7 @@ def get_gallery_items():
                              ) < 0.1
                       )
                       {filter_sql}
+                      {camera_filter_sql}
                     ORDER BY p.prediction_group_id, p.confidence DESC
                 ) AS group_clusters
 
@@ -396,6 +428,7 @@ def get_gallery_items():
                         ))
                   )
                   {filter_sql}
+                  {camera_filter_sql}
             ) AS gallery_items
             ORDER BY {order_by}
         '''
@@ -405,9 +438,9 @@ def get_gallery_items():
         #   group branch:      cluster_count_params + filter_params
         #   standalone branch: filter_params
         all_params = (
-            filter_params +
-            filter_params +
-            filter_params
+            filter_params + camera_params +
+            filter_params + camera_params +
+            filter_params + camera_params
         )
 
         count_query = f'SELECT COUNT(*) AS total FROM ({union_query}) AS counted'
@@ -508,6 +541,34 @@ def get_cluster_items(cluster_type, cluster_id):
         return jsonify({'success': False, 'error': str(e)}), 500
 
 
+@training_gallery_bp.route('/api/training-gallery/cameras')
+def get_gallery_cameras():
+    """Return distinct camera names from predictions in the pending queue."""
+    try:
+        status_mode = request.args.get('status', 'pending')
+        if status_mode == 'pending':
+            status_list = ('pending', 'processing')
+        else:
+            status_list = ('approved', 'auto_approved')
+
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT v.camera_id as name, COUNT(DISTINCT p.id) as count
+                FROM ai_predictions p
+                JOIN videos v ON v.id = p.video_id
+                WHERE p.review_status IN %s
+                  AND v.camera_id IS NOT NULL
+                GROUP BY v.camera_id
+                ORDER BY count DESC
+            ''', (status_list,))
+            cameras = [dict(row) for row in cursor.fetchall()]
+
+        return jsonify({'success': True, 'cameras': cameras})
+    except Exception as e:
+        logger.error(f'Failed to get gallery cameras: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
 @training_gallery_bp.route('/api/training-gallery/bulk-action', methods=['POST'])
 def bulk_gallery_action():
     """Bulk operations on selected predictions."""
@@ -522,6 +583,7 @@ def bulk_gallery_action():
         action = data.get('action')
         prediction_ids = data.get('prediction_ids', [])
         new_classification = data.get('new_classification')
+        actual_class = data.get('actual_class')
 
         if action not in ('reclassify', 'requeue', 'remove', 'approve'):
             return jsonify({'success': False, 'error': 'action must be reclassify, requeue, remove, or approve'}), 400
@@ -531,6 +593,10 @@ def bulk_gallery_action():
 
         if action == 'reclassify' and not new_classification:
             return jsonify({'success': False, 'error': 'new_classification required for reclassify action'}), 400
+
+        # Normalize classification to lowercase to match classification_classes table
+        if new_classification:
+            new_classification = new_classification.lower().strip()
 
         with get_cursor(commit=True) as cursor:
             if action == 'reclassify':
@@ -575,16 +641,59 @@ def bulk_gallery_action():
                 affected = cursor.rowcount
 
             elif action == 'remove':
-                cursor.execute('''
-                    UPDATE ai_predictions
-                    SET review_status = 'rejected',
-                        reviewed_by = 'gallery_removal',
-                        reviewed_at = NOW()
-                    WHERE id = ANY(%s)
-                ''', (prediction_ids,))
+                if actual_class:
+                    cursor.execute('''
+                        UPDATE ai_predictions
+                        SET review_status = 'rejected',
+                            reviewed_by = 'gallery_removal',
+                            reviewed_at = NOW(),
+                            corrected_tags = COALESCE(corrected_tags, '{}'::jsonb)
+                                || jsonb_build_object('actual_class', %s)
+                        WHERE id = ANY(%s)
+                    ''', (actual_class, prediction_ids))
+                else:
+                    cursor.execute('''
+                        UPDATE ai_predictions
+                        SET review_status = 'rejected',
+                            reviewed_by = 'gallery_removal',
+                            reviewed_at = NOW()
+                        WHERE id = ANY(%s)
+                    ''', (prediction_ids,))
                 affected = cursor.rowcount
 
-        return jsonify({'success': True, 'affected': affected})
+        # Create training annotations for approved predictions
+        annotations_created = 0
+        if action in ('approve', 'reclassify'):
+            for pid in prediction_ids:
+                ann_id = db.approve_prediction_to_annotation(pid)
+                if ann_id:
+                    annotations_created += 1
+
+        # Cascade reject child predictions when parent is removed
+        cascaded = 0
+        if action == 'remove':
+            for pid in prediction_ids:
+                cascaded += db.cascade_reject_children(pid, reviewed_by='gallery_removal')
+
+        # Update model approval stats after approve/reclassify
+        if action in ('approve', 'reclassify') and affected > 0:
+            try:
+                with get_cursor(commit=False) as cursor:
+                    cursor.execute('''
+                        SELECT DISTINCT model_name, model_version
+                        FROM ai_predictions WHERE id = ANY(%s)
+                    ''', (prediction_ids,))
+                    for row in cursor.fetchall():
+                        db.update_model_approval_stats(row['model_name'], row['model_version'])
+            except Exception as e:
+                logger.warning(f'Failed to update model approval stats: {e}')
+
+        result = {'success': True, 'affected': affected}
+        if action in ('approve', 'reclassify'):
+            result['annotations_created'] = annotations_created
+        if action == 'remove':
+            result['cascaded'] = cascaded
+        return jsonify(result)
 
     except Exception as e:
         logger.error(f'Failed to execute bulk gallery action: {e}')
@@ -664,3 +773,47 @@ def get_prediction_crop(prediction_id):
     except Exception as e:
         logger.error(f'Failed to generate crop for prediction {prediction_id}: {e}')
         return jsonify({'error': 'Failed to generate crop'}), 500
+
+
+@training_gallery_bp.route('/api/training-gallery/full-image/<int:prediction_id>')
+def get_prediction_full_image(prediction_id):
+    """Serve the full thumbnail image for overlay-mode predictions (documents)."""
+    from PIL import Image
+    try:
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT p.id, p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
+                       v.thumbnail_path, v.width AS video_width, v.height AS video_height
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                WHERE p.id = %s
+            ''', (prediction_id,))
+            row = cursor.fetchone()
+
+        if not row or not row['thumbnail_path']:
+            return jsonify({'error': 'Not found'}), 404
+
+        tp = row['thumbnail_path']
+        thumb_path = Path(tp) if tp.startswith('/') else THUMBNAIL_DIR / tp
+        if not thumb_path.exists():
+            return jsonify({'error': 'Thumbnail not found'}), 404
+
+        # Resize to max 600px for gallery display
+        CROPS_DIR.mkdir(parents=True, exist_ok=True)
+        full_path = CROPS_DIR / f'gallery_full_{prediction_id}.jpg'
+
+        if not full_path.exists():
+            img = Image.open(thumb_path)
+            max_dim = 600
+            if max(img.size) > max_dim:
+                ratio = max_dim / max(img.size)
+                new_size = (int(img.size[0] * ratio), int(img.size[1] * ratio))
+                img = img.resize(new_size, Image.LANCZOS)
+            img.save(str(full_path), 'JPEG', quality=85)
+
+        resp = send_file(str(full_path), mimetype='image/jpeg')
+        resp.headers['Cache-Control'] = 'public, max-age=604800'
+        return resp
+    except Exception as e:
+        logger.error(f'Failed to generate full image for prediction {prediction_id}: {e}')
+        return jsonify({'error': 'Failed to generate image'}), 500

@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Batch Cluster Review - Groundtruth Studio</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .review-container { max-width: 1400px; margin: 0 auto; padding: 20px; }
+        .header-section { margin-bottom: 24px; }
+        .header-section h1 { margin: 0 0 5px 0; font-size: 28px; color: #1a1a1a; }
+        .header-section .subtitle { color: #666; font-size: 14px; }
+        .stats-bar { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+        .stat-card { background: #fff; border-radius: 8px; padding: 12px 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .stat-card .value { font-size: 24px; font-weight: 700; color: #1a1a1a; }
+        .stat-card .label { font-size: 12px; color: #888; text-transform: uppercase; }
+
+        .cluster-grid { display: flex; flex-direction: column; gap: 16px; }
+        .cluster-card {
+            background: #fff; border-radius: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+            overflow: hidden; border: 1px solid #e5e7eb;
+        }
+        .cluster-card.reviewed { opacity: 0.5; }
+        .cluster-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 16px 20px; border-bottom: 1px solid #f0f0f0; background: #fafafa;
+        }
+        .cluster-meta { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+        .cluster-meta .camera { font-weight: 600; font-size: 16px; color: #1a1a1a; }
+        .cluster-meta .badge {
+            display: inline-block; padding: 2px 8px; border-radius: 10px;
+            font-size: 11px; font-weight: 600; text-transform: uppercase;
+        }
+        .badge-count { background: #dbeafe; color: #1d4ed8; }
+        .badge-conf { background: #fef3c7; color: #92400e; }
+        .badge-class { background: #f3e8ff; color: #7c3aed; }
+        .badge-prev-approved { background: #dcfce7; color: #166534; }
+        .badge-prev-rejected { background: #fee2e2; color: #991b1b; }
+
+        .cluster-actions { display: flex; gap: 8px; }
+        .btn {
+            padding: 8px 20px; border: none; border-radius: 6px; font-weight: 600;
+            font-size: 13px; cursor: pointer; transition: all 0.15s;
+        }
+        .btn-approve { background: #22c55e; color: #fff; }
+        .btn-approve:hover { background: #16a34a; }
+        .btn-reject { background: #ef4444; color: #fff; }
+        .btn-reject:hover { background: #dc2626; }
+        .btn-reclassify { background: #f59e0b; color: #fff; }
+        .btn-reclassify:hover { background: #d97706; }
+        .btn-uncluster { background: #6b7280; color: #fff; font-size: 12px; padding: 6px 12px; }
+        .btn-uncluster:hover { background: #4b5563; }
+        .btn-expand { background: #f3f4f6; color: #374151; }
+        .btn-expand:hover { background: #e5e7eb; }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+        .reclassify-panel {
+            display: none; padding: 12px 20px; border-top: 1px solid #f0f0f0;
+            background: #fffbeb; align-items: center; gap: 10px;
+        }
+        .reclassify-panel.visible { display: flex; flex-wrap: wrap; }
+        .reclassify-panel label { font-weight: 600; font-size: 13px; color: #92400e; }
+        .reclassify-input {
+            padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px;
+            font-size: 13px; width: 200px;
+        }
+        .reclassify-input:focus { outline: none; border-color: #f59e0b; box-shadow: 0 0 0 2px rgba(245,158,11,0.2); }
+        .quick-class {
+            padding: 4px 10px; border: 1px solid #e5e7eb; border-radius: 14px;
+            font-size: 11px; cursor: pointer; background: #fff; color: #374151;
+            transition: all 0.15s;
+        }
+        .quick-class:hover { background: #f59e0b; color: #fff; border-color: #f59e0b; }
+        .btn-confirm-reclass { background: #f59e0b; color: #fff; padding: 6px 16px; }
+        .btn-confirm-reclass:hover { background: #d97706; }
+
+        .result-reclassified { background: #fef3c7; color: #92400e; }
+
+        @media (max-width: 768px) {
+            .review-container { padding: 10px; }
+            .header-section h1 { font-size: 22px; }
+            .stats-bar { gap: 8px; }
+            .stat-card { padding: 8px 12px; flex: 1; min-width: 70px; text-align: center; }
+            .stat-card .value { font-size: 18px; }
+            .cluster-header { flex-direction: column; gap: 10px; padding: 12px; }
+            .cluster-meta { gap: 6px; }
+            .cluster-actions { width: 100%; display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+            .cluster-actions .btn { padding: 10px 8px; font-size: 12px; text-align: center; }
+            .cluster-actions .btn-reclassify { grid-column: 1 / -1; }
+            .cluster-actions .btn-expand { grid-column: 1 / -1; order: -1; }
+            .cluster-preview { padding: 8px 12px; gap: 6px; }
+            .preview-thumb { width: 120px; height: 90px; }
+            .reclassify-panel { padding: 10px 12px; gap: 8px; }
+            .reclassify-input { width: 100%; }
+            .quick-class { padding: 6px 12px; font-size: 12px; }
+            .cluster-details { padding: 8px 12px; }
+            .detail-table { font-size: 11px; display: block; overflow-x: auto; }
+        }
+
+        .cluster-preview {
+            display: flex; gap: 8px; padding: 12px 20px; overflow-x: auto;
+            scrollbar-width: thin;
+        }
+        .preview-thumb {
+            flex: 0 0 auto; width: 160px; height: 120px; border-radius: 6px;
+            object-fit: cover; border: 2px solid #e5e7eb; cursor: pointer;
+        }
+        .preview-thumb:hover { border-color: #6366f1; }
+
+        .context-section { display: flex; gap: 12px; padding: 12px 20px; border-bottom: 1px solid #f0f0f0; align-items: flex-start; flex-wrap: wrap; }
+        .context-frame {
+            max-width: 100%; max-height: 300px; border-radius: 8px;
+            border: 2px solid #ef4444; object-fit: contain;
+        }
+        .context-label { font-size: 11px; color: #888; text-transform: uppercase; font-weight: 600; margin-bottom: 4px; }
+
+        .cluster-details {
+            display: none; padding: 12px 20px; border-top: 1px solid #f0f0f0;
+            background: #f9fafb; max-height: 400px; overflow-y: auto;
+        }
+        .cluster-details.visible { display: block; }
+        .detail-table { width: 100%; font-size: 12px; border-collapse: collapse; }
+        .detail-table th { text-align: left; padding: 6px 8px; color: #666; border-bottom: 1px solid #e5e7eb; }
+        .detail-table td { padding: 6px 8px; border-bottom: 1px solid #f0f0f0; }
+
+        .result-banner {
+            padding: 8px 20px; font-weight: 600; font-size: 13px; text-align: center;
+        }
+        .result-approved { background: #dcfce7; color: #166534; }
+        .result-rejected { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body>
+    <div class="review-container">
+        <div class="header-section">
+            <h1>Batch Cluster Review</h1>
+            <div class="subtitle">Static background detections grouped by camera + location. Review one sample, decide for all.</div>
+        </div>
+
+        <div class="stats-bar" id="statsBar">
+            <div class="stat-card"><div class="value" id="totalClusters">-</div><div class="label">Clusters</div></div>
+            <div class="stat-card"><div class="value" id="totalPredictions">-</div><div class="label">Total Predictions</div></div>
+            <div class="stat-card"><div class="value" id="reviewedCount">0</div><div class="label">Reviewed</div></div>
+            <div class="stat-card"><div class="value" id="remainingCount">-</div><div class="label">Remaining</div></div>
+        </div>
+
+        <div id="clusterGrid" class="cluster-grid"></div>
+    </div>
+
+    <script>
+    const App = {
+        clusters: [],
+        reviewed: 0,
+
+        async init() {
+            const resp = await fetch('/api/ai/predictions/static-clusters');
+            const data = await resp.json();
+            if (!data.success) { alert('Failed to load clusters'); return; }
+            this.clusters = data.clusters;
+            document.getElementById('totalClusters').textContent = data.clusters.length;
+            document.getElementById('totalPredictions').textContent = data.total;
+            document.getElementById('remainingCount').textContent = data.clusters.length;
+            this.render();
+        },
+
+        render() {
+            const grid = document.getElementById('clusterGrid');
+            // Clear existing content safely
+            while (grid.firstChild) grid.removeChild(grid.firstChild);
+            this.clusters.forEach((c, i) => grid.appendChild(this.buildClusterCard(c, i)));
+        },
+
+        buildClusterCard(cluster, index) {
+            const members = typeof cluster.members === 'string' ? JSON.parse(cluster.members) : cluster.members;
+
+            const card = document.createElement('div');
+            card.className = 'cluster-card';
+            card.id = 'cluster-' + index;
+
+            // Header
+            const header = document.createElement('div');
+            header.className = 'cluster-header';
+
+            const meta = document.createElement('div');
+            meta.className = 'cluster-meta';
+
+            const cameraSpan = document.createElement('span');
+            cameraSpan.className = 'camera';
+            cameraSpan.textContent = cluster.camera_id;
+            meta.appendChild(cameraSpan);
+
+            const countBadge = document.createElement('span');
+            countBadge.className = 'badge badge-count';
+            countBadge.textContent = cluster.count + ' detections';
+            meta.appendChild(countBadge);
+
+            const confBadge = document.createElement('span');
+            confBadge.className = 'badge badge-conf';
+            confBadge.textContent = 'avg ' + Math.round(cluster.avg_confidence * 100) + '% conf';
+            meta.appendChild(confBadge);
+
+            const classes = (cluster.yolo_classes || []).filter(function(c) { return c; }).join(', ');
+            if (classes) {
+                const classBadge = document.createElement('span');
+                classBadge.className = 'badge badge-class';
+                classBadge.textContent = classes;
+                meta.appendChild(classBadge);
+            }
+
+            // Previous status badges
+            const prevStatuses = {};
+            members.forEach(function(m) {
+                const s = m.previous_status || 'unknown';
+                prevStatuses[s] = (prevStatuses[s] || 0) + 1;
+            });
+            Object.keys(prevStatuses).forEach(function(status) {
+                const pb = document.createElement('span');
+                pb.className = 'badge ' + (status === 'approved' ? 'badge-prev-approved' : 'badge-prev-rejected');
+                pb.textContent = prevStatuses[status] + ' prev ' + status;
+                meta.appendChild(pb);
+            });
+
+            header.appendChild(meta);
+
+            // Action buttons
+            const actions = document.createElement('div');
+            actions.className = 'cluster-actions';
+
+            const detailsBtn = document.createElement('button');
+            detailsBtn.className = 'btn btn-expand';
+            detailsBtn.textContent = 'Details';
+            detailsBtn.addEventListener('click', function() { App.toggleDetails(index); });
+            actions.appendChild(detailsBtn);
+
+            const approveBtn = document.createElement('button');
+            approveBtn.className = 'btn btn-approve';
+            approveBtn.id = 'approve-' + index;
+            approveBtn.textContent = 'Approve All';
+            approveBtn.addEventListener('click', function() { App.review(cluster.cluster_key, 'approve', index); });
+            actions.appendChild(approveBtn);
+
+            const rejectBtn = document.createElement('button');
+            rejectBtn.className = 'btn btn-reject';
+            rejectBtn.id = 'reject-' + index;
+            rejectBtn.textContent = 'Reject All';
+            rejectBtn.addEventListener('click', function() { App.review(cluster.cluster_key, 'reject', index); });
+            actions.appendChild(rejectBtn);
+
+            const reclassBtn = document.createElement('button');
+            reclassBtn.className = 'btn btn-reclassify';
+            reclassBtn.id = 'reclass-' + index;
+            reclassBtn.textContent = 'Reclassify';
+            reclassBtn.addEventListener('click', function() { App.toggleReclassify(index); });
+            actions.appendChild(reclassBtn);
+
+            var unclusterBtn = document.createElement('button');
+            unclusterBtn.className = 'btn btn-uncluster';
+            unclusterBtn.textContent = 'Uncluster';
+            unclusterBtn.addEventListener('click', function() { App.uncluster(cluster.cluster_key, index); });
+            actions.appendChild(unclusterBtn);
+
+            header.appendChild(actions);
+            card.appendChild(header);
+
+            // Full frame with bounding box for context
+            var sampleId = members[0] ? members[0].id : null;
+            if (sampleId) {
+                var contextSection = document.createElement('div');
+                contextSection.className = 'context-section';
+
+                var frameWrap = document.createElement('div');
+                var frameLabel = document.createElement('div');
+                frameLabel.className = 'context-label';
+                frameLabel.textContent = 'Full frame (detection in red box)';
+                frameWrap.appendChild(frameLabel);
+
+                var frameImg = document.createElement('img');
+                frameImg.className = 'context-frame';
+                frameImg.src = '/thumbnails/annotated/' + sampleId;
+                frameImg.alt = 'Full frame with detection box';
+                frameImg.addEventListener('error', function() { contextSection.style.display = 'none'; });
+                frameWrap.appendChild(frameImg);
+
+                contextSection.appendChild(frameWrap);
+                card.appendChild(contextSection);
+            }
+
+            // Preview thumbnails (crops)
+            const preview = document.createElement('div');
+            preview.className = 'cluster-preview';
+            members.slice(0, 6).forEach(function(m) {
+                const img = document.createElement('img');
+                img.className = 'preview-thumb';
+                img.src = '/thumbnails/crop/' + m.id;
+                img.alt = 'Detection ' + m.id;
+                img.addEventListener('error', function() { this.style.display = 'none'; });
+                preview.appendChild(img);
+            });
+            card.appendChild(preview);
+
+            // Reclassify panel
+            var reclassPanel = document.createElement('div');
+            reclassPanel.className = 'reclassify-panel';
+            reclassPanel.id = 'reclass-panel-' + index;
+
+            var reclassLabel = document.createElement('label');
+            reclassLabel.textContent = 'Actual class:';
+            reclassPanel.appendChild(reclassLabel);
+
+            var reclassInput = document.createElement('input');
+            reclassInput.type = 'text';
+            reclassInput.className = 'reclassify-input';
+            reclassInput.id = 'reclass-input-' + index;
+            reclassInput.placeholder = 'e.g. mailbox, tree, sign, snow...';
+            reclassPanel.appendChild(reclassInput);
+
+            var quickClasses = ['tree', 'shadow', 'sign', 'mailbox', 'snow', 'building', 'fence', 'person', 'pole', 'rock', 'chair', 'folding table', 'ladder', 'flag'];
+            quickClasses.forEach(function(cls) {
+                var chip = document.createElement('button');
+                chip.className = 'quick-class';
+                chip.textContent = cls;
+                chip.addEventListener('click', function() {
+                    document.getElementById('reclass-input-' + index).value = cls;
+                });
+                reclassPanel.appendChild(chip);
+            });
+
+            var confirmBtn = document.createElement('button');
+            confirmBtn.className = 'btn btn-confirm-reclass';
+            confirmBtn.textContent = 'Apply to All';
+            confirmBtn.addEventListener('click', function() {
+                var val = document.getElementById('reclass-input-' + index).value.trim();
+                if (!val) { alert('Enter a class name'); return; }
+                App.review(cluster.cluster_key, 'reclassify', index, val);
+            });
+            reclassPanel.appendChild(confirmBtn);
+
+            card.appendChild(reclassPanel);
+
+            // Details table
+            const details = document.createElement('div');
+            details.className = 'cluster-details';
+            details.id = 'details-' + index;
+
+            const table = document.createElement('table');
+            table.className = 'detail-table';
+
+            const thead = document.createElement('thead');
+            const headRow = document.createElement('tr');
+            ['ID', 'YOLO Class', 'Conf', 'VLM Class', 'VLM Reasoning', 'Previous'].forEach(function(h) {
+                const th = document.createElement('th');
+                th.textContent = h;
+                headRow.appendChild(th);
+            });
+            thead.appendChild(headRow);
+            table.appendChild(thead);
+
+            const tbody = document.createElement('tbody');
+            members.forEach(function(m) {
+                const tr = document.createElement('tr');
+
+                const tdId = document.createElement('td');
+                tdId.textContent = m.id;
+                tr.appendChild(tdId);
+
+                const tdClass = document.createElement('td');
+                tdClass.textContent = m.class || '-';
+                tr.appendChild(tdClass);
+
+                const tdConf = document.createElement('td');
+                tdConf.textContent = Math.round((m.confidence || 0) * 100) + '%';
+                tr.appendChild(tdConf);
+
+                const tdVlm = document.createElement('td');
+                tdVlm.textContent = m.vlm_class || '-';
+                tr.appendChild(tdVlm);
+
+                const tdReason = document.createElement('td');
+                tdReason.textContent = m.vlm_reasoning || '-';
+                tdReason.style.maxWidth = '300px';
+                tdReason.style.overflow = 'hidden';
+                tdReason.style.textOverflow = 'ellipsis';
+                tdReason.style.whiteSpace = 'nowrap';
+                tr.appendChild(tdReason);
+
+                const tdPrev = document.createElement('td');
+                const prevBadge = document.createElement('span');
+                prevBadge.className = 'badge ' + (m.previous_status === 'approved' ? 'badge-prev-approved' : 'badge-prev-rejected');
+                prevBadge.textContent = m.previous_status || '-';
+                tdPrev.appendChild(prevBadge);
+                tr.appendChild(tdPrev);
+
+                tbody.appendChild(tr);
+            });
+            table.appendChild(tbody);
+            details.appendChild(table);
+            card.appendChild(details);
+
+            return card;
+        },
+
+        toggleDetails(index) {
+            var el = document.getElementById('details-' + index);
+            el.classList.toggle('visible');
+        },
+
+        toggleReclassify(index) {
+            var el = document.getElementById('reclass-panel-' + index);
+            el.classList.toggle('visible');
+        },
+
+        async uncluster(clusterKey, index) {
+            if (!confirm('Remove cluster tags? Items will go to individual review.')) return;
+            var resp = await fetch('/api/ai/predictions/uncluster', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ cluster_key: clusterKey })
+            });
+            var data = await resp.json();
+            if (data.success) {
+                var card = document.getElementById('cluster-' + index);
+                card.classList.add('reviewed');
+                var banner = document.createElement('div');
+                banner.className = 'result-banner result-rejected';
+                banner.textContent = 'Unclustered — ' + data.updated + ' sent to individual review';
+                card.appendChild(banner);
+                this.reviewed++;
+                document.getElementById('reviewedCount').textContent = this.reviewed;
+                document.getElementById('remainingCount').textContent = this.clusters.length - this.reviewed;
+            } else {
+                alert('Error: ' + (data.error || 'Unknown'));
+            }
+        },
+
+        async review(clusterKey, action, index, actualClass) {
+            var approveBtn = document.getElementById('approve-' + index);
+            var rejectBtn = document.getElementById('reject-' + index);
+            var reclassBtn = document.getElementById('reclass-' + index);
+
+            var activeBtn = action === 'approve' ? approveBtn : (action === 'reject' ? rejectBtn : reclassBtn);
+            activeBtn.disabled = true;
+            activeBtn.textContent = 'Saving...';
+
+            var body = { cluster_key: clusterKey, action: action };
+            if (actualClass) body.actual_class = actualClass;
+
+            var resp = await fetch('/api/ai/predictions/batch-cluster-review', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(body)
+            });
+            var data = await resp.json();
+
+            var card = document.getElementById('cluster-' + index);
+            if (data.success) {
+                card.classList.add('reviewed');
+                var banner = document.createElement('div');
+                var bannerClass = action === 'approve' ? 'result-approved' : (action === 'reclassify' ? 'result-reclassified' : 'result-rejected');
+                banner.className = 'result-banner ' + bannerClass;
+                var label = action === 'approve' ? 'Approved' : (action === 'reclassify' ? 'Reclassified as "' + actualClass + '"' : 'Rejected');
+                banner.textContent = label + ' — ' + data.updated + ' predictions';
+                card.appendChild(banner);
+
+                approveBtn.disabled = true;
+                rejectBtn.disabled = true;
+                reclassBtn.disabled = true;
+
+                this.reviewed++;
+                document.getElementById('reviewedCount').textContent = this.reviewed;
+                document.getElementById('remainingCount').textContent = this.clusters.length - this.reviewed;
+            } else {
+                activeBtn.disabled = false;
+                activeBtn.textContent = action === 'approve' ? 'Approve All' : 'Reject All';
+                alert('Error: ' + (data.error || 'Unknown'));
+            }
+        }
+    };
+
+    document.addEventListener('DOMContentLoaded', function() { App.init(); });
+    </script>
+</body>
+</html>

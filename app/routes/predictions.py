@@ -695,7 +695,8 @@ def get_review_filter_counts():
             (counts.get('vehicles') or 0) +
             (counts.get('people') or 0) +
             (counts.get('plates') or 0) +
-            (counts.get('boat_reg') or 0)
+            (counts.get('boat_reg') or 0) +
+            (counts.get('documents') or 0)
         )
         counts['other'] = max(0, (counts.get('predictions') or 0) - known_scenario_sum)
         # Compute unified total across all types (no double counting)
@@ -704,6 +705,7 @@ def get_review_filter_counts():
             (counts.get('people') or 0) +
             (counts.get('plates') or 0) +
             (counts.get('boat_reg') or 0) +
+            (counts.get('documents') or 0) +
             (counts.get('other') or 0) +
             (counts.get('classify') or 0) +
             (counts.get('cross_camera') or 0) +
