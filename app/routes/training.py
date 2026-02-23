@@ -27,6 +27,9 @@ def model_training_page():
 
 # ===== Training Job Queue Endpoints =====
 
+# Job types that carry their data in config rather than an export_path directory
+CONFIG_ONLY_JOB_TYPES = {'face_detect_embed'}
+
 @training_bp.route('/api/training/submit', methods=['POST'])
 def submit_training_job():
     """Submit a training job: export data, upload to S3, queue via SQS"""
@@ -38,24 +41,29 @@ def submit_training_job():
         export_config_id = data.get('export_config_id')
         export_path = data.get('export_path')
 
-        if export_config_id and not export_path:
-            output_name = data.get('output_name')
-            result = yolo_exporter.export_dataset(export_config_id, output_name)
-            if not result.get('success'):
-                return jsonify({'success': False, 'error': 'Export failed', 'details': result}), 500
-            export_path = result['export_path']
-            config['export_stats'] = {
-                'video_count': result.get('video_count'),
-                'frame_count': result.get('frame_count'),
-                'annotation_count': result.get('annotation_count'),
-                'class_mapping': result.get('class_mapping'),
-            }
+        if job_type in CONFIG_ONLY_JOB_TYPES:
+            # These job types carry all data in config; no export directory needed.
+            # Use a sentinel path so submit_job stays consistent.
+            export_path = export_path or ''
+        else:
+            if export_config_id and not export_path:
+                output_name = data.get('output_name')
+                result = yolo_exporter.export_dataset(export_config_id, output_name)
+                if not result.get('success'):
+                    return jsonify({'success': False, 'error': 'Export failed', 'details': result}), 500
+                export_path = result['export_path']
+                config['export_stats'] = {
+                    'video_count': result.get('video_count'),
+                    'frame_count': result.get('frame_count'),
+                    'annotation_count': result.get('annotation_count'),
+                    'class_mapping': result.get('class_mapping'),
+                }
 
-        if not export_path:
-            return jsonify({'success': False, 'error': 'Either export_config_id or export_path required'}), 400
+            if not export_path:
+                return jsonify({'success': False, 'error': 'Either export_config_id or export_path required'}), 400
 
-        if not os.path.isdir(export_path):
-            return jsonify({'success': False, 'error': f'Export path not found: {export_path}'}), 400
+            if not os.path.isdir(export_path):
+                return jsonify({'success': False, 'error': f'Export path not found: {export_path}'}), 400
 
         result = training_queue.submit_job(
             export_path=export_path,
@@ -84,21 +92,38 @@ def get_training_jobs():
 
 @training_bp.route('/api/training/jobs/next', methods=['GET'])
 def claim_next_training_job():
-    """Atomically claim the next queued training job for a worker."""
+    """Atomically claim the next queued training job for a worker.
+
+    Optional query param ?job_type= restricts to a specific job type.
+    """
     try:
+        job_type_filter = request.args.get('job_type')
         with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
-            cursor.execute('''
-                UPDATE training_jobs SET status = 'processing'
-                WHERE id = (
-                    SELECT id FROM training_jobs
-                    WHERE status = 'queued'
-                    ORDER BY submitted_at
-                    LIMIT 1
-                    FOR UPDATE SKIP LOCKED
-                )
-                RETURNING *
-            ''')
+            if job_type_filter:
+                cursor.execute('''
+                    UPDATE training_jobs SET status = 'processing'
+                    WHERE id = (
+                        SELECT id FROM training_jobs
+                        WHERE status = 'queued' AND job_type = %s
+                        ORDER BY submitted_at
+                        LIMIT 1
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    RETURNING *
+                ''', (job_type_filter,))
+            else:
+                cursor.execute('''
+                    UPDATE training_jobs SET status = 'processing'
+                    WHERE id = (
+                        SELECT id FROM training_jobs
+                        WHERE status = 'queued'
+                        ORDER BY submitted_at
+                        LIMIT 1
+                        FOR UPDATE SKIP LOCKED
+                    )
+                    RETURNING *
+                ''')
             row = cursor.fetchone()
             conn.commit()
 
