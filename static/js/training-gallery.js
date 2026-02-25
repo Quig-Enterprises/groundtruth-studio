@@ -22,9 +22,41 @@ var TrainingGallery = {
     // ── Initialization ───────────────────────────────────────────────────
 
     init() {
+        this.readUrlParams();
         this.loadFilters();
         this.setupInfiniteScroll();
         this.bindEvents();
+    },
+
+    readUrlParams() {
+        var params = new URLSearchParams(window.location.search);
+        if (params.get('status')) this.filters.status = params.get('status');
+        if (params.get('scenario')) this.filters.scenario = params.get('scenario');
+        if (params.get('classification')) this.filters.classification = params.get('classification');
+        if (params.get('sort')) this.filters.sort = params.get('sort');
+        if (params.get('camera')) this.filters.camera = params.get('camera');
+        if (params.get('page')) this.page = parseInt(params.get('page'), 10) || 1;
+        // Sync UI controls
+        var statusBtn = document.querySelector('#status-toggle .toggle-btn[data-status="' + this.filters.status + '"]');
+        if (statusBtn) {
+            document.querySelectorAll('#status-toggle .toggle-btn').forEach(function(b) { b.classList.remove('active'); });
+            statusBtn.classList.add('active');
+        }
+        var sortSel = document.getElementById('sort-select');
+        if (sortSel) sortSel.value = this.filters.sort;
+        this.updateModeButtons();
+    },
+
+    syncUrlParams() {
+        var params = new URLSearchParams();
+        params.set('status', this.filters.status);
+        if (this.filters.scenario) params.set('scenario', this.filters.scenario);
+        if (this.filters.classification) params.set('classification', this.filters.classification);
+        if (this.filters.sort && this.filters.sort !== 'confidence') params.set('sort', this.filters.sort);
+        if (this.filters.camera) params.set('camera', this.filters.camera);
+        if (this.page > 1) params.set('page', this.page);
+        var newUrl = window.location.pathname + '?' + params.toString();
+        history.replaceState(null, '', newUrl);
     },
 
     // ── Filter Loading ───────────────────────────────────────────────────
@@ -48,6 +80,12 @@ var TrainingGallery = {
             this.allClasses = data.classifications;
             this.reclassifyClasses = data.all_classes || data.classifications;
             this.updateClassificationDropdown(data.classifications);
+
+            // Restore dropdown values from URL params
+            if (this.filters.scenario) scenarioSel.value = this.filters.scenario;
+            if (this.filters.classification) {
+                document.getElementById('classification-filter').value = this.filters.classification;
+            }
             this.loadPage();
 
             // Update pending badge
@@ -921,6 +959,7 @@ var TrainingGallery = {
                 this.selectedClusters.clear();
                 document.getElementById('action-bar').style.display = 'none';
                 this.updateModeButtons();
+                this.syncUrlParams();
                 this.loadFilters();
             });
         });
@@ -978,19 +1017,13 @@ var TrainingGallery = {
             this.executeBulkAction('reclassify', ids, newClass);
         });
 
-        // Action bar — Requeue / Approve (with subtype picker in pending mode)
+        // Action bar — Requeue / Approve
         document.getElementById('btn-requeue').addEventListener('click', async () => {
             const ids = await this.getSelectedPredictionIds();
             const n = ids.length;
             const isPending = this.filters.status === 'pending';
             if (isPending) {
-                this.showSubtypePrompt(n, (subtype) => {
-                    if (subtype) {
-                        this.executeBulkAction('reclassify', ids, subtype);
-                    } else {
-                        this.executeBulkAction('approve', ids);
-                    }
-                });
+                this.executeBulkAction('approve', ids);
             } else {
                 var msg = 'Requeue ' + n.toLocaleString() + ' image' + (n !== 1 ? 's' : '') + ' for review?';
                 this.showConfirm(msg, () => this.executeBulkAction('requeue', ids));
@@ -1039,19 +1072,13 @@ var TrainingGallery = {
             this.executeBulkAction('reclassify', Array.from(this.modalSelected), newClass);
         });
 
-        // Modal — Requeue / Approve (with subtype picker in pending mode)
+        // Modal — Requeue / Approve
         document.getElementById('modal-btn-requeue').addEventListener('click', () => {
             const ids = Array.from(this.modalSelected);
             const n = ids.length;
             const isPending = this.filters.status === 'pending';
             if (isPending) {
-                this.showSubtypePrompt(n, (subtype) => {
-                    if (subtype) {
-                        this.executeBulkAction('reclassify', ids, subtype);
-                    } else {
-                        this.executeBulkAction('approve', ids);
-                    }
-                });
+                this.executeBulkAction('approve', ids);
             } else {
                 var msg = 'Requeue ' + n + ' image' + (n !== 1 ? 's' : '') + ' for review?';
                 this.showConfirm(msg, () => this.executeBulkAction('requeue', ids));
@@ -1089,6 +1116,7 @@ var TrainingGallery = {
         this.items = [];
         this.selected.clear();
         this.selectedClusters.clear();
+        this.syncUrlParams();
 
         const grid = document.getElementById('gallery-grid');
         grid.textContent = '';

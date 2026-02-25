@@ -241,9 +241,27 @@ class PredictionMixin:
                 bw = bbox['width'] if bbox else pred['bbox_width']
                 bh = bbox['height'] if bbox else pred['bbox_height']
 
-                source = 'ai_auto_approved' if pred['review_status'] == 'auto_approved' else 'ai_prediction'
-                # Human-reviewed predictions are already verified; auto-approved need review
-                is_reviewed = pred['review_status'] == 'approved'
+                if pred['review_status'] == 'auto_approved':
+                    source = 'ai_auto_approved'
+                    is_reviewed = False
+                else:
+                    source = 'human_approved'
+                    is_reviewed = True
+
+                # Use the specific classification (e.g., "sedan") when available,
+                # falling back to scenario (e.g., "vehicle_detection").
+                # This must match the export class mapping for training to work.
+                corrected = pred.get('corrected_tags') or {}
+                predicted = pred.get('predicted_tags') or {}
+                activity_tag = (
+                    corrected.get('vehicle_subtype')
+                    or corrected.get('actual_class')
+                    or pred.get('classification')
+                    or predicted.get('vehicle_type')
+                    or predicted.get('class')
+                    or pred['scenario']
+                )
+
                 cursor.execute('''
                     INSERT INTO keyframe_annotations
                     (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
@@ -253,7 +271,7 @@ class PredictionMixin:
                 ''', (
                     pred['video_id'], pred['timestamp'],
                     bx, by, bw, bh,
-                    pred['scenario'],
+                    activity_tag,
                     f"AI prediction (model={pred['model_name']} v{pred['model_version']}, confidence={pred['confidence']:.2f})",
                     is_reviewed, source, prediction_id
                 ))

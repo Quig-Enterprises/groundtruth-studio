@@ -677,10 +677,13 @@ class TrackBuilder:
                     self._assign_to_track([pred['id']], best_track['id'])
                     results['matched'] += 1
 
-                    # Auto-approval/rejection DISABLED — all predictions must go
-                    # through human review. Track assignment still happens above
-                    # for grouping purposes, but review_status is not changed.
-                    # Previously: auto-approved/rejected based on track anchor_status.
+                    # Auto-APPROVAL disabled — no un-reviewed detections may
+                    # enter the training pipeline. But auto-REJECTION of known
+                    # false positives (rejected track anchors) is still active
+                    # to suppress repeated static object detections (signs, etc.).
+                    if pred['review_status'] in ('pending', 'processing'):
+                        if best_track['anchor_status'] == 'rejected':
+                            self._auto_reject_prediction(pred['id'], best_track, results)
                 else:
                     results['unmatched'] += 1
 
