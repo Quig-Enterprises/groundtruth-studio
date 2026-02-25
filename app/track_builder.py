@@ -677,19 +677,10 @@ class TrackBuilder:
                     self._assign_to_track([pred['id']], best_track['id'])
                     results['matched'] += 1
 
-                    # Apply anchor decision if prediction is pending
-                    if pred['review_status'] in ('pending', 'processing'):
-                        if best_track['anchor_status'] == 'approved':
-                            self._auto_approve_prediction(pred['id'], best_track, results)
-                            # Propagate classification for vehicle_detection
-                            if (best_track.get('anchor_classification')
-                                    and not best_track.get('classification_conflict')
-                                    and scenario == 'vehicle_detection'):
-                                self._auto_classify_prediction(
-                                    pred['id'], best_track, results
-                                )
-                        elif best_track['anchor_status'] == 'rejected':
-                            self._auto_reject_prediction(pred['id'], best_track, results)
+                    # Auto-approval/rejection DISABLED — all predictions must go
+                    # through human review. Track assignment still happens above
+                    # for grouping purposes, but review_status is not changed.
+                    # Previously: auto-approved/rejected based on track anchor_status.
                 else:
                     results['unmatched'] += 1
 
