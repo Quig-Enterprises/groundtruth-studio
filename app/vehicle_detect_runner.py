@@ -13,6 +13,7 @@ import logging
 import threading
 from pathlib import Path
 from typing import Optional, Dict, List
+from image_quality import compute_crop_quality
 
 import requests
 
@@ -475,6 +476,27 @@ def _get_video_lock(video_id: int) -> threading.Lock:
         return _video_locks[video_id]
 
 
+def _get_active_model_path():
+    """Get active model path from model_deployments table, fallback to default."""
+    try:
+        conn = _get_db_connection()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    SELECT model_path FROM model_deployments
+                    WHERE model_name = %s AND status = 'active'
+                    ORDER BY deployed_at DESC LIMIT 1
+                """, (MODEL_NAME,))
+                row = cur.fetchone()
+                if row and row[0] and os.path.exists(row[0]):
+                    return row[0]
+        finally:
+            conn.close()
+    except Exception:
+        pass
+    return MODEL_PATH  # fallback to hardcoded default
+
+
 def _get_model():
     """Lazy-load the YOLO-World model (singleton)."""
     global _model
@@ -485,20 +507,29 @@ def _get_model():
         if _model is not None:
             return _model
 
-        if not Path(MODEL_PATH).exists():
-            logger.warning(f"Pre-screen model not found: {MODEL_PATH}")
+        active_model_path = _get_active_model_path()
+        if not Path(active_model_path).exists():
+            logger.warning(f"Pre-screen model not found: {active_model_path}")
             return None
 
         try:
             from ultralytics import YOLO
-            logger.info(f"Loading pre-screen model from {MODEL_PATH}...")
-            _model = YOLO(MODEL_PATH)
+            logger.info(f"Loading pre-screen model from {active_model_path}...")
+            _model = YOLO(active_model_path)
             _model.set_classes(ALL_CLASSES)
             logger.info(f"Pre-screen model loaded with {len(ALL_CLASSES)} classes (including person pre-screen)")
             return _model
         except Exception as e:
             logger.error(f"Failed to load pre-screen model: {e}")
             return None
+
+
+def reload_model():
+    """Force reload of the detection model (called after deployment changes)."""
+    global _model
+    with _model_lock:
+        _model = None
+    logger.info("Detection model cache cleared, will reload on next inference")
 
 
 def _get_db_connection():
@@ -720,6 +751,9 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
                 if confidence < min_conf:
                     continue
 
+                # Compute quality metrics for this crop
+                quality = compute_crop_quality(img, bbox)
+
                 vehicle_predictions.append({
                     'prediction_type': 'keyframe',
                     'confidence': round(confidence, 4),
@@ -729,10 +763,13 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
                         'class': class_name,
                         'class_id': class_id,
                         'vehicle_type': class_name,
-                        'yolo_world_prompt': raw_class
+                        'yolo_world_prompt': raw_class,
+                        'quality': quality
                     },
                     'bbox': bbox,
-                    'inference_time_ms': round(inference_time_ms, 2)
+                    'inference_time_ms': round(inference_time_ms, 2),
+                    'quality_score': quality['quality_score'],
+                    'quality_flags': {f: True for f in quality['flags']} if quality['flags'] else {}
                 })
 
         # Suppress overlapping cross-class vehicle detections
@@ -1006,6 +1043,9 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
                 if _is_in_exclusion_zone(mf_camera_id, bbox):
                     continue
 
+                # Compute quality metrics for this crop
+                quality = compute_crop_quality(pil_img, bbox)
+
                 all_vehicle_detections.append({
                     'prediction_type': 'keyframe',
                     'confidence': round(confidence, 4),
@@ -1017,10 +1057,13 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
                         'vehicle_type': class_name,
                         'yolo_world_prompt': raw_class,
                         'source': 'multiframe',
-                        'source_frame_time': round(timestamp, 2)
+                        'source_frame_time': round(timestamp, 2),
+                        'quality': quality
                     },
                     'bbox': bbox,
-                    'inference_time_ms': round(frame_inference_ms, 2)
+                    'inference_time_ms': round(frame_inference_ms, 2),
+                    'quality_score': quality['quality_score'],
+                    'quality_flags': {f: True for f in quality['flags']} if quality['flags'] else {}
                 })
 
         logger.info(

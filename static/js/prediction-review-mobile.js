@@ -3269,7 +3269,7 @@ var ReviewApp = {
         sheet.appendChild(newBtn);
 
         overlay.appendChild(sheet);
-        overlay.onclick = function(e) { if (e.target === overlay) overlay.remove(); };
+        // Do not close on backdrop click — this modal has action buttons
         document.body.appendChild(overlay);
         searchInput.focus();
     },

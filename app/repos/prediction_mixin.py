@@ -46,13 +46,17 @@ class PredictionMixin:
                 if classification:
                     classification = classification.lower()
 
+                # Extract quality metrics if present
+                quality_score = pred.get('quality_score')
+                quality_flags = pred.get('quality_flags')
+
                 cursor.execute('''
                     INSERT INTO ai_predictions
                     (video_id, model_name, model_version, prediction_type, confidence,
                      timestamp, start_time, end_time, bbox_x, bbox_y, bbox_width, bbox_height,
                      scenario, predicted_tags, batch_id, inference_time_ms, review_status, parent_prediction_id,
-                     classification)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     classification, quality_score, quality_flags)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 ''', (
                     video_id, model_name, model_version,
@@ -66,7 +70,9 @@ class PredictionMixin:
                     pred.get('inference_time_ms'),
                     initial_status,
                     pred.get('parent_prediction_id'),
-                    classification
+                    classification,
+                    quality_score,
+                    extras.Json(quality_flags) if quality_flags else None
                 ))
                 result = cursor.fetchone()
                 ids.append(result['id'])

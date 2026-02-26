@@ -295,6 +295,11 @@ class YOLOExporter:
         # Each unique frame gets one image file with all its bboxes in one label file
         frame_groups = {}  # key: (video_id, timestamp) -> {video: dict, positive: [list], negative: [list]}
 
+        # Get min_quality_score from config (default 0.0 = no filtering)
+        min_quality_score = config.get('min_quality_score', 0.0) or 0.0
+        quality_filtered_count = 0
+        quality_scores = []
+
         with get_connection() as conn:
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
             for video_id in video_ids:
@@ -302,14 +307,28 @@ class YOLOExporter:
                 video = dict(cursor.fetchone())
 
                 cursor.execute('''
-                    SELECT * FROM keyframe_annotations
-                    WHERE video_id = %s
-                    AND bbox_x IS NOT NULL
-                    AND bbox_width > 0
-                    ORDER BY timestamp
+                    SELECT ka.*, ap.quality_score as pred_quality_score
+                    FROM keyframe_annotations ka
+                    LEFT JOIN ai_predictions ap ON ap.id = ka.source_prediction_id
+                    WHERE ka.video_id = %s
+                    AND ka.bbox_x IS NOT NULL
+                    AND ka.bbox_width > 0
+                    ORDER BY ka.timestamp
                 ''', (video_id,))
 
-                annotations = [dict(row) for row in cursor.fetchall()]
+                raw_annotations = [dict(row) for row in cursor.fetchall()]
+
+                # Quality gate: filter out annotations from low-quality source predictions
+                annotations = []
+                for ann in raw_annotations:
+                    pred_qs = ann.get('pred_quality_score')
+                    if pred_qs is not None:
+                        quality_scores.append(pred_qs)
+                    # Apply quality filter if threshold is set
+                    if min_quality_score > 0 and pred_qs is not None and pred_qs < min_quality_score:
+                        quality_filtered_count += 1
+                        continue
+                    annotations.append(ann)
 
                 for ann in annotations:
                     if config['include_reviewed_only'] and not ann.get('reviewed'):
@@ -544,6 +563,17 @@ python train.py --data {yaml_path.absolute()} --weights yolov5s.pt --epochs 100
 
             conn.commit()
 
+        # Compute quality score distribution for export stats
+        quality_distribution = {}
+        if quality_scores:
+            import numpy as np
+            bins = [0, 0.1, 0.25, 0.5, 0.75, 1.0]
+            hist, _ = np.histogram(quality_scores, bins=bins)
+            quality_distribution = {
+                f'{bins[i]:.2f}-{bins[i+1]:.2f}': int(hist[i])
+                for i in range(len(hist))
+            }
+
         return {
             'success': True,
             'export_path': str(export_dir),
@@ -554,7 +584,10 @@ python train.py --data {yaml_path.absolute()} --weights yolov5s.pt --epochs 100
             'val_count': val_count,
             'negative_frame_count': negative_frame_count,
             'upgraded_count': upgraded_count,
-            'class_mapping': config['class_mapping']
+            'class_mapping': config['class_mapping'],
+            'quality_filtered_count': quality_filtered_count,
+            'quality_score_distribution': quality_distribution,
+            'min_quality_score': min_quality_score
         }
 
     def get_export_preview(self, config_id: int) -> Dict:

@@ -15,10 +15,35 @@ var DocTrainingBrowser = {
 
     init() {
         this.loadStats();
+        this.loadFiltersFromURL();
+        this.loadClassOptions();
         this.loadFilterOptions();
         this.setupInfiniteScroll();
         this.bindEvents();
         this.loadPage();
+    },
+
+    // ── Class Options Loading ─────────────────────────────────────────────
+
+    loadClassOptions() {
+        fetch('/api/doc-training/classes')
+            .then(function(r) { return r.json(); })
+            .then(function(data) {
+                if (data.success && data.classes) {
+                    var sel = document.getElementById('class-filter');
+                    data.classes.forEach(function(cls) {
+                        var opt = document.createElement('option');
+                        opt.value = cls.id;
+                        opt.textContent = cls.name;
+                        sel.appendChild(opt);
+                    });
+                    // Restore filter from URL if present
+                    var params = new URLSearchParams(window.location.search);
+                    if (params.has('class_id')) {
+                        sel.value = params.get('class_id');
+                    }
+                }
+            });
     },
 
     // ── Stats Loading ────────────────────────────────────────────────────
@@ -197,8 +222,12 @@ var DocTrainingBrowser = {
             });
         };
 
-        // Store src for lazy loading
-        img.dataset.src = item.image_url;
+        // Store thumbnail src for lazy loading (grid uses smaller cached thumbnails)
+        var thumbUrl = item.image_url.replace(
+            '/api/doc-training/image/',
+            '/api/doc-training/thumbnail/'
+        );
+        img.dataset.src = thumbUrl;
         // Attach img reference to canvas for lazy load observer
         canvas._lazyImg = img;
 
@@ -431,6 +460,61 @@ var DocTrainingBrowser = {
         if (el) el.textContent = total.toLocaleString() + ' images';
     },
 
+    // ── URL State Sync ───────────────────────────────────────────────────
+
+    syncFiltersToURL() {
+        var params = new URLSearchParams();
+        // Only include non-default values
+        if (this.filters.split && this.filters.split !== 'train') {
+            params.set('split', this.filters.split);
+        }
+        if (this.filters.class_id !== '') {
+            params.set('class_id', this.filters.class_id);
+        }
+        if (this.filters.source) {
+            params.set('source', this.filters.source);
+        }
+        if (this.filters.issuer) {
+            params.set('issuer', this.filters.issuer);
+        }
+        var search = params.toString();
+        var newUrl = window.location.pathname + (search ? '?' + search : '');
+        history.replaceState(null, '', newUrl);
+    },
+
+    loadFiltersFromURL() {
+        var params = new URLSearchParams(window.location.search);
+
+        if (params.has('split')) {
+            this.filters.split = params.get('split');
+            // Update split toggle buttons
+            var self = this;
+            document.querySelectorAll('#split-toggle .toggle-btn').forEach(function(btn) {
+                btn.classList.toggle('active', btn.dataset.split === self.filters.split);
+            });
+        }
+
+        if (params.has('class_id')) {
+            this.filters.class_id = params.get('class_id');
+            var classEl = document.getElementById('class-filter');
+            if (classEl) classEl.value = this.filters.class_id;
+        }
+
+        if (params.has('source')) {
+            this.filters.source = params.get('source');
+            // Source options are populated dynamically; value will be restored
+            // by loadFilterOptions() which preserves currentSource
+            var sourceEl = document.getElementById('source-filter');
+            if (sourceEl) sourceEl.value = this.filters.source;
+        }
+
+        if (params.has('issuer')) {
+            this.filters.issuer = params.get('issuer');
+            var issuerEl = document.getElementById('issuer-filter');
+            if (issuerEl) issuerEl.value = this.filters.issuer;
+        }
+    },
+
     // ── Event Binding ────────────────────────────────────────────────────
 
     bindEvents() {
@@ -449,6 +533,7 @@ var DocTrainingBrowser = {
                 self.filters.issuer = '';
                 document.getElementById('source-filter').value = '';
                 document.getElementById('issuer-filter').value = '';
+                self.syncFiltersToURL();
                 self.loadFilterOptions();
                 self.resetAndReload();
             });
@@ -462,6 +547,7 @@ var DocTrainingBrowser = {
             self.filters.issuer = '';
             document.getElementById('source-filter').value = '';
             document.getElementById('issuer-filter').value = '';
+            self.syncFiltersToURL();
             self.loadFilterOptions();
             self.resetAndReload();
         });
@@ -472,6 +558,7 @@ var DocTrainingBrowser = {
             // Reset issuer (downstream)
             self.filters.issuer = '';
             document.getElementById('issuer-filter').value = '';
+            self.syncFiltersToURL();
             self.loadFilterOptions();
             self.resetAndReload();
         });
@@ -479,6 +566,7 @@ var DocTrainingBrowser = {
         // Issuer filter
         document.getElementById('issuer-filter').addEventListener('change', function(e) {
             self.filters.issuer = e.target.value;
+            self.syncFiltersToURL();
             self.resetAndReload();
         });
 

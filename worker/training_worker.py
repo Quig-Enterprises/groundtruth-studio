@@ -58,6 +58,7 @@ DEFAULT_TRAINING_COMMANDS = {
     'yolo-training': 'yolo train data={data_dir}/data.yaml model={model_type} epochs={epochs} imgsz=640',
     'yolo': 'yolo train data={data_dir}/data.yaml model={model_type}.pt epochs={epochs} imgsz=640 device={gpu_device} project={data_dir} name=train_run',
     'yolov8_train': 'yolo train data={data_dir}/data.yaml model={model_type}.pt epochs={epochs} imgsz=640 device={gpu_device} project={data_dir} name=train_run',
+    'yolov8_world_finetune': 'yolo train data={data_dir}/data.yaml model={model_type} epochs={epochs} imgsz=640 device={gpu_device} lr0=0.0001 lrf=0.01 warmup_epochs=3 freeze=10 project={data_dir} name=train_run',
     'bearing-fault': 'python3 train_bearing_fault.py --train {train_file} --val {val_file} --model {model_type} --epochs {epochs} --labels "{labels}"',
     'bearing-fault-training': 'python3 train_bearing_fault.py --train {train_file} --val {val_file} --model {model_type} --epochs {epochs} --labels "{labels}"',
     'vibration': 'python3 train_bearing_fault.py --train {train_file} --val {val_file} --model {model_type} --epochs {epochs} --labels "{labels}"',
@@ -211,6 +212,11 @@ class TrainingWorker:
             # Parse training metrics from output
             metrics = self._parse_training_metrics(job_type, job_dir, stdout, stderr)
 
+            # Post-training validation gate
+            validation = self._validate_model(job_id, job_type, job_dir, config, metrics)
+            if validation.get('passed') == False:
+                logger.warning(f'Job {job_id}: validation failed, marking as completed with validation_failed deploy_status')
+
             # Report success with metrics
             self._report_complete(job_id, config=config, metrics=metrics)
             logger.info(f'Job {job_id} completed successfully')
@@ -271,6 +277,11 @@ class TrainingWorker:
 
             # Parse training metrics from output
             metrics = self._parse_training_metrics(job_type, job_dir, stdout, stderr)
+
+            # Post-training validation gate
+            validation = self._validate_model(job_id, job_type, job_dir, config, metrics)
+            if validation.get('passed') == False:
+                logger.warning(f'Job {job_id}: validation failed, marking as completed with validation_failed deploy_status')
 
             # Report success with metrics
             self._report_complete(job_id, callback_url, config=config, metrics=metrics)
@@ -449,6 +460,23 @@ class TrainingWorker:
             if k not in subs and isinstance(v, (str, int, float)):
                 subs[k] = str(v)
 
+        # For YOLO-World fine-tuning: if model_type is an absolute path,
+        # symlink it into the job directory so training can find it
+        model_type = config.get('model_type', 'yolov8n')
+        if model_type.startswith('/') and os.path.exists(model_type):
+            import shutil
+            model_basename = os.path.basename(model_type)
+            local_model_path = os.path.join(str(job_dir), model_basename)
+            if not os.path.exists(local_model_path):
+                try:
+                    os.symlink(model_type, local_model_path)
+                    logger.info(f'Symlinked model {model_type} -> {local_model_path}')
+                except OSError:
+                    shutil.copy2(model_type, local_model_path)
+                    logger.info(f'Copied model {model_type} -> {local_model_path}')
+            # Update subs to use local path
+            subs['model_type'] = local_model_path
+
         command = command_template.format(**subs)
         logger.info(f'Running: {command}')
 
@@ -479,7 +507,7 @@ class TrainingWorker:
         job_dir = Path(job_dir)
 
         try:
-            if job_type in ('yolo-training', 'yolo', 'yolov8_train'):
+            if job_type in ('yolo-training', 'yolo', 'yolov8_train', 'yolov8_world_finetune'):
                 # Parse YOLO results.csv from ultralytics output
                 # Look for results.csv in common locations
                 for results_path in [
@@ -548,6 +576,74 @@ class TrainingWorker:
             logger.warning(f'Failed to parse training metrics: {e}')
 
         return metrics if metrics else None
+
+    def _validate_model(self, job_id, job_type, job_dir, config, metrics):
+        """Post-training model validation gate.
+
+        Checks:
+        1. mAP50 >= 0.3 minimum threshold
+        2. Stores per-class metrics in validation_results
+
+        Returns:
+            dict with 'passed', 'validation_map', 'validation_results', 'reason'
+        """
+        if job_type not in ('yolov8_train', 'yolov8_world_finetune', 'yolo'):
+            # Only validate YOLO jobs
+            return {'passed': True, 'reason': 'non_yolo_job'}
+
+        map50 = metrics.get('accuracy', 0.0) if metrics else 0.0
+
+        min_map = float(config.get('min_map_threshold', 0.3))
+
+        validation_result = {
+            'validation_map': map50,
+            'min_threshold': min_map,
+            'metrics': metrics or {},
+        }
+
+        if map50 < min_map:
+            logger.warning(
+                f'Job {job_id}: model validation FAILED - mAP50={map50:.4f} < threshold={min_map}'
+            )
+            validation_result['passed'] = False
+            validation_result['reason'] = f'mAP50 {map50:.4f} below minimum {min_map}'
+
+            # Report validation failure to Studio
+            try:
+                requests.post(
+                    f'{self.studio_url}/api/training/jobs/{job_id}/validation',
+                    json={
+                        'validation_map': map50,
+                        'validation_results': validation_result,
+                        'deploy_status': 'validation_failed',
+                    },
+                    timeout=15
+                )
+            except Exception as e:
+                logger.warning(f'Failed to report validation failure for {job_id}: {e}')
+
+            return validation_result
+
+        logger.info(f'Job {job_id}: model validation PASSED - mAP50={map50:.4f} >= threshold={min_map}')
+        validation_result['passed'] = True
+        validation_result['reason'] = 'passed'
+
+        # Report validation success
+        try:
+            deploy_status = 'pending_deploy' if config.get('auto_deploy', False) else 'none'
+            requests.post(
+                f'{self.studio_url}/api/training/jobs/{job_id}/validation',
+                json={
+                    'validation_map': map50,
+                    'validation_results': validation_result,
+                    'deploy_status': deploy_status,
+                },
+                timeout=15
+            )
+        except Exception as e:
+            logger.warning(f'Failed to report validation success for {job_id}: {e}')
+
+        return validation_result
 
     # ── Reporting ─────────────────────────────────────────────────────
 

@@ -1,0 +1,337 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groundtruth Studio - Document Synthesizer</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="{{ static_v('css/doc-template-annotator.css') }}">
+</head>
+<body>
+    {% include 'partials/nav.html' %}
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         LIST VIEW — Template grid with header
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div id="list-view">
+        <div class="page-header">
+            <div class="page-header-left">
+                <h1>Document Synthesizer</h1>
+                <p class="subtitle">Define region layouts for synthetic document generation</p>
+            </div>
+            <button class="btn btn-primary" id="btn-new-template" title="Create a new template">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="3" x2="8" y2="13"/><line x1="3" y1="8" x2="13" y2="8"/></svg>
+                New Template
+            </button>
+        </div>
+
+        <div class="template-grid" id="template-grid">
+            <div class="loading-state" id="initial-loading">Loading templates...</div>
+        </div>
+
+        <!-- Scene Backgrounds Panel -->
+        <div class="scene-bg-panel" id="scene-bg-panel">
+            <div class="scene-bg-panel-header" id="scene-bg-panel-header">
+                <div class="scene-bg-panel-title">
+                    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6">
+                        <rect x="1" y="3" width="14" height="10" rx="1.5"/>
+                        <circle cx="5.5" cy="6.5" r="1.5"/>
+                        <polyline points="1,11 5,7.5 8,10 11,7 15,11"/>
+                    </svg>
+                    Scene Backgrounds
+                    <span class="scene-bg-count" id="scene-bg-count">0 loaded</span>
+                </div>
+                <svg class="scene-bg-chevron" width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2">
+                    <polyline points="4,6 8,10 12,6"/>
+                </svg>
+            </div>
+            <div class="scene-bg-panel-body" id="scene-bg-panel-body">
+                <!-- Drop zone -->
+                <div class="scene-bg-dropzone" id="scene-bg-dropzone">
+                    <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/>
+                        <polyline points="17,8 12,3 7,8"/>
+                        <line x1="12" y1="3" x2="12" y2="15"/>
+                    </svg>
+                    <span>Drag &amp; drop JPG/PNG files here</span>
+                    <span class="scene-bg-dropzone-hint">or click to browse</span>
+                    <button class="scene-bg-upload-btn" id="scene-bg-upload-btn" type="button">Choose Files</button>
+                </div>
+                <input type="file" id="scene-bg-file-input" accept="image/jpeg,image/png" multiple style="display:none">
+
+                <!-- Uploading indicator -->
+                <div class="scene-bg-uploading" id="scene-bg-uploading">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="animation:spin 1s linear infinite">
+                        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+                    </svg>
+                    Uploading...
+                </div>
+
+                <!-- Thumbnail grid -->
+                <div class="scene-bg-grid" id="scene-bg-grid">
+                    <div class="scene-bg-empty">No backgrounds loaded yet.</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    </style>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         EDIT VIEW — Canvas annotator + properties panel
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div id="edit-view" style="display:none">
+        <!-- Toolbar -->
+        <div class="edit-toolbar">
+            <div class="toolbar-left">
+                <button class="btn btn-ghost" id="btn-back" title="Back to template list">
+                    <svg width="18" height="18" viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="2"><polyline points="11,4 5,9 11,14"/></svg>
+                    Back
+                </button>
+                <span class="toolbar-divider"></span>
+                <input type="text" class="toolbar-name-input" id="template-name-input" placeholder="Template name" spellcheck="false">
+                <select class="toolbar-select" id="template-class-select">
+                    <option value="passport">Passport</option>
+                    <option value="drivers_license">Driver's License</option>
+                    <option value="twic_card">TWIC Card</option>
+                    <option value="merchant_mariner_credential">MMC</option>
+                    <option value="id_card_generic">ID Card (Generic)</option>
+                    <option value="uscg_medical_cert">USCG Medical Cert</option>
+                </select>
+            </div>
+            <div class="toolbar-right">
+                <button class="btn btn-secondary" id="btn-save" title="Save template">
+                    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12.5 13.5H2.5a1 1 0 01-1-1v-10a1 1 0 011-1h8l3 3v8a1 1 0 01-1 1z"/><polyline points="9.5,1.5 9.5,5.5 4.5,5.5 4.5,1.5"/><rect x="4" y="8.5" width="7" height="3.5" rx="0.5"/></svg>
+                    Save
+                </button>
+                <button class="btn btn-secondary" id="btn-preview" title="Generate preview image">
+                    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7.5" cy="7.5" r="3"/><path d="M1.5 7.5s2.5-5 6-5 6 5 6 5-2.5 5-6 5-6-5-6-5z"/></svg>
+                    Preview
+                </button>
+                <button class="btn btn-accent" id="btn-generate" title="Generate synthetic documents">
+                    <svg width="15" height="15" viewBox="0 0 15 15" fill="none" stroke="currentColor" stroke-width="1.6"><polygon points="4,2 13,7.5 4,13"/></svg>
+                    Generate
+                </button>
+            </div>
+        </div>
+
+        <!-- Main edit layout: canvas + properties -->
+        <div class="edit-layout">
+            <!-- Canvas Panel -->
+            <div class="canvas-panel" id="canvas-panel">
+                <div class="canvas-toolbar">
+                    <div class="zoom-controls">
+                        <button class="btn-icon" id="btn-zoom-out" title="Zoom out">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><line x1="4" y1="8" x2="12" y2="8"/></svg>
+                        </button>
+                        <span class="zoom-label" id="zoom-label">100%</span>
+                        <button class="btn-icon" id="btn-zoom-in" title="Zoom in">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2"><line x1="8" y1="4" x2="8" y2="12"/><line x1="4" y1="8" x2="12" y2="8"/></svg>
+                        </button>
+                        <button class="btn-icon" id="btn-zoom-fit" title="Fit to view">
+                            <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><rect x="2" y="2" width="12" height="12" rx="1.5"/><polyline points="6,2 2,2 2,6"/><polyline points="10,14 14,14 14,10"/></svg>
+                        </button>
+                    </div>
+                    <span class="canvas-hint" id="canvas-hint">Click and drag to draw a region</span>
+                </div>
+                <div class="canvas-viewport" id="canvas-viewport">
+                    <canvas id="annotator-canvas"></canvas>
+                </div>
+            </div>
+
+            <!-- Properties Panel -->
+            <div class="properties-panel" id="properties-panel">
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <h3>Regions</h3>
+                        <span class="region-count" id="region-count">0</span>
+                    </div>
+                    <div class="region-list" id="region-list">
+                        <div class="empty-regions">No regions defined. Draw on the canvas to add one.</div>
+                    </div>
+                </div>
+                <div class="panel-divider"></div>
+                <div class="panel-section">
+                    <div class="panel-section-header">
+                        <h3>Overlays</h3>
+                        <button class="btn-icon" id="btn-add-overlay" title="Add overlay image">
+                            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="2"><line x1="7" y1="3" x2="7" y2="11"/><line x1="3" y1="7" x2="11" y2="7"/></svg>
+                        </button>
+                    </div>
+                    <div class="overlay-list" id="overlay-list">
+                        <div class="empty-overlays">No overlays. Add hologram or reflection images.</div>
+                    </div>
+                    <input type="file" id="overlay-file-input" accept="image/png" style="display:none">
+                </div>
+                <div class="panel-divider"></div>
+                <div class="panel-section panel-section-props">
+                    <div class="panel-section-header">
+                        <h3>Properties</h3>
+                    </div>
+                    <div class="region-properties" id="region-properties">
+                        <div class="empty-props">Select a region to edit its properties.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         MODAL: New Template
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="modal-new-template" style="display:none">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h2>New Template</h2>
+                <button class="modal-close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="new-tpl-name">Template Name</label>
+                    <input type="text" id="new-tpl-name" class="form-input" placeholder="e.g. US Passport v2" spellcheck="false">
+                </div>
+                <div class="form-group">
+                    <label for="new-tpl-class">Document Class</label>
+                    <select id="new-tpl-class" class="form-input">
+                        <option value="passport">Passport</option>
+                        <option value="drivers_license">Driver's License</option>
+                        <option value="twic_card">TWIC Card</option>
+                        <option value="merchant_mariner_credential">MMC</option>
+                        <option value="id_card_generic">ID Card (Generic)</option>
+                        <option value="uscg_medical_cert">USCG Medical Cert</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="new-tpl-bg">Background Image</label>
+                    <input type="file" id="new-tpl-bg" class="form-input form-file" accept="image/*">
+                    <span class="form-hint">Upload a blank document background image (JPG/PNG)</span>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" data-dismiss="modal">Cancel</button>
+                <button class="btn btn-primary" id="btn-create-template">Create Template</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         MODAL: Preview
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="modal-preview" style="display:none">
+        <div class="modal-content modal-lg">
+            <div class="modal-header">
+                <h2>Template Preview</h2>
+                <button class="modal-close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body modal-body-center">
+                <div class="preview-loading" id="preview-loading">Generating preview...</div>
+                <img id="preview-image" class="preview-img" style="display:none" alt="Template preview">
+            </div>
+        </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════════════════════════════
+         MODAL: Generate
+         ═══════════════════════════════════════════════════════════════════ -->
+    <div class="modal-overlay" id="modal-generate" style="display:none">
+        <div class="modal-content modal-sm">
+            <div class="modal-header">
+                <h2>Generate Documents</h2>
+                <button class="modal-close" data-dismiss="modal">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="form-group">
+                    <label for="gen-count">Number of Documents</label>
+                    <input type="number" id="gen-count" class="form-input" value="50" min="1" max="10000">
+                </div>
+                <div class="form-group">
+                    <label for="gen-scene-pct">Scene Placement %</label>
+                    <div class="slider-row">
+                        <input type="range" id="gen-scene-pct" class="form-slider" value="30" min="0" max="100">
+                        <span class="slider-value" id="gen-scene-pct-val">30%</span>
+                    </div>
+                    <span class="form-hint">Percentage of images composited onto background scenes</span>
+                </div>
+                <div class="form-group">
+                    <label for="gen-max-perspective">Max Perspective Warp</label>
+                    <div class="slider-row">
+                        <input type="range" id="gen-max-perspective" class="form-slider" value="8" min="0" max="25" step="1">
+                        <span class="slider-value" id="gen-max-perspective-val">8%</span>
+                    </div>
+                    <span class="form-hint">Maximum perspective distortion (8% = subtle, 15% = dramatic)</span>
+                </div>
+                <div class="form-group">
+                    <label for="gen-max-rotation">Max Rotation</label>
+                    <div class="slider-row">
+                        <input type="range" id="gen-max-rotation" class="form-slider" value="3" min="0" max="15" step="1">
+                        <span class="slider-value" id="gen-max-rotation-val">3°</span>
+                    </div>
+                    <span class="form-hint">Maximum random rotation angle in degrees</span>
+                </div>
+                <hr style="border-color: var(--border); margin: 12px 0;">
+                <div class="form-group">
+                    <label for="gen-photocopy-pct">Photocopy Simulation %</label>
+                    <div class="slider-row">
+                        <input type="range" id="gen-photocopy-pct" class="form-slider" value="0" min="0" max="100">
+                        <span class="slider-value" id="gen-photocopy-pct-val">0%</span>
+                    </div>
+                    <span class="form-hint">Percentage of images rendered as photocopies (flat, no background, washout effects)</span>
+                </div>
+                <div class="form-group">
+                    <label for="gen-oversaturated-pct">Oversaturated %</label>
+                    <div class="slider-row">
+                        <input type="range" id="gen-oversaturated-pct" class="form-slider" value="30" min="0" max="100">
+                        <span class="slider-value" id="gen-oversaturated-pct-val">30%</span>
+                    </div>
+                    <span class="form-hint">Percentage of photocopies that are oversaturated (dark/heavy toner). Rest are washed out.</span>
+                </div>
+                <div class="form-group">
+                    <label>Washout Intensity</label>
+                    <div class="slider-row" style="gap: 8px;">
+                        <span style="font-size: 11px; color: var(--text-dim);">Min</span>
+                        <input type="range" id="gen-washout-min" class="form-slider" value="20" min="0" max="100" style="flex:1">
+                        <span class="slider-value" id="gen-washout-min-val">20%</span>
+                    </div>
+                    <div class="slider-row" style="gap: 8px;">
+                        <span style="font-size: 11px; color: var(--text-dim);">Max</span>
+                        <input type="range" id="gen-washout-max" class="form-slider" value="70" min="0" max="100" style="flex:1">
+                        <span class="slider-value" id="gen-washout-max-val">70%</span>
+                    </div>
+                    <span class="form-hint">Faded copy intensity (0% = clean, 100% = heavily faded)</span>
+                </div>
+                <div class="form-group">
+                    <label>Oversaturation Intensity</label>
+                    <div class="slider-row" style="gap: 8px;">
+                        <span style="font-size: 11px; color: var(--text-dim);">Min</span>
+                        <input type="range" id="gen-oversat-min" class="form-slider" value="20" min="0" max="100" style="flex:1">
+                        <span class="slider-value" id="gen-oversat-min-val">20%</span>
+                    </div>
+                    <div class="slider-row" style="gap: 8px;">
+                        <span style="font-size: 11px; color: var(--text-dim);">Max</span>
+                        <input type="range" id="gen-oversat-max" class="form-slider" value="70" min="0" max="100" style="flex:1">
+                        <span class="slider-value" id="gen-oversat-max-val">70%</span>
+                    </div>
+                    <span class="form-hint">Heavy toner intensity (0% = clean, 100% = extremely dark/saturated)</span>
+                </div>
+                <div class="progress-section" id="gen-progress-section" style="display:none">
+                    <div class="progress-bar-track">
+                        <div class="progress-bar-fill" id="gen-progress-fill"></div>
+                    </div>
+                    <div class="progress-text" id="gen-progress-text">0 / 0</div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn btn-ghost" data-dismiss="modal">Cancel</button>
+                <button class="btn btn-accent" id="btn-start-generate">
+                    <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.6"><polygon points="3.5,1.5 12,7 3.5,12.5"/></svg>
+                    Start Generation
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ static_v('js/doc-template-annotator.js') }}"></script>
+</body>
+</html>

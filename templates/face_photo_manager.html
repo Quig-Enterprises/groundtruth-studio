@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Groundtruth Studio - Synthesized Identity Manager</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="{{ static_v('css/face-photo-manager.css') }}">
+</head>
+<body>
+    {% include 'partials/nav.html' %}
+
+    <!-- Page Header -->
+    <div class="fpm-header">
+        <div class="fpm-header-text">
+            <h1>Synthesized Identity Manager</h1>
+            <p class="subtitle">Manage synthesized identities and face photos used in document synthesis</p>
+        </div>
+        <div class="fpm-header-actions">
+            <button class="btn btn-info" id="btn-detect-gender" title="Detect gender from face photos using AI. Downloads model on first run. Results are used for gender-appropriate name generation.">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+                Detect Gender
+            </button>
+            <button class="btn btn-success" id="btn-preprocess" title="Remove backgrounds from original photos using AI (rembg). Creates transparent-background versions for use in document synthesis.">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+                Preprocess Faces
+            </button>
+            <button class="btn btn-primary" id="btn-upload">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                Upload Photos
+            </button>
+        </div>
+    </div>
+
+    <!-- Stats Bar -->
+    <div class="stats-bar" id="stats-bar">
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-total">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+            </div>
+            <div class="stat-body">
+                <div class="stat-number" id="stat-originals">—</div>
+                <div class="stat-label">Original Photos</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-preprocessed">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
+            </div>
+            <div class="stat-body">
+                <div class="stat-number" id="stat-preprocessed">—</div>
+                <div class="stat-label">Preprocessed</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-unprocessed">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            </div>
+            <div class="stat-body">
+                <div class="stat-number" id="stat-unprocessed">—</div>
+                <div class="stat-label">Unprocessed</div>
+            </div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-icon stat-icon-profiles">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+            </div>
+            <div class="stat-body">
+                <div class="stat-number" id="stat-profiles">—</div>
+                <div class="stat-label">Profiles</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Filter Bar -->
+    <div class="filter-bar" id="filter-bar">
+        <div class="filter-group">
+            <div class="variant-toggle" id="variant-toggle">
+                <button class="toggle-btn active" data-variant="original">Original</button>
+                <button class="toggle-btn" data-variant="white">Preprocessed</button>
+                <button class="toggle-btn" data-variant="both">Both</button>
+            </div>
+        </div>
+        <div class="filter-stats" id="filter-stats"></div>
+    </div>
+
+    <!-- Selection Action Bar (fixed bottom, hidden until items selected) -->
+    <div class="action-bar" id="action-bar" style="display:none">
+        <div class="action-bar-left">
+            <span id="selection-count">0 selected</span>
+            <button class="btn btn-ghost btn-sm" id="btn-select-all">Select All</button>
+            <button class="btn btn-ghost btn-sm" id="btn-deselect-all">Deselect All</button>
+        </div>
+        <div class="action-bar-right">
+            <button class="btn btn-danger btn-sm" id="btn-delete-selected">
+                <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/><path d="M9 6V4a1 1 0 011-1h4a1 1 0 011 1v2"/></svg>
+                Delete Selected
+            </button>
+        </div>
+    </div>
+
+    <!-- Main Image Grid -->
+    <div class="fpm-grid" id="fpm-grid">
+        <div class="loading-state" id="initial-loading">Loading face photos...</div>
+    </div>
+
+    <!-- Scroll sentinel for infinite scroll -->
+    <div id="scroll-sentinel" style="height:1px"></div>
+
+    <!-- Preprocess Status Banner (hidden by default) -->
+    <div class="preprocess-banner" id="preprocess-banner" style="display:none">
+        <div class="preprocess-banner-inner">
+            <div class="spinner-sm"></div>
+            <span id="preprocess-status-text">Preprocessing faces...</span>
+        </div>
+    </div>
+
+    <!-- Gender Detection Status Banner (hidden by default) -->
+    <div class="preprocess-banner" id="gender-banner" style="display:none">
+        <div class="preprocess-banner-inner">
+            <div class="spinner-sm"></div>
+            <span id="gender-status-text">Detecting gender...</span>
+        </div>
+    </div>
+
+    <!-- Preview Modal -->
+    <div class="modal-overlay" id="preview-modal" style="display:none">
+        <div class="preview-modal-content">
+            <button class="modal-close" id="preview-close">&times;</button>
+            <div class="preview-image-wrap" id="preview-image-wrap">
+                <img id="preview-img" src="" alt="">
+            </div>
+            <div class="preview-meta" id="preview-meta"></div>
+            <div class="profile-panel" id="profile-panel" style="display:none">
+                <div class="profile-panel-header">
+                    <h3>Synthetic Profile</h3>
+                    <div class="profile-panel-actions">
+                        <button class="btn btn-ghost btn-sm" id="btn-profile-edit" title="Edit profile">Edit</button>
+                        <button class="btn btn-danger btn-sm" id="btn-profile-reset" title="Reset profile">Reset</button>
+                    </div>
+                </div>
+                <div class="profile-fields" id="profile-fields"></div>
+                <div class="profile-edit-form" id="profile-edit-form" style="display:none">
+                    <div class="edit-field">
+                        <label>First Name</label>
+                        <input type="text" id="edit-first-name" class="edit-input">
+                    </div>
+                    <div class="edit-field">
+                        <label>Last Name</label>
+                        <input type="text" id="edit-last-name" class="edit-input">
+                    </div>
+                    <div class="edit-field">
+                        <label>Date of Birth</label>
+                        <input type="date" id="edit-dob" class="edit-input">
+                    </div>
+                    <div class="edit-field">
+                        <label>Gender</label>
+                        <select id="edit-gender" class="edit-input">
+                            <option value="M">Male</option>
+                            <option value="F">Female</option>
+                        </select>
+                    </div>
+                    <div class="edit-field">
+                        <label>Eye Color</label>
+                        <select id="edit-eye-color" class="edit-input">
+                            <option value="BRO">Brown</option>
+                            <option value="BLU">Blue</option>
+                            <option value="GRN">Green</option>
+                            <option value="HAZ">Hazel</option>
+                            <option value="GRY">Gray</option>
+                            <option value="BLK">Black</option>
+                        </select>
+                    </div>
+                    <div class="edit-field">
+                        <label>Hair Color</label>
+                        <select id="edit-hair-color" class="edit-input">
+                            <option value="BRO">Brown</option>
+                            <option value="BLK">Black</option>
+                            <option value="BLN">Blonde</option>
+                            <option value="RED">Red</option>
+                            <option value="GRY">Gray</option>
+                            <option value="WHI">White</option>
+                        </select>
+                    </div>
+                    <div class="edit-actions">
+                        <button class="btn btn-ghost btn-sm" id="btn-edit-cancel">Cancel</button>
+                        <button class="btn btn-primary btn-sm" id="btn-edit-save">Save</button>
+                    </div>
+                </div>
+                <div class="profile-docs" id="profile-docs"></div>
+                <div class="profile-meta" id="profile-meta-info"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Upload Modal -->
+    <div class="modal-overlay" id="upload-modal" style="display:none">
+        <div class="upload-modal-content">
+            <div class="modal-header">
+                <h2>Upload Face Photos</h2>
+                <button class="modal-close" id="upload-close">&times;</button>
+            </div>
+            <div class="modal-body">
+                <div class="drop-zone" id="drop-zone">
+                    <div class="drop-zone-inner">
+                        <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                        <p class="drop-zone-label">Drop images here</p>
+                        <p class="drop-zone-hint">PNG, JPG, WEBP &mdash; or click to browse</p>
+                        <input type="file" id="file-input" accept="image/*" multiple style="display:none">
+                        <button class="btn btn-ghost btn-sm" id="browse-btn">Browse Files</button>
+                    </div>
+                </div>
+                <div class="upload-file-list" id="upload-file-list"></div>
+                <div class="upload-actions">
+                    <button class="btn btn-ghost" id="btn-upload-cancel">Cancel</button>
+                    <button class="btn btn-primary" id="btn-upload-start" disabled>
+                        <span id="upload-btn-label">Upload</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirm Dialog -->
+    <div class="confirm-overlay" id="confirm-dialog" style="display:none">
+        <div class="confirm-box">
+            <p id="confirm-message"></p>
+            <div class="confirm-actions">
+                <button class="btn btn-ghost" id="confirm-cancel">Cancel</button>
+                <button class="btn btn-danger" id="confirm-ok">Confirm</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ static_v('js/face-photo-manager.js') }}"></script>
+</body>
+</html>

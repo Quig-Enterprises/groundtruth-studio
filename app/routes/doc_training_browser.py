@@ -19,6 +19,7 @@ CLASS_NAMES = {
     2: 'twic_card',
     3: 'merchant_mariner_credential',
     4: 'id_card_generic',
+    5: 'uscg_medical_cert',
 }
 CLASS_COLORS = {
     0: '#3b82f6',
@@ -26,13 +27,17 @@ CLASS_COLORS = {
     2: '#f59e0b',
     3: '#ec4899',
     4: '#8b5cf6',
+    5: '#06b6d4',
 }
+
+_classes_cache = {'data': None, 'time': 0}
 SPLITS = ('train', 'val', 'test')
 SOURCE_PREFIXES = {
     'midv500': 'midv500_',
     'midv2020': 'midv2020_',
     'idnet': 'idnet_',
     'synthesizer': ['uspassport_', 'twic_', 'mmc_', 'wi21dl_'],
+    'template': ['tpl_'],
 }
 
 # ── Dataset source directories ──────────────────────────────────────────
@@ -246,6 +251,41 @@ def doc_training_browser_page():
 
 
 # ---- API Routes ----
+
+@doc_training_browser_bp.route('/api/doc-training/classes')
+def get_classes():
+    """Return all class IDs found in the dataset with names and colors."""
+    import time as _time
+    if _classes_cache['data'] and (_time.time() - _classes_cache['time']) < 300:
+        return jsonify({'success': True, 'classes': _classes_cache['data']})
+
+    found_classes = set()
+    for split in SPLITS:
+        labels_dir = DATASET_ROOT / split / "labels"
+        if not labels_dir.exists():
+            continue
+        for lbl_file in labels_dir.iterdir():
+            if lbl_file.suffix != '.txt':
+                continue
+            try:
+                with open(lbl_file) as f:
+                    for line in f:
+                        parts = line.strip().split()
+                        if len(parts) >= 5:
+                            found_classes.add(int(parts[0]))
+            except Exception:
+                continue
+    classes = []
+    for cid in sorted(found_classes):
+        classes.append({
+            'id': cid,
+            'name': CLASS_NAMES.get(cid, f'class_{cid}'),
+            'color': CLASS_COLORS.get(cid, '#888888'),
+        })
+    _classes_cache['data'] = classes
+    _classes_cache['time'] = _time.time()
+    return jsonify({'success': True, 'classes': classes})
+
 
 @doc_training_browser_bp.route('/api/doc-training/stats')
 def doc_training_stats():
@@ -642,5 +682,51 @@ def doc_training_image(split, filename):
         str(image_path),
         mimetype=mimetype,
     )
+    response.headers['Cache-Control'] = 'public, max-age=604800'  # 7 days
+    return response
+
+
+@doc_training_browser_bp.route('/api/doc-training/thumbnail/<split>/<filename>')
+def doc_training_thumbnail(split, filename):
+    """Serve a cached 300x300 JPEG thumbnail, generating it on first request."""
+    if split not in SPLITS:
+        return jsonify({'error': 'Invalid split'}), 400
+
+    # Sanitize filename to prevent path traversal
+    safe_name = os.path.basename(filename)
+    source_path = DATASET_ROOT / split / 'images' / safe_name
+
+    if not source_path.exists():
+        return jsonify({'error': 'Image not found'}), 404
+
+    # Thumbnail is always stored as .jpg regardless of source extension
+    thumb_basename = Path(safe_name).stem + '.jpg'
+    thumb_dir = DATASET_ROOT / split / '.thumbcache'
+    thumb_path = thumb_dir / thumb_basename
+
+    force_refresh = request.args.get('refresh', '0') == '1'
+
+    # Check if a valid cached thumbnail exists
+    use_cache = (
+        not force_refresh
+        and thumb_path.exists()
+        and thumb_path.stat().st_mtime >= source_path.stat().st_mtime
+    )
+
+    if not use_cache:
+        try:
+            thumb_dir.mkdir(parents=True, exist_ok=True)
+            with Image.open(source_path) as img:
+                img = img.convert('RGB')
+                img.thumbnail((300, 300), Image.LANCZOS)
+                img.save(str(thumb_path), 'JPEG', quality=80)
+        except Exception as e:
+            logger.error(f"Failed to generate thumbnail for {safe_name}: {e}")
+            # Fall back to serving the original image
+            response = send_file(str(source_path), mimetype='image/jpeg')
+            response.headers['Cache-Control'] = 'public, max-age=604800'
+            return response
+
+    response = send_file(str(thumb_path), mimetype='image/jpeg')
     response.headers['Cache-Control'] = 'public, max-age=604800'  # 7 days
     return response

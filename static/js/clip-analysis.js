@@ -1341,9 +1341,7 @@
         var submitBtn = document.getElementById('btn-submit-issue');
         var cancelBtn = document.getElementById('btn-cancel-correction');
 
-        backdrop.addEventListener('click', function() {
-            exitCorrectionMode();
-        });
+        // Do not close on backdrop click — this modal has cancel/submit actions
         if (cancelBtn) {
             cancelBtn.addEventListener('click', function() {
                 exitCorrectionMode();

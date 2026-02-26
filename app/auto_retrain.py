@@ -259,6 +259,114 @@ class AutoRetrainChecker:
             row = cursor.fetchone()
         return row["cnt"] if row else 0
 
+    def _validate_dataset(self, export_result: Dict) -> Dict:
+        """Pre-flight validation of exported dataset.
+
+        Checks:
+        1. Minimum frame count (200)
+        2. Class balance (warn if any class <20, exclude <5)
+        3. Train/val non-empty
+        4. No single-class dominance (warn if >60%)
+
+        Returns:
+            {'valid': bool, 'warnings': [], 'errors': [], 'stats': {}}
+        """
+        warnings = []
+        errors = []
+        stats = {
+            'frame_count': export_result.get('frame_count', 0),
+            'annotation_count': export_result.get('annotation_count', 0),
+            'train_count': export_result.get('train_count', 0),
+            'val_count': export_result.get('val_count', 0),
+        }
+
+        # Check 1: Minimum dataset size
+        if stats['frame_count'] < 200:
+            errors.append(
+                f"Dataset too small: {stats['frame_count']} frames (minimum 200)"
+            )
+
+        # Check 2: Train/val non-empty
+        if stats['train_count'] == 0:
+            errors.append("Training split is empty")
+        if stats['val_count'] == 0:
+            errors.append("Validation split is empty")
+
+        # Check 3: Class balance from data.yaml
+        export_path = export_result.get('export_path', '')
+        if export_path:
+            from pathlib import Path
+            import yaml
+
+            data_yaml = Path(export_path) / 'data.yaml'
+            if data_yaml.exists():
+                try:
+                    with open(data_yaml) as f:
+                        data_config = yaml.safe_load(f)
+
+                    # Count labels per class by scanning label files
+                    class_counts = {}
+                    for split in ('train', 'val'):
+                        labels_dir = Path(export_path) / split / 'labels'
+                        if not labels_dir.exists():
+                            continue
+                        for label_file in labels_dir.glob('*.txt'):
+                            with open(label_file) as f:
+                                for line in f:
+                                    parts = line.strip().split()
+                                    if parts:
+                                        cls_id = int(parts[0])
+                                        class_counts[cls_id] = class_counts.get(cls_id, 0) + 1
+
+                    stats['class_counts'] = class_counts
+                    total_labels = sum(class_counts.values())
+
+                    if total_labels > 0:
+                        # Warn if any class has < 20 samples
+                        names = data_config.get('names', {})
+                        for cls_id, count in class_counts.items():
+                            cls_name = names.get(cls_id, f'class_{cls_id}')
+                            if count < 5:
+                                warnings.append(
+                                    f"Class '{cls_name}' has only {count} samples "
+                                    f"(excluding from training)"
+                                )
+                            elif count < 20:
+                                warnings.append(
+                                    f"Class '{cls_name}' has only {count} samples "
+                                    f"(may underperform)"
+                                )
+
+                        # Check 4: Single-class dominance
+                        max_count = max(class_counts.values())
+                        if max_count / total_labels > 0.6:
+                            dominant_cls = max(class_counts, key=class_counts.get)
+                            cls_name = names.get(dominant_cls, f'class_{dominant_cls}')
+                            pct = max_count / total_labels * 100
+                            warnings.append(
+                                f"Class '{cls_name}' dominates with {pct:.0f}% of samples"
+                            )
+
+                except Exception as e:
+                    warnings.append(f"Could not parse data.yaml for class balance: {e}")
+
+        valid = len(errors) == 0
+
+        if errors:
+            logger.warning("Dataset validation FAILED: %s", "; ".join(errors))
+        if warnings:
+            logger.info("Dataset validation warnings: %s", "; ".join(warnings))
+        if valid:
+            logger.info("Dataset validation passed (%d frames, %d annotations)",
+                        stats['frame_count'], stats['annotation_count'])
+
+        return {
+            'valid': valid,
+            'warnings': warnings,
+            'errors': errors,
+            'stats': stats,
+        }
+
     def _find_or_create_export_config(self) -> int:
         """
         Find an existing YOLO export config named AUTO_RETRAIN_CONFIG_NAME,
@@ -328,12 +436,27 @@ class AutoRetrainChecker:
             export_result["frame_count"], export_result["annotation_count"], export_path,
         )
 
+        # Step 2.5: Validate dataset
+        validation = self._validate_dataset(export_result)
+        if not validation['valid']:
+            logger.error(
+                "Auto-retrain aborted: dataset validation failed: %s",
+                validation['errors'],
+            )
+            return {
+                "action": "aborted",
+                "reason": "dataset_validation_failed",
+                "validation": validation,
+                "export_path": export_path,
+            }
+
         # Step 3: Submit training job
         training_config = {
-            "model_type": "yolov8s",
-            "epochs": 100,
+            "model_type": "/models/custom/people-vehicles-objects/models/yolov8x-worldv2.pt",
+            "epochs": 50,
             "gpu_device": 1,
             "auto_triggered": True,
+            "auto_deploy": True,
             "trigger_review_count": review_count,
             "trigger_threshold": ANNOTATION_THRESHOLD,
             "export_stats": {
@@ -342,11 +465,12 @@ class AutoRetrainChecker:
                 "train_count": export_result["train_count"],
                 "val_count": export_result["val_count"],
             },
+            "dataset_validation": validation,
         }
 
         job_result = self.training_queue.submit_job(
             export_path=export_path,
-            job_type="yolov8_train",
+            job_type="yolov8_world_finetune",
             config=training_config,
             export_config_id=config_id,
         )

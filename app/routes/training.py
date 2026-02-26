@@ -506,3 +506,284 @@ def trigger_auto_retrain():
         return jsonify({'success': True, 'result': result})
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ==================== Model Deployment Endpoints ====================
+
+@training_bp.route('/api/training/jobs/<job_id>/validation', methods=['POST'])
+def report_training_validation(job_id):
+    """Receive post-training validation results from worker."""
+    try:
+        data = request.get_json() or {}
+        validation_map = data.get('validation_map')
+        validation_results = data.get('validation_results')
+        deploy_status = data.get('deploy_status', 'none')
+
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cursor.execute('''
+                UPDATE training_jobs
+                SET validation_map = %s,
+                    validation_results = %s,
+                    deploy_status = %s
+                WHERE job_id = %s
+                RETURNING id
+            ''', (validation_map, json.dumps(validation_results) if validation_results else None,
+                  deploy_status, job_id))
+            row = cursor.fetchone()
+            conn.commit()
+
+        if not row:
+            return jsonify({'success': False, 'error': 'Job not found'}), 404
+
+        return jsonify({'success': True, 'job_id': job_id, 'deploy_status': deploy_status})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@training_bp.route('/api/training/deploy/<job_id>', methods=['POST'])
+def deploy_trained_model(job_id):
+    """Deploy a trained model from a completed training job.
+
+    1. Copies best.pt to models directory
+    2. Creates model_deployments row with status='active'
+    3. Marks previous deployment as 'superseded'
+    4. Signals vehicle_detect_runner to reload
+    5. Keeps last 3 model versions on disk
+    """
+    try:
+        import shutil
+        from pathlib import Path
+
+        # Get job details
+        job = training_queue.get_job(job_id)
+        if not job:
+            return jsonify({'success': False, 'error': 'Job not found'}), 404
+
+        if job['status'] != 'completed':
+            return jsonify({'success': False, 'error': f'Job not completed (status: {job["status"]})'}), 400
+
+        # Parse config
+        config = job.get('config') or {}
+        if not config and job.get('config_json'):
+            try:
+                config = json.loads(job['config_json'])
+            except (json.JSONDecodeError, TypeError):
+                config = {}
+
+        # Find best.pt in the export directory
+        export_path = config.get('export_path', '')
+        if not export_path:
+            s3_uri = job.get('s3_uri', '')
+            if s3_uri.startswith('local://'):
+                export_path = s3_uri[len('local://'):]
+
+        if not export_path:
+            return jsonify({'success': False, 'error': 'Cannot determine export path'}), 400
+
+        # Look for best.pt in common ultralytics output locations
+        best_pt = None
+        for candidate in [
+            Path(export_path) / 'train_run' / 'weights' / 'best.pt',
+            Path(export_path) / 'runs' / 'detect' / 'train' / 'weights' / 'best.pt',
+            Path(export_path) / 'train' / 'weights' / 'best.pt',
+        ]:
+            if candidate.exists():
+                best_pt = candidate
+                break
+
+        # Also search recursively
+        if not best_pt:
+            for found in Path(export_path).rglob('best.pt'):
+                best_pt = found
+                break
+
+        if not best_pt:
+            return jsonify({'success': False, 'error': 'best.pt not found in training output'}), 404
+
+        # Copy to models directory with versioned name
+        models_dir = Path('/models/custom/people-vehicles-objects/models')
+        models_dir.mkdir(parents=True, exist_ok=True)
+
+        model_name = config.get('model_name', 'vehicle-world-v1')
+        from datetime import datetime
+        version_str = datetime.now().strftime('%Y%m%d_%H%M%S')
+        model_version = f'finetune_{version_str}'
+        dest_filename = f'{model_name}_{model_version}.pt'
+        dest_path = models_dir / dest_filename
+
+        shutil.copy2(str(best_pt), str(dest_path))
+        logger.info(f'Copied {best_pt} -> {dest_path}')
+
+        # Get validation info from job
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+            # Get job DB id and validation data
+            cursor.execute(
+                'SELECT id, validation_map, validation_results FROM training_jobs WHERE job_id = %s',
+                (job_id,))
+            job_row = cursor.fetchone()
+            job_db_id = job_row['id'] if job_row else None
+
+            # Mark previous active deployments as superseded
+            cursor.execute('''
+                UPDATE model_deployments
+                SET status = 'superseded'
+                WHERE model_name = %s AND status = 'active'
+            ''', (model_name,))
+            superseded_count = cursor.rowcount
+
+            # Create new deployment record
+            cursor.execute('''
+                INSERT INTO model_deployments
+                (model_name, model_version, model_path, training_job_id,
+                 validation_map, validation_results, status, deployed_at)
+                VALUES (%s, %s, %s, %s, %s, %s, 'active', NOW())
+                RETURNING id
+            ''', (
+                model_name, model_version, str(dest_path), job_db_id,
+                job_row['validation_map'] if job_row else None,
+                json.dumps(job_row['validation_results']) if job_row and job_row['validation_results'] else None
+            ))
+            deployment_id = cursor.fetchone()['id']
+
+            # Update training job deploy status
+            cursor.execute(
+                "UPDATE training_jobs SET deploy_status = 'deployed' WHERE job_id = %s",
+                (job_id,))
+
+            conn.commit()
+
+        # Signal vehicle_detect_runner to reload model
+        try:
+            from vehicle_detect_runner import reload_model
+            reload_model()
+            logger.info(f'Model reload triggered after deployment {deployment_id}')
+        except Exception as e:
+            logger.warning(f'Failed to signal model reload: {e}')
+
+        # Clean up old model files (keep last 3)
+        try:
+            existing_models = sorted(
+                models_dir.glob(f'{model_name}_finetune_*.pt'),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True
+            )
+            for old_model in existing_models[3:]:
+                old_model.unlink()
+                logger.info(f'Cleaned up old model: {old_model}')
+        except Exception as e:
+            logger.warning(f'Failed to clean up old models: {e}')
+
+        return jsonify({
+            'success': True,
+            'deployment_id': deployment_id,
+            'model_path': str(dest_path),
+            'model_version': model_version,
+            'superseded_count': superseded_count
+        })
+
+    except Exception as e:
+        logger.error(f'Failed to deploy model from job {job_id}: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@training_bp.route('/api/training/rollback', methods=['POST'])
+def rollback_model():
+    """Roll back to the previous active model deployment.
+
+    1. Marks current active deployment as 'rolled_back'
+    2. Reactivates the most recent superseded deployment
+    3. Signals vehicle_detect_runner to reload
+    """
+    try:
+        data = request.get_json() or {}
+        model_name = data.get('model_name', 'vehicle-world-v1')
+        reason = data.get('reason', 'manual rollback')
+
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+
+            # Find current active deployment
+            cursor.execute('''
+                SELECT id, model_version FROM model_deployments
+                WHERE model_name = %s AND status = 'active'
+                ORDER BY deployed_at DESC LIMIT 1
+            ''', (model_name,))
+            current = cursor.fetchone()
+
+            if not current:
+                return jsonify({'success': False, 'error': 'No active deployment to roll back'}), 404
+
+            # Mark as rolled back
+            cursor.execute('''
+                UPDATE model_deployments
+                SET status = 'rolled_back', rolled_back_at = NOW(), rollback_reason = %s
+                WHERE id = %s
+            ''', (reason, current['id']))
+
+            # Reactivate the most recent superseded deployment
+            cursor.execute('''
+                UPDATE model_deployments
+                SET status = 'active', deployed_at = NOW()
+                WHERE id = (
+                    SELECT id FROM model_deployments
+                    WHERE model_name = %s AND status = 'superseded'
+                    ORDER BY deployed_at DESC LIMIT 1
+                )
+                RETURNING id, model_version, model_path
+            ''', (model_name,))
+            restored = cursor.fetchone()
+
+            conn.commit()
+
+        # Signal model reload
+        try:
+            from vehicle_detect_runner import reload_model
+            reload_model()
+        except Exception as e:
+            logger.warning(f'Failed to signal model reload after rollback: {e}')
+
+        result = {
+            'success': True,
+            'rolled_back_deployment': current['id'],
+            'rolled_back_version': current['model_version'],
+        }
+        if restored:
+            result['restored_deployment'] = restored['id']
+            result['restored_version'] = restored['model_version']
+            result['restored_path'] = restored['model_path']
+        else:
+            result['restored_deployment'] = None
+            result['message'] = 'Rolled back to default model (no previous deployment found)'
+
+        return jsonify(result)
+
+    except Exception as e:
+        logger.error(f'Failed to rollback model: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+@training_bp.route('/api/training/deployments', methods=['GET'])
+def list_deployments():
+    """List model deployments with their status."""
+    try:
+        model_name = request.args.get('model_name', 'vehicle-world-v1')
+        limit = int(request.args.get('limit', 20))
+
+        with get_connection() as conn:
+            cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
+            cursor.execute('''
+                SELECT md.*, tj.job_id as training_job_ref
+                FROM model_deployments md
+                LEFT JOIN training_jobs tj ON tj.id = md.training_job_id
+                WHERE md.model_name = %s
+                ORDER BY md.created_at DESC
+                LIMIT %s
+            ''', (model_name, limit))
+            deployments = [dict(row) for row in cursor.fetchall()]
+
+        return jsonify({'success': True, 'deployments': deployments})
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500
