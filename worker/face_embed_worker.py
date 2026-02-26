@@ -209,6 +209,34 @@ class FaceEmbedWorker:
                 'Job %s complete: processed=%d faces=%d no_face=%d',
                 job_id, photos_processed, faces_detected, photos_no_face,
             )
+
+            # Ingest identity-grouped embeddings if metadata available
+            source_system = config.get('source_system', 'alfred_catalog')
+            grouped = {}  # {external_id: {'name': str, 'faces': [...]}}
+            for pr in photo_results:
+                if not pr.get('faces'):
+                    continue
+                pid = pr.get('photo_id')
+                if not pid:
+                    continue
+                meta = self._fetch_photo_metadata(pid)
+                if not meta:
+                    continue
+                person_id = meta.get('person_id')
+                person_name = meta.get('person_name')
+                if not person_id or not person_name:
+                    continue
+                ext_id = str(person_id)
+                if ext_id not in grouped:
+                    grouped[ext_id] = {'name': person_name, 'faces': []}
+                for face in pr['faces']:
+                    grouped[ext_id]['faces'].append({
+                        'embedding': face['embedding'],
+                        'confidence': face['confidence'],
+                    })
+
+            self._ingest_embeddings(source_system, grouped)
+
             self._report_complete(job_id, photo_results, metrics)
 
         except Exception as e:
@@ -230,6 +258,57 @@ class FaceEmbedWorker:
         except Exception as e:
             logger.error('Failed to fetch batch %s photo IDs: %s', batch_id, e)
             raise
+
+    def _fetch_photo_metadata(self, photo_id):
+        """Fetch metadata including person identity from the catalog service."""
+        try:
+            resp = requests.get(
+                f'{self.catalog_url}/api/photos/{photo_id}',
+                timeout=10,
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except Exception as e:
+            logger.warning('Failed to fetch metadata for photo %s: %s', photo_id, e)
+            return None
+
+    def _ingest_embeddings(self, source_system, grouped_results):
+        """Post identity-grouped embeddings to Studio's ingest endpoint.
+
+        Args:
+            source_system: Source identifier (e.g., 'alfred_catalog')
+            grouped_results: dict of {external_id: {'name': str, 'faces': [{'embedding': list, 'confidence': float}]}}
+        """
+        if not grouped_results:
+            return
+
+        payload = {
+            'source_system': source_system,
+            'results': [
+                {
+                    'external_id': ext_id,
+                    'name': data['name'],
+                    'faces': data['faces'],
+                }
+                for ext_id, data in grouped_results.items()
+            ],
+        }
+
+        try:
+            resp = requests.post(
+                f'{self.studio_url}/api/identities/ingest-embeddings',
+                json=payload,
+                timeout=60,
+            )
+            resp.raise_for_status()
+            result = resp.json()
+            logger.info(
+                'Ingested embeddings: %d identities, %d embeddings',
+                result.get('identities_resolved', 0),
+                result.get('embeddings_stored', 0),
+            )
+        except Exception as e:
+            logger.warning('Failed to ingest embeddings: %s', e)
 
     def _fetch_photo(self, photo_id):
         """Fetch image bytes from the catalog service for a given photo ID."""

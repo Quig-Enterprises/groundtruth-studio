@@ -443,6 +443,8 @@ CREATE TABLE IF NOT EXISTS identities (
     metadata JSONB DEFAULT '{}',
     is_flagged BOOLEAN NOT NULL DEFAULT FALSE,
     notes TEXT,
+    external_id VARCHAR(255),
+    source_system VARCHAR(50),
     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
 );
 
@@ -661,6 +663,7 @@ CREATE INDEX IF NOT EXISTS idx_library_items_video ON content_library_items(vide
 CREATE INDEX IF NOT EXISTS idx_identities_type ON identities(identity_type);
 CREATE INDEX IF NOT EXISTS idx_identities_name ON identities(name);
 CREATE INDEX IF NOT EXISTS idx_identities_flagged ON identities(is_flagged) WHERE is_flagged = TRUE;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_identities_external ON identities(source_system, external_id) WHERE external_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_identities_last_seen ON identities(last_seen);
 CREATE INDEX IF NOT EXISTS idx_embeddings_identity ON embeddings(identity_id);
 CREATE INDEX IF NOT EXISTS idx_embeddings_type ON embeddings(embedding_type);
@@ -954,6 +957,8 @@ def run_migrations():
                     metadata JSONB DEFAULT '{}',
                     is_flagged BOOLEAN NOT NULL DEFAULT FALSE,
                     notes TEXT,
+                    external_id VARCHAR(255),
+                    source_system VARCHAR(50),
                     created_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
                 )
             """)
@@ -1053,6 +1058,7 @@ def run_migrations():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_identities_type ON identities(identity_type)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_identities_name ON identities(name)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_identities_flagged ON identities(is_flagged) WHERE is_flagged = TRUE")
+            cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_identities_external ON identities(source_system, external_id) WHERE external_id IS NOT NULL")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_identities_last_seen ON identities(last_seen)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_identity ON embeddings(identity_id)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_embeddings_type ON embeddings(embedding_type)")
@@ -1479,6 +1485,44 @@ def run_migrations():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_ecoeye_alerts_download_status ON ecoeye_alerts(video_available, video_downloaded)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_ecoeye_alerts_timestamp ON ecoeye_alerts(timestamp)")
             logger.info("EcoEye auto-sync indexes ready")
+
+            # Migration: Add quality scoring columns to ai_predictions
+            cursor.execute("ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS quality_score REAL")
+            cursor.execute("ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS quality_flags JSONB DEFAULT '{}'")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_quality ON ai_predictions(quality_score)")
+            logger.info("AI predictions quality columns ready")
+
+            # Migration: Add min_quality_score to yolo_export_configs
+            cursor.execute("ALTER TABLE yolo_export_configs ADD COLUMN IF NOT EXISTS min_quality_score REAL DEFAULT 0.0")
+            logger.info("YOLO export config quality column ready")
+
+            # Migration: Add validation and deployment columns to training_jobs
+            cursor.execute("ALTER TABLE training_jobs ADD COLUMN IF NOT EXISTS validation_map REAL")
+            cursor.execute("ALTER TABLE training_jobs ADD COLUMN IF NOT EXISTS validation_results JSONB")
+            cursor.execute("ALTER TABLE training_jobs ADD COLUMN IF NOT EXISTS deploy_status VARCHAR(20) DEFAULT 'none'")
+            logger.info("Training jobs validation columns ready")
+
+            # Migration: Create model_deployments table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS model_deployments (
+                    id SERIAL PRIMARY KEY,
+                    model_name VARCHAR(255) NOT NULL,
+                    model_version VARCHAR(50) NOT NULL,
+                    model_path TEXT NOT NULL,
+                    training_job_id INTEGER REFERENCES training_jobs(id),
+                    validation_map REAL,
+                    validation_results JSONB,
+                    status VARCHAR(20) NOT NULL DEFAULT 'pending'
+                        CHECK (status IN ('pending', 'canary', 'active', 'rolled_back', 'superseded')),
+                    deployed_at TIMESTAMP WITH TIME ZONE,
+                    rolled_back_at TIMESTAMP WITH TIME ZONE,
+                    rollback_reason TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_model_deployments_name ON model_deployments(model_name)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_model_deployments_status ON model_deployments(status)")
+            logger.info("Model deployments table ready")
 
             # Migration: Document scanning and identity document tables
             cursor.execute("""

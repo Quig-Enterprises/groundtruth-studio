@@ -17,7 +17,8 @@ from routes import (
     training_bp, yolo_export_bp, predictions_bp, tracks_bp,
     models_bp, persons_bp, frigate_bp, locations_bp, vibration_bp,
     camera_map_bp, clip_analysis_bp, training_gallery_bp, documents_bp,
-    doc_training_browser_bp,
+    doc_training_browser_bp, doc_template_annotator_bp,
+    face_photo_manager_bp, identities_bp,
 )
 
 app = Flask(__name__,
@@ -98,6 +99,9 @@ app.register_blueprint(clip_analysis_bp)
 app.register_blueprint(training_gallery_bp)
 app.register_blueprint(documents_bp)
 app.register_blueprint(doc_training_browser_bp)
+app.register_blueprint(doc_template_annotator_bp)
+app.register_blueprint(face_photo_manager_bp)
+app.register_blueprint(identities_bp)
 
 
 # ---- Home Page ----
