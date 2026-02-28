@@ -182,6 +182,20 @@ var TemplateAnnotator = {
                 document.getElementById('gen-oversat-min-val').textContent = this.value + '%';
             }
         });
+        document.getElementById('gen-overlay-pct').addEventListener('input', function() {
+            document.getElementById('gen-overlay-pct-val').textContent = this.value + '%';
+        });
+        document.getElementById('gen-overlay-opacity-min').addEventListener('input', function() {
+            var maxEl = document.getElementById('gen-overlay-opacity-max');
+            if (parseInt(this.value) > parseInt(maxEl.value)) {
+                maxEl.value = this.value;
+                document.getElementById('gen-overlay-opacity-max-val').textContent = this.value + '%';
+            }
+            document.getElementById('gen-overlay-opacity-min-val').textContent = this.value + '%';
+        });
+        document.getElementById('gen-overlay-opacity-max').addEventListener('input', function() {
+            document.getElementById('gen-overlay-opacity-max-val').textContent = this.value + '%';
+        });
 
         // Modal dismiss buttons
         document.querySelectorAll('[data-dismiss="modal"]').forEach(function(btn) {
@@ -1991,7 +2005,7 @@ var TemplateAnnotator = {
         if (t === 'text_field') {
             container.appendChild(makeDivider());
             container.appendChild(makeSectionLabel('Data Field'));
-            var dataFields = ['gender', 'gender_full', 'height', 'weight', 'eye_color', 'hair_color', 'nationality', 'place_of_birth', 'dl_class', 'restrictions', 'citizenship', 'medical_cert_number', 'hearing_stcw', 'visual_acuity_stcw', 'color_vision_stcw', 'fit_for_lookout', 'unaided_hearing', 'id_checks_at_exam', 'no_limitations'].map(function(f) {
+            var dataFields = ['gender', 'gender_full', 'height', 'weight', 'eye_color', 'hair_color', 'nationality', 'place_of_birth', 'dl_class', 'restrictions', 'citizenship', 'issuer', 'medical_cert_number', 'hearing_stcw', 'visual_acuity_stcw', 'color_vision_stcw', 'fit_for_lookout', 'unaided_hearing', 'id_checks_at_exam', 'no_limitations'].map(function(f) {
                 return { value: f, label: f.replace(/_/g, ' ') };
             });
             container.appendChild(makeGroup('Field', makeSelect('prop-field-name', dataFields, region.field_name), 'Which persona data field to display (e.g., sex, height, eye_color)'));
@@ -2784,6 +2798,12 @@ var TemplateAnnotator = {
         document.getElementById('gen-oversat-min-val').textContent = '20%';
         document.getElementById('gen-oversat-max').value = '70';
         document.getElementById('gen-oversat-max-val').textContent = '70%';
+        document.getElementById('gen-overlay-pct').value = '0';
+        document.getElementById('gen-overlay-pct-val').textContent = '0%';
+        document.getElementById('gen-overlay-opacity-min').value = '30';
+        document.getElementById('gen-overlay-opacity-min-val').textContent = '30%';
+        document.getElementById('gen-overlay-opacity-max').value = '70';
+        document.getElementById('gen-overlay-opacity-max-val').textContent = '70%';
         document.getElementById('gen-progress-section').style.display = 'none';
         document.getElementById('btn-start-generate').disabled = false;
         document.getElementById('modal-generate').style.display = 'flex';
@@ -2802,6 +2822,9 @@ var TemplateAnnotator = {
         var washoutMax = parseInt(document.getElementById('gen-washout-max').value) || 70;
         var oversatMin = parseInt(document.getElementById('gen-oversat-min').value) || 20;
         var oversatMax = parseInt(document.getElementById('gen-oversat-max').value) || 70;
+        var overlayPct = parseInt(document.getElementById('gen-overlay-pct').value) || 0;
+        var overlayOpacityMin = parseInt(document.getElementById('gen-overlay-opacity-min').value) || 30;
+        var overlayOpacityMax = parseInt(document.getElementById('gen-overlay-opacity-max').value) || 70;
 
         document.getElementById('gen-progress-section').style.display = 'block';
         document.getElementById('gen-progress-fill').style.width = '0%';
@@ -2817,7 +2840,10 @@ var TemplateAnnotator = {
                     max_perspective: maxPerspective, max_rotation: maxRotation,
                     photocopy_pct: photocopyPct, oversaturated_pct: oversaturatedPct,
                     washout_min: washoutMin, washout_max: washoutMax,
-                    oversat_min: oversatMin, oversat_max: oversatMax
+                    oversat_min: oversatMin, oversat_max: oversatMax,
+                    overlay_pct: overlayPct,
+                    overlay_opacity_min: overlayOpacityMin,
+                    overlay_opacity_max: overlayOpacityMax
                 })
             });
             var data = await resp.json();

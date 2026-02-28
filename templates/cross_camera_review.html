@@ -147,12 +147,6 @@
         <h3 class="sheet-heading">Why reject this match?</h3>
 
         <div class="rejection-reasons">
-            <button class="reason-chip" data-reason="not_same_vehicle">Not same vehicle</button>
-            <button class="reason-chip" data-reason="not_same_person">Not same person</button>
-            <button class="reason-chip" data-reason="not_same_object">Not same object</button>
-            <button class="reason-chip" data-reason="bad_image_quality">Bad image quality</button>
-            <button class="reason-chip" data-reason="wrong_time_window">Wrong time window</button>
-            <button class="reason-chip" data-reason="other">Other</button>
         </div>
 
         <div class="other-input-container hidden" id="other-input-container">
@@ -220,6 +214,7 @@
         </div>
     </div>
 
+    <script src="{{ static_v('js/shared-reject-reasons.js') }}"></script>
     <script src="{{ static_v('js/cross-camera-review.js') }}"></script>
 </body>
 </html>

@@ -315,6 +315,29 @@
                     </div>
                     <span class="form-hint">Heavy toner intensity (0% = clean, 100% = extremely dark/saturated)</span>
                 </div>
+                <hr style="border-color: var(--border); margin: 12px 0;">
+                <div class="form-group">
+                    <label for="gen-overlay-pct">Photocopy Overlay %</label>
+                    <div class="slider-row">
+                        <input type="range" id="gen-overlay-pct" class="form-slider" value="0" min="0" max="100">
+                        <span class="slider-value" id="gen-overlay-pct-val">0%</span>
+                    </div>
+                    <span class="form-hint">Chance each photocopy gets a real artifact overlay (streaks, smears, bleed-through)</span>
+                </div>
+                <div class="form-group">
+                    <label>Overlay Opacity</label>
+                    <div class="slider-row" style="gap: 8px;">
+                        <span style="font-size: 11px; color: var(--text-dim);">Min</span>
+                        <input type="range" id="gen-overlay-opacity-min" class="form-slider" value="30" min="0" max="100" style="flex:1">
+                        <span class="slider-value" id="gen-overlay-opacity-min-val">30%</span>
+                    </div>
+                    <div class="slider-row" style="gap: 8px;">
+                        <span style="font-size: 11px; color: var(--text-dim);">Max</span>
+                        <input type="range" id="gen-overlay-opacity-max" class="form-slider" value="70" min="0" max="100" style="flex:1">
+                        <span class="slider-value" id="gen-overlay-opacity-max-val">70%</span>
+                    </div>
+                    <span class="form-hint">How visible the overlay artifacts are (0% = invisible, 100% = full strength)</span>
+                </div>
                 <div class="progress-section" id="gen-progress-section" style="display:none">
                     <div class="progress-bar-track">
                         <div class="progress-bar-fill" id="gen-progress-fill"></div>

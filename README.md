@@ -4,6 +4,8 @@ A professional video annotation system for creating high-quality training datase
 
 Download videos from 1000+ sites, organize with structured tags, and create ML-ready annotations with time-range tags and frame-precise keyframe annotations.
 
+> **EcoEye Platform:** Groundtruth Studio is the management UI and pipeline orchestration layer for the EcoEye multi-camera surveillance and recognition platform. For the full system overview — including face recognition, vehicle tracking, cross-camera matching, PTZ tasking, and more — see [docs/ECOEYE_SYSTEM_OVERVIEW.md](docs/ECOEYE_SYSTEM_OVERVIEW.md).
+
 ## Features
 
 ### Video Management

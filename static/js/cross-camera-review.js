@@ -622,6 +622,12 @@
         // Keyboard
         document.addEventListener('keydown', onKeyDown);
 
+        // Populate rejection reason chips dynamically
+        var ccReasonsContainer = dom.rejectSheet.querySelector('.rejection-reasons');
+        if (ccReasonsContainer) {
+            ccReasonsContainer.appendChild(RejectReasons.buildChips('cross_camera'));
+        }
+
         // Rejection sheet
         dom.rejectSheet.querySelectorAll('.reason-chip').forEach(chip => {
             chip.addEventListener('click', () => {

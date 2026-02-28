@@ -22,7 +22,8 @@ def get_placements():
             cursor = conn.cursor(cursor_factory=extras.RealDictCursor)
             cursor.execute('''
                 SELECT id, camera_id, camera_name, location_name, latitude, longitude,
-                       bearing, fov_angle, fov_range, map_color, is_ptz, ptz_pan_range, location_description, is_indoor
+                       bearing, fov_angle, fov_range, map_color, is_ptz, ptz_pan_range, location_description, is_indoor,
+                       onvif_host, onvif_port, onvif_username, onvif_password, ptz_home_bearing, ptz_travel_limits
                 FROM camera_locations
                 WHERE latitude IS NOT NULL AND longitude IS NOT NULL
                 ORDER BY camera_name, camera_id
@@ -127,8 +128,9 @@ def create_placement():
             cursor.execute('''
                 INSERT INTO camera_locations
                     (camera_id, camera_name, location_name, latitude, longitude,
-                     bearing, fov_angle, fov_range, map_color, is_ptz, ptz_pan_range, is_indoor)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     bearing, fov_angle, fov_range, map_color, is_ptz, ptz_pan_range, is_indoor,
+                     onvif_host, onvif_port, onvif_username, onvif_password)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (camera_id) DO UPDATE SET
                     camera_name = COALESCE(EXCLUDED.camera_name, camera_locations.camera_name),
                     latitude = EXCLUDED.latitude,
@@ -140,6 +142,10 @@ def create_placement():
                     is_ptz = EXCLUDED.is_ptz,
                     ptz_pan_range = EXCLUDED.ptz_pan_range,
                     is_indoor = EXCLUDED.is_indoor,
+                    onvif_host = EXCLUDED.onvif_host,
+                    onvif_port = EXCLUDED.onvif_port,
+                    onvif_username = EXCLUDED.onvif_username,
+                    onvif_password = EXCLUDED.onvif_password,
                     updated_date = CURRENT_TIMESTAMP
                 RETURNING *
             ''', (
@@ -153,7 +159,11 @@ def create_placement():
                 data.get('map_color', '#4CAF50'),
                 data.get('is_ptz', False),
                 data.get('ptz_pan_range', 180),
-                data.get('is_indoor', False)
+                data.get('is_indoor', False),
+                data.get('onvif_host'),
+                data.get('onvif_port', 80),
+                data.get('onvif_username'),
+                data.get('onvif_password'),
             ))
             placement = dict(cursor.fetchone())
             conn.commit()
@@ -179,6 +189,10 @@ def update_placement(placement_id):
             'location_description': 'location_description',
             'is_ptz': 'is_ptz', 'ptz_pan_range': 'ptz_pan_range',
             'is_indoor': 'is_indoor',
+            'onvif_host': 'onvif_host',
+            'onvif_port': 'onvif_port',
+            'onvif_username': 'onvif_username',
+            'onvif_password': 'onvif_password',
         }
 
         for key, col in allowed_fields.items():

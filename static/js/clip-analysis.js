@@ -34,6 +34,8 @@
         'false positive': '#616161',
         'person':       '#ff8a80',
         'animal':       '#ffcc80',
+        'squirrel':     '#d4a574',
+        'other animal': '#c8a882',
         'snow pile':    '#e0e0e0',
         'sign':         '#ffab40',
         'building':     '#78909c',
@@ -44,7 +46,7 @@
     };
 
     const NON_VEHICLE_CLASSES = [
-        'person', 'animal', 'deer', 'bear', 'dog',
+        'person', 'animal', 'deer', 'bear', 'dog', 'turkey', 'squirrel', 'other animal',
         'snow pile', 'dirt pile', 'rock',
         'sign', 'mailbox', 'fire hydrant', 'trash can', 'dumpster',
         'building', 'shed', 'fence', 'gate', 'pole',
@@ -1346,6 +1348,12 @@
             cancelBtn.addEventListener('click', function() {
                 exitCorrectionMode();
             });
+        }
+
+        // Populate reason chips dynamically
+        var issueReasons = sheet.querySelector('.issue-reasons');
+        if (issueReasons) {
+            issueReasons.appendChild(RejectReasons.buildChips('clip'));
         }
 
         sheet.querySelectorAll('.reason-chip').forEach(function(chip) {

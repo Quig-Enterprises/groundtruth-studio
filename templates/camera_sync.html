@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Camera Sync - Groundtruth Studio</title>
+    <link rel="icon" type="image/x-icon" href="/static/favicon.ico">
+    <link rel="stylesheet" href="/static/css/style.css">
+    <link rel="stylesheet" href="{{ static_v('css/camera-sync.css') }}">
+</head>
+<body>
+    <script>
+        var CAN_WRITE = {{ 'true' if can_write else 'false' }};
+        var USER_ROLE = "{{ user_role }}";
+    </script>
+
+    {% include 'partials/nav.html' %}
+
+    <div class="sync-page">
+        <!-- Toolbar -->
+        <div class="sync-toolbar">
+            <span class="toolbar-label">Overlap Group</span>
+            <select id="group-select">
+                <option value="">-- Select Group --</option>
+            </select>
+            <button class="btn-toolbar primary" id="btn-recompute" title="Auto-detect overlapping cameras from FOV geometry">Recompute</button>
+            <button class="btn-toolbar" id="btn-manage-groups">Manage Groups</button>
+            <button class="btn-toolbar" id="btn-calibration">Calibration</button>
+            <div class="toolbar-spacer"></div>
+            <button class="btn-toolbar" id="btn-draw-bbox" disabled>Draw BBox</button>
+        </div>
+
+        <!-- Camera Grid -->
+        <div class="camera-grid cols-2" id="camera-grid">
+            <div class="empty-state" id="empty-state">
+                <h3>No Group Selected</h3>
+                <p>Select an overlap group from the toolbar to view cameras with overlapping fields of view, or click "Recompute" to auto-detect groups.</p>
+            </div>
+        </div>
+
+        <!-- Selections Panel -->
+        <div class="selections-panel" id="selections-panel">
+            <div class="selections-header" id="selections-header">
+                <span class="selections-title">Selections</span>
+                <span class="selections-count" id="selections-count">0</span>
+            </div>
+            <div class="selections-list" id="selections-list"></div>
+        </div>
+    </div>
+
+    <!-- Group Management Modal -->
+    <div class="modal-overlay" id="group-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <span class="modal-title" id="modal-title">Manage Groups</span>
+                <button class="modal-close" id="modal-close">&times;</button>
+            </div>
+            <div class="modal-body" id="modal-body">
+                <!-- Existing groups list -->
+                <div id="modal-groups-list"></div>
+                <hr style="border-color: #2e2e2e; margin: 16px 0;">
+                <!-- Create new group form -->
+                <h4 style="color: #aaa; font-size: 13px; margin-bottom: 12px;">Create New Group</h4>
+                <div class="form-field">
+                    <label>Group Name</label>
+                    <input type="text" id="new-group-name" placeholder="e.g. Marina Entrance">
+                </div>
+                <div class="form-field">
+                    <label>Description</label>
+                    <input type="text" id="new-group-desc" placeholder="Optional description">
+                </div>
+                <div class="form-field">
+                    <label>Cameras</label>
+                    <div class="camera-checklist" id="camera-checklist"></div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button class="btn-toolbar" id="btn-modal-cancel">Cancel</button>
+                <button class="btn-toolbar primary" id="btn-modal-save">Create Group</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast notification -->
+    <div class="toast" id="toast"></div>
+
+    <script src="{{ static_v('js/camera-sync.js') }}"></script>
+</body>
+</html>

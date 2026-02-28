@@ -11,6 +11,9 @@ cryptography>=42.0.0
 psycopg2-binary>=2.9.9
 python-doctr[torch]>=1.0.0
 PyYAML>=6.0
+shapely>=2.0.0
+onvif-zeep>=0.2.12
+scipy>=1.10.0
 
 # System dependencies (install via package manager):
 # sudo apt install ffmpeg  # For video processing and thumbnails

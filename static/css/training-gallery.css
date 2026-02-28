@@ -766,6 +766,148 @@ html, body {
     text-align: center;
 }
 
+/* ── Multi-Select Dropdown (Reason Filter) ─────────────────────────── */
+.multi-select-wrap {
+    position: relative;
+}
+.multi-select-btn {
+    text-align: left;
+    min-width: 140px;
+    position: relative;
+    padding-right: 1.8rem !important;
+}
+.multi-select-btn::after {
+    content: '\25BE';
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    font-size: 0.75rem;
+    color: var(--text-secondary);
+}
+.multi-select-dropdown {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 60;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    margin-top: 4px;
+    min-width: 200px;
+    max-height: 280px;
+    overflow-y: auto;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.4);
+}
+.multi-select-dropdown label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 10px;
+    font-size: 0.82rem;
+    color: var(--text-primary);
+    cursor: pointer;
+    transition: background 0.1s;
+}
+.multi-select-dropdown label:hover {
+    background: rgba(255,255,255,0.05);
+}
+.multi-select-dropdown input[type=checkbox] {
+    accent-color: var(--accent);
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+}
+.multi-select-dropdown .ms-count {
+    margin-left: auto;
+    font-size: 0.72rem;
+    color: var(--text-secondary);
+    font-variant-numeric: tabular-nums;
+}
+.multi-select-dropdown .ms-divider {
+    border-top: 1px solid var(--border);
+    margin: 2px 0;
+}
+
+/* ── Context Menu ───────────────────────────────────────────────────── */
+.gallery-context-menu {
+    position: fixed;
+    z-index: 500;
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 4px 0;
+    min-width: 160px;
+    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+}
+.gallery-context-menu button {
+    display: block;
+    width: 100%;
+    padding: 7px 14px;
+    background: none;
+    border: none;
+    color: var(--text-primary);
+    font-size: 0.82rem;
+    text-align: left;
+    cursor: pointer;
+    font-family: inherit;
+}
+.gallery-context-menu button:hover {
+    background: rgba(255,255,255,0.07);
+}
+
+/* ── Similarity Score Badge ────────────────────────────────────────── */
+.card-similarity-badge {
+    font-size: 11px;
+    padding: 2px 6px;
+    background: rgba(79, 195, 247, 0.15);
+    color: var(--accent);
+    border-radius: 4px;
+    text-align: center;
+    white-space: nowrap;
+    margin: 0 10px 6px;
+    font-variant-numeric: tabular-nums;
+}
+
+.card-seed-badge {
+    background: rgba(251, 191, 36, 0.2);
+    color: #fbbf24;
+    font-weight: 600;
+}
+
+/* ── Similarity Mode Banner ────────────────────────────────────────── */
+.similarity-banner {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 0.5rem 2rem;
+    background: rgba(79, 195, 247, 0.08);
+    border-bottom: 1px solid rgba(79, 195, 247, 0.2);
+    font-size: 0.85rem;
+    color: var(--accent);
+}
+.similarity-banner .seed-thumb {
+    width: 36px;
+    height: 36px;
+    border-radius: 4px;
+    object-fit: cover;
+    border: 1px solid var(--accent);
+}
+
+/* ── Reject Reason Badge ────────────────────────────────────────────── */
+.card-reason-badge {
+    font-size: 11px;
+    padding: 2px 6px;
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+    border-radius: 4px;
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    margin: 0 10px 6px;
+}
+
 /* ── Document Bbox Canvas ───────────────────────────────────────────── */
 .bbox-canvas {
     width: 100%;

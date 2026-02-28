@@ -62,6 +62,12 @@ CLASS_CONF_THRESHOLDS = {
     "jet ski": 0.12,
     # Stationary / infrastructure
     "fence": 0.15,
+    # Animals
+    "dog": 0.15,
+    "deer": 0.12,
+    "turkey": 0.12,
+    "squirrel": 0.12,
+    "other animal": 0.15,
 }
 DEFAULT_CONF_THRESHOLD = 0.15
 
@@ -108,6 +114,12 @@ ALL_CLASSES = [
     "jet ski personal watercraft",
     # Stationary / infrastructure
     "fence",
+    # Animals
+    "dog",
+    "deer white tailed deer",
+    "turkey wild turkey",
+    "squirrel",
+    "other animal unknown animal",
     # POLICY: No decoy classes. Use hard negative training data instead.
     # See clip analysis export for corrective training pipeline.
 ]
@@ -116,11 +128,15 @@ ALL_CLASSES = [
 PERSON_CLASS_ID = 0  # "person" is first in ALL_CLASSES
 
 # Classes excluded from vehicle predictions
-NON_VEHICLE_CLASSES = {"person"}
+NON_VEHICLE_CLASSES = {"person", "dog", "deer", "turkey", "squirrel", "other animal"}
 
 # Infrastructure classes — detected by the same model but not vehicles.
 # These get their own scenario instead of 'vehicle_detection'.
 INFRASTRUCTURE_CLASSES = {"fence"}
+
+# Animal classes — detected by the same model but not vehicles.
+# These get their own scenario instead of 'vehicle_detection'.
+ANIMAL_CLASSES = {"dog", "deer", "turkey", "squirrel", "other animal"}
 
 # Map YOLO-World prompt text to clean display names for GT Studio
 VEHICLE_DISPLAY_NAMES = {
@@ -151,6 +167,12 @@ VEHICLE_DISPLAY_NAMES = {
     "jet ski personal watercraft": "jet ski",
     # Stationary / infrastructure
     "fence": "fence",
+    # Animals
+    "dog": "dog",
+    "deer white tailed deer": "deer",
+    "turkey wild turkey": "turkey",
+    "squirrel": "squirrel",
+    "other animal unknown animal": "other animal",
 }
 
 
@@ -564,7 +586,7 @@ def _store_scan_marker(video_id: int, person_count: int, inference_time_ms: floa
     """Store a marker indicating this video was scanned but no vehicles found.
 
     This prevents re-processing the video on subsequent batch runs.
-    The marker has scenario='prescreen_scan' and review_status='auto_approved'.
+    The marker has scenario='prescreen_scan' and review_status='no_detection'.
     """
     try:
         import json
@@ -575,7 +597,7 @@ def _store_scan_marker(video_id: int, person_count: int, inference_time_ms: floa
                     INSERT INTO ai_predictions
                         (video_id, model_name, model_version, prediction_type, confidence,
                          timestamp, scenario, predicted_tags, review_status, inference_time_ms, batch_id)
-                    VALUES (%s, %s, %s, 'keyframe', 0, 0, 'prescreen_scan', %s, 'auto_approved', %s, %s)
+                    VALUES (%s, %s, %s, 'keyframe', 0, 0, 'prescreen_scan', %s, 'no_detection', %s, %s)
                 """, (
                     video_id, MODEL_NAME, MODEL_VERSION,
                     json.dumps({'scan_result': 'no_vehicles', 'persons_prescreened': person_count}),
@@ -601,7 +623,7 @@ def _store_multiframe_scan_marker(video_id: int, person_count: int, inference_ti
                     INSERT INTO ai_predictions
                         (video_id, model_name, model_version, prediction_type, confidence,
                          timestamp, scenario, predicted_tags, review_status, inference_time_ms, batch_id)
-                    VALUES (%s, %s, %s, 'keyframe', 0, 0, 'prescreen_scan', %s, 'auto_approved', %s, %s)
+                    VALUES (%s, %s, %s, 'keyframe', 0, 0, 'prescreen_scan', %s, 'no_detection', %s, %s)
                 """, (
                     video_id, MODEL_NAME, MODEL_VERSION,
                     json.dumps({
@@ -758,7 +780,7 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
                     'prediction_type': 'keyframe',
                     'confidence': round(confidence, 4),
                     'timestamp': 0.0,
-                    'scenario': 'infrastructure_detection' if class_name in INFRASTRUCTURE_CLASSES else 'vehicle_detection',
+                    'scenario': 'infrastructure_detection' if class_name in INFRASTRUCTURE_CLASSES else 'animal_detection' if class_name in ANIMAL_CLASSES else 'vehicle_detection',
                     'tags': {
                         'class': class_name,
                         'class_id': class_id,
@@ -1050,7 +1072,7 @@ def run_video_multiframe_detection(video_id: int, video_path: str, force_review:
                     'prediction_type': 'keyframe',
                     'confidence': round(confidence, 4),
                     'timestamp': round(timestamp, 2),
-                    'scenario': 'infrastructure_detection' if class_name in INFRASTRUCTURE_CLASSES else 'vehicle_detection',
+                    'scenario': 'infrastructure_detection' if class_name in INFRASTRUCTURE_CLASSES else 'animal_detection' if class_name in ANIMAL_CLASSES else 'vehicle_detection',
                     'tags': {
                         'class': class_name,
                         'class_id': class_id,

@@ -48,13 +48,19 @@ var ReviewApp = {
     currentConflictIndex: -1,
     selectedClassification: null,
 
+    // Draw mode state (multi-bbox annotation)
+    drawMode: false,
+    _drawState: { active: false, startX: 0, startY: 0, rect: null },
+    _addedBboxes: [],
+    _pendingDrawRect: null,
+
     // Known detection classes for reclassification
     knownClasses: [
         'sedan', 'pickup truck', 'SUV', 'minivan', 'van',
         'tractor', 'ATV', 'UTV', 'snowmobile', 'golf cart', 'skid loader', 'motorcycle', 'trailer',
         'bus', 'semi truck', 'dump truck', 'multiple_vehicles',
         'rowboat', 'fishing boat', 'speed boat', 'pontoon boat', 'kayak', 'canoe', 'sailboat', 'jet ski',
-        'person', 'animal', 'flag', 'tree', 'snow', 'roof'
+        'person', 'dog', 'deer', 'turkey', 'animal', 'flag', 'tree', 'snow', 'roof'
     ],
 
     // Review guidance descriptions per scenario
@@ -250,7 +256,7 @@ var ReviewApp = {
             'video-list', 'queue-summary', 'pending-count', 'video-count',
             'all-videos-card', 'all-videos-subtitle',
             'card-container', 'reject-sheet',
-            'approve-button', 'reject-button', 'skip-button', 'undo-button', 'bad-bbox-button',
+            'approve-button', 'reject-button', 'skip-button', 'undo-button', 'bad-bbox-button', 'add-bbox-button', 'draw-mode-banner', 'draw-mode-cancel',
             'review-back', 'queue-back', 'history-back', 'history-button',
             'review-menu', 'review-menu-dropdown', 'menu-hard-refresh', 'menu-reset-zoom', 'menu-copy-debug', 'menu-ai-feedback', 'ai-feedback-modal', 'feedback-context', 'feedback-text', 'feedback-close', 'feedback-cancel', 'feedback-submit',
             'metadata-strip', 'pred-class', 'pred-confidence', 'pred-model', 'review-guidance',
@@ -292,6 +298,16 @@ var ReviewApp = {
         if (this.els.badBboxButton) {
             this.els.badBboxButton.addEventListener('click', function() {
                 self.markBadBbox();
+            });
+        }
+        if (this.els.addBboxButton) {
+            this.els.addBboxButton.addEventListener('click', function() {
+                self.toggleDrawMode();
+            });
+        }
+        if (this.els.drawModeCancel) {
+            this.els.drawModeCancel.addEventListener('click', function() {
+                self.exitDrawMode();
             });
         }
         if (this.els.undoButton) {
@@ -478,6 +494,12 @@ var ReviewApp = {
             this.els.doneFeedback.addEventListener('click', function() {
                 self.finishRejectWithReasons();
             });
+        }
+
+        // Populate reject reason chips dynamically
+        var reasonsContainer = document.querySelector('.rejection-reasons');
+        if (reasonsContainer) {
+            reasonsContainer.appendChild(RejectReasons.buildChips('prediction'));
         }
 
         // Reject reason chips
@@ -3358,6 +3380,10 @@ var ReviewApp = {
             return;
         }
 
+        // Exit draw mode and clear added bboxes when card changes
+        this.exitDrawMode();
+        this._addedBboxes = [];
+
         // Reset zoom state immediately when card changes
         this._resetZoomImmediate();
 
@@ -3842,6 +3868,13 @@ var ReviewApp = {
             if (actionButtons) actionButtons.style.display = '';
             if (classifyChips) classifyChips.style.display = 'none';
         }
+
+        // Hide add-bbox button for modes that don't use standard prediction cards
+        var addBboxBtn = this.els.addBboxButton;
+        if (addBboxBtn) {
+            var hideAddBbox = this.crossCameraMode || this.clusterMode || this.classifyMode || this.conflictMode;
+            addBboxBtn.style.display = hideAddBbox ? 'none' : '';
+        }
     },
 
     createClassifyChips: function() {
@@ -4163,6 +4196,9 @@ var ReviewApp = {
         if (this.screen !== 'review') return;
         if (e.pointerType === 'mouse' && e.button !== 0) return;
 
+        // Draw mode intercept — route to draw handlers before swipe/zoom
+        if (this.drawMode) { this._onDrawPointerDown(e); return; }
+
         // Don't intercept clicks on buttons (e.g. Play Video)
         if (e.target.closest && e.target.closest('button, a, .cc-play-btn, .cc-timeline-wrap, .cc-correct-overlay, .cc-correct-bar, .cc-bbox-canvas')) return;
         if (e.target.tagName === 'BUTTON' || e.target.tagName === 'A') return;
@@ -4234,6 +4270,9 @@ var ReviewApp = {
     },
 
     onPointerMove: function(e) {
+        // Draw mode intercept
+        if (this.drawMode) { this._onDrawPointerMove(e); return; }
+
         // Update pointer position in map
         if (this.zoom.pointers.has(e.pointerId)) {
             this.zoom.pointers.set(e.pointerId, { x: e.clientX, y: e.clientY });
@@ -4369,6 +4408,9 @@ var ReviewApp = {
     },
 
     onPointerUp: function(e) {
+        // Draw mode intercept
+        if (this.drawMode) { this._onDrawPointerUp(e); return; }
+
         // Remove pointer from map
         this.zoom.pointers.delete(e.pointerId);
 
@@ -4749,34 +4791,21 @@ var ReviewApp = {
         if (!sheet) return;
         var reasonsContainer = sheet.querySelector('.rejection-reasons');
         if (reasonsContainer) {
-            reasonsContainer.innerHTML = '';
-            var reasons = [
-                { label: 'Not same vehicle', value: 'not_same_vehicle' },
-                { label: 'Person / object', value: 'person_object' },
-                { label: 'Bad quality', value: 'bad_quality' },
-                { label: 'Wrong time window', value: 'wrong_time' },
-                { label: 'Other', value: 'other' }
-            ];
+            while (reasonsContainer.firstChild) reasonsContainer.removeChild(reasonsContainer.firstChild);
+            reasonsContainer.appendChild(RejectReasons.buildChips('cross_camera'));
             var self = this;
-            for (var i = 0; i < reasons.length; i++) {
-                (function(r) {
-                    var chip = document.createElement('button');
-                    chip.className = 'reason-chip';
-                    chip.setAttribute('data-reason', r.value);
-                    chip.textContent = r.label;
-                    chip.addEventListener('click', function() {
-                        reasonsContainer.querySelectorAll('.reason-chip').forEach(function(c) { c.classList.remove('chip-selected'); });
-                        chip.classList.add('chip-selected');
-                        if (r.value === 'other') {
-                            if (self.els.otherInputContainer) self.els.otherInputContainer.classList.remove('hidden');
-                            if (self.els.otherInput) self.els.otherInput.focus();
-                        } else {
-                            if (self.els.otherInputContainer) self.els.otherInputContainer.classList.add('hidden');
-                        }
-                    });
-                    reasonsContainer.appendChild(chip);
-                })(reasons[i]);
-            }
+            reasonsContainer.querySelectorAll('.reason-chip').forEach(function(chip) {
+                chip.addEventListener('click', function() {
+                    reasonsContainer.querySelectorAll('.reason-chip').forEach(function(c) { c.classList.remove('chip-selected'); });
+                    chip.classList.add('chip-selected');
+                    if (chip.getAttribute('data-reason') === 'other') {
+                        if (self.els.otherInputContainer) self.els.otherInputContainer.classList.remove('hidden');
+                        if (self.els.otherInput) self.els.otherInput.focus();
+                    } else {
+                        if (self.els.otherInputContainer) self.els.otherInputContainer.classList.add('hidden');
+                    }
+                });
+            });
         }
         sheet.classList.add('open');
         // Store mode flag for done-feedback handler
@@ -6045,9 +6074,9 @@ var ReviewApp = {
         if (svg) {
             var invScale = 1 / this.zoom.scale;
             // Scale bbox outline stroke using CSS style (not attribute) to force repaint
-            var bboxRect = svg.querySelector('[data-bbox="outline"]');
-            if (bboxRect) {
-                bboxRect.style.strokeWidth = (2.5 * invScale);
+            var bboxRects = svg.querySelectorAll('[data-bbox="outline"], .bbox-added-rect');
+            for (var bi = 0; bi < bboxRects.length; bi++) {
+                bboxRects[bi].style.strokeWidth = (2.5 * invScale);
             }
             // Scale dim overlay opacity
             var dimRect = svg.querySelector('[data-bbox="dim"]');
@@ -6978,6 +7007,349 @@ var ReviewApp = {
             toast.classList.remove('visible');
             setTimeout(function() { if (toast.parentNode) toast.parentNode.removeChild(toast); }, 300);
         }, 2500);
+    },
+
+    // ===== Draw Mode (Multi-Bbox Annotation) =====
+
+    toggleDrawMode: function() {
+        if (this.drawMode) {
+            this.exitDrawMode();
+        } else {
+            this.enterDrawMode();
+        }
+    },
+
+    enterDrawMode: function() {
+        this._resetZoom();
+        this.drawMode = true;
+        this._drawState = { active: false, startX: 0, startY: 0, rect: null };
+        this._pendingDrawRect = null;
+
+        if (this.els.drawModeBanner) this.els.drawModeBanner.style.display = '';
+
+        var stage = document.querySelector('.card-stage');
+        if (stage) stage.classList.add('draw-mode-active');
+
+        var card = this.els.cardContainer ? this.els.cardContainer.querySelector('.review-card') : null;
+        if (card) {
+            var labels = card.querySelectorAll('.swipe-label');
+            for (var i = 0; i < labels.length; i++) labels[i].style.display = 'none';
+        }
+    },
+
+    exitDrawMode: function() {
+        if (!this.drawMode) return;
+        this.drawMode = false;
+        this._drawState = { active: false, startX: 0, startY: 0, rect: null };
+        this._pendingDrawRect = null;
+
+        if (this.els.drawModeBanner) this.els.drawModeBanner.style.display = 'none';
+
+        var stage = document.querySelector('.card-stage');
+        if (stage) stage.classList.remove('draw-mode-active');
+
+        var svg = this.els.cardContainer ? this.els.cardContainer.querySelector('.bbox-overlay') : null;
+        if (svg) {
+            var preview = svg.querySelector('.bbox-draw-preview');
+            if (preview) preview.remove();
+        }
+
+        var card = this.els.cardContainer ? this.els.cardContainer.querySelector('.review-card') : null;
+        if (card) {
+            var labels = card.querySelectorAll('.swipe-label');
+            for (var i = 0; i < labels.length; i++) labels[i].style.display = '';
+        }
+
+        this.hideRejectSheet();
+    },
+
+    _clientToSvgPoint: function(svg, clientX, clientY) {
+        var pt = svg.createSVGPoint();
+        pt.x = clientX;
+        pt.y = clientY;
+        var ctm = svg.getScreenCTM();
+        if (!ctm) return { x: 0, y: 0 };
+        var svgPt = pt.matrixTransform(ctm.inverse());
+        return { x: svgPt.x, y: svgPt.y };
+    },
+
+    _onDrawPointerDown: function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        var svg = this.els.cardContainer ? this.els.cardContainer.querySelector('.bbox-overlay') : null;
+        if (!svg) return;
+
+        var pt = this._clientToSvgPoint(svg, e.clientX, e.clientY);
+
+        var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.classList.add('bbox-draw-preview');
+        rect.setAttribute('x', pt.x);
+        rect.setAttribute('y', pt.y);
+        rect.setAttribute('width', 0);
+        rect.setAttribute('height', 0);
+        svg.appendChild(rect);
+
+        this._drawState = {
+            active: true,
+            startX: pt.x,
+            startY: pt.y,
+            rect: rect,
+            svg: svg
+        };
+
+        if (this.els.cardContainer && this.els.cardContainer.setPointerCapture) {
+            this.els.cardContainer.setPointerCapture(e.pointerId);
+        }
+    },
+
+    _onDrawPointerMove: function(e) {
+        if (!this._drawState.active || !this._drawState.rect) return;
+        e.preventDefault();
+        e.stopPropagation();
+
+        var pt = this._clientToSvgPoint(this._drawState.svg, e.clientX, e.clientY);
+        var x = Math.min(this._drawState.startX, pt.x);
+        var y = Math.min(this._drawState.startY, pt.y);
+        var w = Math.abs(pt.x - this._drawState.startX);
+        var h = Math.abs(pt.y - this._drawState.startY);
+
+        this._drawState.rect.setAttribute('x', x);
+        this._drawState.rect.setAttribute('y', y);
+        this._drawState.rect.setAttribute('width', w);
+        this._drawState.rect.setAttribute('height', h);
+    },
+
+    _onDrawPointerUp: function(e) {
+        if (!this._drawState.active) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this._drawState.active = false;
+
+        var rect = this._drawState.rect;
+        var svg = this._drawState.svg;
+        if (!rect || !svg) return;
+
+        var x = parseFloat(rect.getAttribute('x'));
+        var y = parseFloat(rect.getAttribute('y'));
+        var w = parseFloat(rect.getAttribute('width'));
+        var h = parseFloat(rect.getAttribute('height'));
+
+        var vb = svg.getAttribute('viewBox');
+        if (vb) {
+            var parts = vb.split(/\s+/);
+            var vbW = parseFloat(parts[2]) || 1;
+            var vbH = parseFloat(parts[3]) || 1;
+            if (w < vbW * 0.02 || h < vbH * 0.02) {
+                rect.remove();
+                return;
+            }
+        }
+
+        this._pendingDrawRect = { x: x, y: y, w: w, h: h };
+        this.showAddBboxClassSheet();
+    },
+
+    showAddBboxClassSheet: function() {
+        if (!this.els.rejectSheet) return;
+        var self = this;
+
+        // Clear sheet using DOM methods (same pattern as showRejectSheet)
+        while (this.els.rejectSheet.firstChild) this.els.rejectSheet.removeChild(this.els.rejectSheet.firstChild);
+        var grabber = document.createElement('div');
+        grabber.className = 'sheet-grabber';
+        this.els.rejectSheet.appendChild(grabber);
+
+        var container = document.createElement('div');
+        container.className = 'reclassify-sheet';
+
+        var header = document.createElement('div');
+        header.className = 'add-bbox-sheet-header';
+        header.textContent = 'What is in this box?';
+        container.appendChild(header);
+
+        // Camera-specific frequent classes
+        if (this.cameraTopClasses && this.cameraTopClasses.length > 0) {
+            var frequentSection = document.createElement('div');
+            frequentSection.className = 'reclassify-section';
+            var frequentLabel = document.createElement('div');
+            frequentLabel.className = 'reclassify-section-label';
+            frequentLabel.textContent = 'Common for this camera';
+            frequentSection.appendChild(frequentLabel);
+            var frequentChips = document.createElement('div');
+            frequentChips.className = 'reclassify-chips';
+            for (var i = 0; i < Math.min(6, this.cameraTopClasses.length); i++) {
+                frequentChips.appendChild(this._createAddBboxChip(this.cameraTopClasses[i], true));
+            }
+            frequentSection.appendChild(frequentChips);
+            container.appendChild(frequentSection);
+        }
+
+        // Search input
+        var searchSection = document.createElement('div');
+        searchSection.className = 'reclassify-section';
+        var searchInput = document.createElement('input');
+        searchInput.type = 'text';
+        searchInput.className = 'reclassify-search';
+        searchInput.placeholder = 'Search classes...';
+        searchInput.addEventListener('input', function(e) {
+            var query = e.target.value.toLowerCase();
+            var allChips = container.querySelectorAll('.add-bbox-all-chips .reclassify-chip');
+            for (var j = 0; j < allChips.length; j++) {
+                var text = allChips[j].textContent.toLowerCase();
+                allChips[j].style.display = text.indexOf(query) >= 0 ? '' : 'none';
+            }
+        });
+        searchInput.addEventListener('focus', function() {
+            var sheet = self.els.rejectSheet;
+            if (sheet && window.visualViewport) {
+                var onResize = function() {
+                    var offsetY = window.innerHeight - window.visualViewport.height - window.visualViewport.offsetTop;
+                    sheet.style.bottom = offsetY + 'px';
+                    setTimeout(function() { searchInput.scrollIntoView({ block: 'center', behavior: 'smooth' }); }, 100);
+                };
+                window.visualViewport.addEventListener('resize', onResize);
+                searchInput._vvCleanup = function() {
+                    window.visualViewport.removeEventListener('resize', onResize);
+                    sheet.style.bottom = '';
+                };
+            }
+        });
+        searchInput.addEventListener('blur', function() {
+            if (searchInput._vvCleanup) { searchInput._vvCleanup(); searchInput._vvCleanup = null; }
+        });
+        searchSection.appendChild(searchInput);
+        container.appendChild(searchSection);
+
+        // All classes
+        var allSection = document.createElement('div');
+        allSection.className = 'reclassify-section';
+        var allLabel = document.createElement('div');
+        allLabel.className = 'reclassify-section-label';
+        allLabel.textContent = 'All classes';
+        allSection.appendChild(allLabel);
+
+        var allChipsDiv = document.createElement('div');
+        allChipsDiv.className = 'reclassify-all-classes add-bbox-all-chips';
+
+        var allClasses = (this.reclassifyClasses && this.reclassifyClasses.length > 0) ? this.reclassifyClasses : this.knownClasses;
+        var chipsContainer = document.createElement('div');
+        chipsContainer.className = 'reclassify-chips';
+        for (var k = 0; k < allClasses.length; k++) {
+            chipsContainer.appendChild(this._createAddBboxChip(allClasses[k], false));
+        }
+        allChipsDiv.appendChild(chipsContainer);
+        allSection.appendChild(allChipsDiv);
+        container.appendChild(allSection);
+
+        // Cancel button
+        var cancelBtn = document.createElement('button');
+        cancelBtn.className = 'reclassify-quick-btn';
+        cancelBtn.textContent = 'Cancel';
+        cancelBtn.style.marginTop = '12px';
+        cancelBtn.addEventListener('mousedown', function(e) { e.preventDefault(); });
+        cancelBtn.addEventListener('click', function() {
+            var svg = self.els.cardContainer ? self.els.cardContainer.querySelector('.bbox-overlay') : null;
+            if (svg) {
+                var preview = svg.querySelector('.bbox-draw-preview');
+                if (preview) preview.remove();
+            }
+            self._pendingDrawRect = null;
+            self.hideRejectSheet();
+        });
+        container.appendChild(cancelBtn);
+
+        this.els.rejectSheet.appendChild(container);
+        this.els.rejectSheet.classList.add('sheet-visible');
+    },
+
+    _createAddBboxChip: function(className, isFrequent) {
+        var self = this;
+        var chip = document.createElement('button');
+        chip.className = 'reclassify-chip' + (isFrequent ? ' frequent' : '');
+        chip.textContent = className;
+        chip.addEventListener('mousedown', function(e) { e.preventDefault(); });
+        chip.addEventListener('click', function() {
+            self._confirmAddBbox(className);
+        });
+        return chip;
+    },
+
+    _confirmAddBbox: function(className) {
+        var pendingRect = this._pendingDrawRect;
+        if (!pendingRect) return;
+
+        var svg = this.els.cardContainer ? this.els.cardContainer.querySelector('.bbox-overlay') : null;
+        if (!svg) return;
+
+        var preview = svg.querySelector('.bbox-draw-preview');
+        if (preview) preview.remove();
+
+        var permRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        permRect.classList.add('bbox-added-rect');
+        permRect.setAttribute('x', pendingRect.x);
+        permRect.setAttribute('y', pendingRect.y);
+        permRect.setAttribute('width', pendingRect.w);
+        permRect.setAttribute('height', pendingRect.h);
+        svg.appendChild(permRect);
+
+        var label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        label.classList.add('bbox-added-label');
+        label.setAttribute('x', pendingRect.x + 4);
+        label.setAttribute('y', pendingRect.y - 4);
+        label.setAttribute('font-size', '12');
+        label.textContent = className;
+        svg.appendChild(label);
+
+        var entry = {
+            x: Math.round(pendingRect.x),
+            y: Math.round(pendingRect.y),
+            w: Math.round(pendingRect.w),
+            h: Math.round(pendingRect.h),
+            className: className,
+            annotationId: null
+        };
+        this._addedBboxes.push(entry);
+
+        var pred = this.predictions[this.currentIndex];
+        if (pred) {
+            this._saveAddedBbox(pred, entry);
+        }
+
+        this._pendingDrawRect = null;
+        this.hideRejectSheet();
+    },
+
+    _saveAddedBbox: function(pred, bboxEntry) {
+        var videoId = pred.video_id;
+        if (!videoId) return;
+
+        var payload = {
+            bbox_x: bboxEntry.x,
+            bbox_y: bboxEntry.y,
+            bbox_width: bboxEntry.w,
+            bbox_height: bboxEntry.h,
+            activity_tag: bboxEntry.className,
+            timestamp: 0,
+            source: 'reviewer_added',
+            source_prediction_id: pred.id,
+            reviewed: true
+        };
+
+        fetch('/api/videos/' + videoId + '/keyframe-annotations', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        })
+        .then(function(resp) { return resp.json(); })
+        .then(function(data) {
+            if (data.success && data.annotation_id) {
+                bboxEntry.annotationId = data.annotation_id;
+            }
+        })
+        .catch(function(err) {
+            console.error('Failed to save added bbox:', err);
+        });
     }
 };
 

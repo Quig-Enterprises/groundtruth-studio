@@ -93,7 +93,9 @@ def add_keyframe_annotation(video_id):
         moment_tag=data.get('moment_tag'),
         is_negative=data.get('is_negative', False),
         comment=data.get('comment'),
-        reviewed=data.get('reviewed', True)
+        reviewed=data.get('reviewed', True),
+        source=data.get('source'),
+        source_prediction_id=data.get('source_prediction_id')
     )
 
     return jsonify({'success': True, 'annotation_id': annotation_id})

@@ -181,13 +181,6 @@
         <div class="sheet-grabber"></div>
         <div class="sheet-heading">Correct Bbox — drag to reposition</div>
         <div class="issue-reasons">
-            <button class="reason-chip" data-reason="bbox_misaligned">BBox misaligned</button>
-            <button class="reason-chip" data-reason="bbox_too_large">BBox too large</button>
-            <button class="reason-chip" data-reason="bbox_too_small">BBox too small</button>
-            <button class="reason-chip" data-reason="wrong_class">Wrong classification</button>
-            <button class="reason-chip" data-reason="track_split">Track should be merged</button>
-            <button class="reason-chip" data-reason="false_positive">Not a real object</button>
-            <button class="reason-chip" data-reason="other">Other</button>
         </div>
         <input type="text" id="issue-other-input" class="input-field" placeholder="Describe the issue..." style="display:none; margin-bottom: 12px;">
         <div class="correction-actions">
@@ -202,6 +195,7 @@
         <p id="loading-text">Analyzing clip...</p>
     </div>
 
+    <script src="{{ static_v('js/shared-reject-reasons.js') }}"></script>
     <script src="{{ static_v('js/clip-analysis.js') }}"></script>
 </body>
 </html>

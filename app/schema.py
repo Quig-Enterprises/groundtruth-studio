@@ -803,6 +803,26 @@ CREATE INDEX IF NOT EXISTS idx_identity_docs_identity ON identity_documents(iden
 CREATE INDEX IF NOT EXISTS idx_identity_docs_scan ON identity_documents(document_scan_id);
 CREATE INDEX IF NOT EXISTS idx_identity_docs_number ON identity_documents(document_number);
 CREATE INDEX IF NOT EXISTS idx_identity_docs_holder ON identity_documents(holder_name);
+
+-- PTZ calibration reference points (self-calibrating targeting)
+CREATE TABLE IF NOT EXISTS ptz_calibration_points (
+    id BIGSERIAL PRIMARY KEY,
+    source_camera_id TEXT NOT NULL,
+    target_camera_id TEXT NOT NULL,
+    source_bbox_x REAL NOT NULL,
+    source_bbox_y REAL NOT NULL,
+    estimated_pan REAL,
+    estimated_tilt REAL,
+    actual_pan REAL NOT NULL,
+    actual_tilt REAL NOT NULL,
+    label TEXT,
+    confirmed_by TEXT,
+    error_pan REAL GENERATED ALWAYS AS (actual_pan - estimated_pan) STORED,
+    error_tilt REAL GENERATED ALWAYS AS (actual_tilt - estimated_tilt) STORED,
+    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+CREATE INDEX IF NOT EXISTS idx_ptz_cal_pair
+    ON ptz_calibration_points(source_camera_id, target_camera_id);
 """
 
 
@@ -860,7 +880,9 @@ def verify_schema():
         'identities', 'embeddings', 'associations', 'tracks', 'sightings',
         'camera_topology_learned', 'violations', 'visits', 'prediction_groups',
         'camera_object_tracks', 'cross_camera_links', 'camera_crossing_lines',
-        'video_tracks', 'clip_analysis_results'
+        'video_tracks', 'clip_analysis_results',
+        'camera_overlap_groups', 'camera_sync_selections',
+        'ptz_calibration_points'
     ]
 
     with get_cursor(commit=False) as cursor:
@@ -1435,6 +1457,19 @@ def run_migrations():
                 """)
             logger.info("Camera map placement columns ready")
 
+            # Migration: Add ONVIF credentials to camera_locations
+            onvif_columns = [
+                ("onvif_host", "TEXT"),
+                ("onvif_port", "INTEGER DEFAULT 80"),
+                ("onvif_username", "TEXT"),
+                ("onvif_password", "TEXT"),
+            ]
+            for col_name, col_type in onvif_columns:
+                cursor.execute(f"""
+                    ALTER TABLE camera_locations ADD COLUMN IF NOT EXISTS {col_name} {col_type}
+                """)
+            logger.info("ONVIF credential columns ready")
+
             # Migration: Create camera_aliases table
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS camera_aliases (
@@ -1524,6 +1559,22 @@ def run_migrations():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_model_deployments_status ON model_deployments(status)")
             logger.info("Model deployments table ready")
 
+            # Migration: Rename 'auto_approved' to 'no_detection' for scan markers
+            cursor.execute("""
+                ALTER TABLE ai_predictions DROP CONSTRAINT IF EXISTS ai_predictions_review_status_check
+            """)
+            cursor.execute("""
+                ALTER TABLE ai_predictions ADD CONSTRAINT ai_predictions_review_status_check
+                CHECK (review_status IN ('pending', 'approved', 'rejected', 'needs_correction',
+                                         'auto_approved', 'auto_rejected', 'processing',
+                                         'needs_reclassification', 'no_detection'))
+            """)
+            cursor.execute("""
+                UPDATE ai_predictions SET review_status = 'no_detection'
+                WHERE review_status = 'auto_approved' AND scenario = 'prescreen_scan'
+            """)
+            logger.info("Renamed scan marker status to 'no_detection'")
+
             # Migration: Document scanning and identity document tables
             cursor.execute("""
                 CREATE TABLE IF NOT EXISTS document_scans (
@@ -1571,6 +1622,68 @@ def run_migrations():
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_identity_docs_number ON identity_documents(document_number)")
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_identity_docs_holder ON identity_documents(holder_name)")
             logger.info("Identity documents table ready")
+
+            # Migration: Camera Sync tables (overlap groups and bbox selections)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS camera_overlap_groups (
+                    id SERIAL PRIMARY KEY,
+                    group_name TEXT NOT NULL,
+                    description TEXT,
+                    is_auto_computed BOOLEAN DEFAULT TRUE,
+                    manual_override BOOLEAN DEFAULT FALSE,
+                    camera_ids TEXT[] NOT NULL,
+                    overlap_scores JSONB DEFAULT '{}',
+                    computed_at TIMESTAMP,
+                    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    updated_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_overlap_groups_name ON camera_overlap_groups(group_name)")
+            logger.info("Camera overlap groups table ready")
+
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS camera_sync_selections (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_camera_id TEXT NOT NULL,
+                    group_id INTEGER REFERENCES camera_overlap_groups(id) ON DELETE SET NULL,
+                    bbox_x REAL NOT NULL,
+                    bbox_y REAL NOT NULL,
+                    bbox_width REAL NOT NULL,
+                    bbox_height REAL NOT NULL,
+                    frame_width INTEGER,
+                    frame_height INTEGER,
+                    thumbnail_path TEXT,
+                    label TEXT,
+                    metadata JSONB DEFAULT '{}',
+                    created_by TEXT,
+                    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sync_selections_camera ON camera_sync_selections(source_camera_id)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_sync_selections_group ON camera_sync_selections(group_id)")
+            logger.info("Camera sync selections table ready")
+
+            # Migration: PTZ calibration reference points table
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS ptz_calibration_points (
+                    id BIGSERIAL PRIMARY KEY,
+                    source_camera_id TEXT NOT NULL,
+                    target_camera_id TEXT NOT NULL,
+                    source_bbox_x REAL NOT NULL,
+                    source_bbox_y REAL NOT NULL,
+                    estimated_pan REAL,
+                    estimated_tilt REAL,
+                    actual_pan REAL NOT NULL,
+                    actual_tilt REAL NOT NULL,
+                    label TEXT,
+                    confirmed_by TEXT,
+                    error_pan REAL GENERATED ALWAYS AS (actual_pan - estimated_pan) STORED,
+                    error_tilt REAL GENERATED ALWAYS AS (actual_tilt - estimated_tilt) STORED,
+                    created_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            """)
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ptz_cal_pair ON ptz_calibration_points(source_camera_id, target_camera_id)")
+            logger.info("PTZ calibration points table ready")
 
         logger.info("Migrations completed successfully")
     except Exception as e:

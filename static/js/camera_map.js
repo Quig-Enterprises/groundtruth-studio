@@ -503,6 +503,16 @@
 
         if (CAN_WRITE) showRotationHandle(entry);
 
+        // Live feed link
+        var feedLinkDiv = document.getElementById('detail-feed-link');
+        var feedLink = document.getElementById('feed-link');
+        if (feedLinkDiv && d.camera_id && !d.camera_id.startsWith('manual-')) {
+            feedLink.href = 'https://frigate.ecoeyetech.com/#/cameras/' + encodeURIComponent(d.camera_id);
+            feedLinkDiv.style.display = 'block';
+        } else if (feedLinkDiv) {
+            feedLinkDiv.style.display = 'none';
+        }
+
         // Fetch camera preview
         var previewDiv = document.getElementById('detail-preview');
         var previewImg = document.getElementById('preview-img');

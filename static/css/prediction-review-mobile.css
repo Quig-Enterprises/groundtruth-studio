@@ -2537,3 +2537,99 @@ body {
     font-size: 14px;
     font-weight: 600;
 }
+
+/* ===== Draw Mode (Multi-Bbox Annotation) ===== */
+
+/* Add bbox button - matches skip-button sizing */
+.add-bbox-button {
+    width: 44px;
+    height: 44px;
+    background: var(--color-surface);
+    border: 2px solid var(--color-teal);
+}
+.add-bbox-button svg {
+    color: var(--color-teal-light);
+}
+
+/* Draw mode banner */
+.draw-mode-banner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 110;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: calc(var(--safe-top) + 10px) 16px 10px;
+    background: linear-gradient(to bottom, rgba(13, 148, 136, 0.92), rgba(13, 148, 136, 0.75));
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
+}
+.draw-mode-banner-text {
+    font-size: 15px;
+    font-weight: 600;
+    color: #fff;
+}
+.draw-mode-cancel-btn {
+    background: rgba(255,255,255,0.2);
+    border: none;
+    color: #fff;
+    padding: 6px 16px;
+    border-radius: 16px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+}
+.draw-mode-cancel-btn:active {
+    background: rgba(255,255,255,0.35);
+}
+
+/* Rubber-band preview rect while drawing */
+.bbox-draw-preview {
+    fill: rgba(13, 148, 136, 0.15);
+    stroke: var(--color-teal-light);
+    stroke-width: 2;
+    stroke-dasharray: 6 3;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+}
+
+/* Saved additional bbox rects */
+.bbox-added-rect {
+    fill: none;
+    stroke: var(--color-teal-light);
+    stroke-width: 2;
+    stroke-dasharray: 5 3;
+    vector-effect: non-scaling-stroke;
+    pointer-events: none;
+}
+
+/* Class label on added bboxes */
+.bbox-added-label {
+    fill: var(--color-teal-light);
+    font-size: 12px;
+    font-weight: 600;
+    pointer-events: none;
+}
+
+/* "What is in this box?" header in class sheet */
+.add-bbox-sheet-header {
+    font-size: 18px;
+    font-weight: 600;
+    text-align: center;
+    margin-bottom: 16px;
+    color: var(--color-teal-light);
+}
+
+/* Draw mode cursor on card stage */
+.card-stage.draw-mode-active {
+    cursor: crosshair;
+}
+.card-stage.draw-mode-active .review-card {
+    cursor: crosshair;
+}
+.card-stage.draw-mode-active .bbox-overlay {
+    pointer-events: auto;
+    cursor: crosshair;
+}

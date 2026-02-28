@@ -89,16 +89,19 @@ class AnnotationMixin:
     def add_keyframe_annotation(self, video_id: int, timestamp: float,
                                bbox_x: int, bbox_y: int, bbox_width: int, bbox_height: int,
                                activity_tag: str = None, moment_tag: str = None,
-                               is_negative: bool = False, comment: str = None, reviewed: bool = True) -> int:
+                               is_negative: bool = False, comment: str = None, reviewed: bool = True,
+                               source: str = None, source_prediction_id: int = None) -> int:
         with get_cursor() as cursor:
             cursor.execute('''
                 INSERT INTO keyframe_annotations
                 (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
-                 activity_tag, moment_tag, is_negative, comment, reviewed)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                 activity_tag, moment_tag, is_negative, comment, reviewed,
+                 source, source_prediction_id)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 RETURNING id
             ''', (video_id, timestamp, bbox_x, bbox_y, bbox_width, bbox_height,
-                  activity_tag, moment_tag, is_negative, comment, reviewed))
+                  activity_tag, moment_tag, is_negative, comment, reviewed,
+                  source, source_prediction_id))
             result = cursor.fetchone()
             return result['id']
 

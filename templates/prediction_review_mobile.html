@@ -141,6 +141,11 @@
             </div>
         </div>
 
+        <div id="draw-mode-banner" class="draw-mode-banner" style="display:none;">
+            <span class="draw-mode-banner-text">Draw a box around the object</span>
+            <button class="draw-mode-cancel-btn" id="draw-mode-cancel">Cancel</button>
+        </div>
+
         <div class="card-stage">
             <div id="card-container">
                 <!-- Cards will be inserted here by JS -->
@@ -171,6 +176,13 @@
                 <button class="action-button skip-button" id="skip-button">
                     <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round">
                         <path d="M5 12h14M13 5l7 7-7 7"/>
+                    </svg>
+                </button>
+
+                <button class="action-button add-bbox-button" id="add-bbox-button" title="Draw additional bounding box">
+                    <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                        <rect x="3" y="3" width="18" height="18" rx="2" stroke-dasharray="4 2"/>
+                        <path d="M12 8v8M8 12h8"/>
                     </svg>
                 </button>
 
@@ -216,12 +228,6 @@
         <h3 class="sheet-heading">What was wrong?</h3>
 
         <div class="rejection-reasons">
-            <button class="reason-chip" data-reason="wrong_location">Wrong location</button>
-            <button class="reason-chip" data-reason="bad_size">Bad size</button>
-            <button class="reason-chip" data-reason="wrong_class">Wrong class</button>
-            <button class="reason-chip" data-reason="false_positive">False positive</button>
-            <button class="reason-chip" data-reason="missed_detection">Missed detection</button>
-            <button class="reason-chip" data-reason="other">Other</button>
         </div>
 
         <div class="other-input-container hidden" id="other-input-container">
@@ -354,6 +360,7 @@
     </div>
 
     <script src="{{ static_v('js/shared-class-search.js') }}"></script>
+    <script src="{{ static_v('js/shared-reject-reasons.js') }}"></script>
     <script src="{{ static_v('js/prediction-review-mobile.js') }}"></script>
 </body>
 </html>

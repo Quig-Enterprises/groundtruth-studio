@@ -3,7 +3,14 @@ from flask import Blueprint, request, jsonify, render_template, send_file, g
 from pathlib import Path
 from db_connection import get_cursor
 from services import db, THUMBNAIL_DIR, BASE_DIR
+import json
 import logging
+import base64
+import sys
+import requests as http_requests
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'worker'))
+from color_hist import compute_color_hist, hist_intersection
 
 training_gallery_bp = Blueprint('training_gallery', __name__)
 logger = logging.getLogger(__name__)
@@ -30,6 +37,8 @@ def get_gallery_filters():
 
         if status_param == 'pending':
             status_list = ('pending', 'processing')
+        elif status_param == 'rejected':
+            status_list = ('rejected', 'auto_rejected')
         else:
             status_list = ('approved', 'auto_approved')
 
@@ -102,12 +111,39 @@ def get_gallery_filters():
             ''', tuple(camera_params))
             pending_count = cursor.fetchone()['cnt']
 
+            # Rejected count for badge
+            cursor.execute(f'''
+                SELECT COUNT(*) AS cnt
+                FROM ai_predictions p
+                {camera_join}
+                WHERE p.review_status IN ('rejected', 'auto_rejected')
+                  {camera_filter}
+            ''', tuple(camera_params))
+            rejected_count = cursor.fetchone()['cnt']
+
+            # Reject reason breakdown (for reason filter in rejected mode)
+            reject_reasons = []
+            if status_param == 'rejected':
+                cursor.execute(f'''
+                    SELECT COALESCE(p.corrected_tags->>'actual_class', '') AS reason,
+                           COUNT(*) AS count
+                    FROM ai_predictions p
+                    {camera_join}
+                    WHERE p.review_status IN ('rejected', 'auto_rejected')
+                      {camera_filter}
+                    GROUP BY reason
+                    ORDER BY count DESC
+                ''', tuple(camera_params))
+                reject_reasons = [dict(row) for row in cursor.fetchall()]
+
         return jsonify({
             'success': True,
             'scenarios': scenarios,
             'classifications': classifications,
             'all_classes': all_classes,
-            'pending_count': pending_count
+            'pending_count': pending_count,
+            'rejected_count': rejected_count,
+            'reject_reasons': reject_reasons
         })
 
     except Exception as e:
@@ -197,6 +233,93 @@ def get_gallery_items():
 
             count_query = f'SELECT COUNT(*) AS total FROM ({pending_query}) AS counted'
             paginated_query = pending_query + ' LIMIT %s OFFSET %s'
+
+            with get_cursor(commit=False) as cursor:
+                cursor.execute(count_query, filter_params)
+                total = cursor.fetchone()['total']
+                cursor.execute(paginated_query, filter_params + [per_page, offset])
+                rows = cursor.fetchall()
+
+            items = []
+            for row in rows:
+                item = dict(row)
+                if item.get('created_at'):
+                    item['created_at'] = item['created_at'].isoformat()
+                if item.get('confidence') is not None:
+                    item['confidence'] = float(item['confidence'])
+                item['crop_url'] = f'/api/training-gallery/crop/{item["id"]}'
+                items.append(item)
+
+            pages = (total + per_page - 1) // per_page if per_page > 0 else 1
+            return jsonify({
+                'success': True,
+                'items': items,
+                'total': total,
+                'page': page,
+                'pages': pages,
+            })
+
+        # ── Rejected mode: flat query, no clustering, include reject reason ──
+        elif status_mode == 'rejected':
+            scenario_join = ''
+            if scenario:
+                scenario_join = 'JOIN classification_classes cc ON cc.name = p.classification'
+
+            camera_filter = ''
+            if camera:
+                camera_filter = ' AND v.camera_id = %s'
+                filter_params.append(camera)
+
+            # Reject reason multi-filter (__none__ sentinel = no reason set)
+            reject_reasons_param = request.args.get('reject_reasons', '')
+            reason_filter = ''
+            if reject_reasons_param:
+                reason_list = [r.strip() for r in reject_reasons_param.split(',') if r.strip()]
+                if reason_list:
+                    has_none = '__none__' in reason_list
+                    named_reasons = [r for r in reason_list if r != '__none__']
+                    reason_parts = []
+                    if named_reasons:
+                        reason_parts.append("p.corrected_tags->>'actual_class' IN %s")
+                        filter_params.append(tuple(named_reasons))
+                    if has_none:
+                        reason_parts.append("(p.corrected_tags->>'actual_class' IS NULL OR p.corrected_tags->>'actual_class' = '')")
+                    if reason_parts:
+                        reason_filter = ' AND (' + ' OR '.join(reason_parts) + ')'
+
+            rejected_query = f'''
+                SELECT
+                    NULL::text AS cluster_type,
+                    NULL::text AS cluster_id,
+                    1::bigint AS cluster_count,
+                    p.id,
+                    p.classification,
+                    p.confidence,
+                    p.bbox_x,
+                    p.bbox_y,
+                    p.bbox_width,
+                    p.bbox_height,
+                    p.video_id,
+                    p.scenario,
+                    p.created_at,
+                    v.thumbnail_path,
+                    v.width AS video_width,
+                    v.height AS video_height,
+                    v.camera_id,
+                    p.corrected_tags->>'actual_class' AS reject_reason,
+                    p.review_notes
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                {scenario_join}
+                WHERE p.review_status IN ('rejected', 'auto_rejected')
+                  {filter_sql}
+                  {camera_filter}
+                  {reason_filter}
+                ORDER BY {order_by}
+            '''
+
+            count_query = f'SELECT COUNT(*) AS total FROM ({rejected_query}) AS counted'
+            paginated_query = rejected_query + ' LIMIT %s OFFSET %s'
 
             with get_cursor(commit=False) as cursor:
                 cursor.execute(count_query, filter_params)
@@ -488,6 +611,12 @@ def get_cluster_items(cluster_type, cluster_id):
         if cluster_type not in ('track', 'group'):
             return jsonify({'success': False, 'error': 'cluster_type must be track or group'}), 400
 
+        status_mode = request.args.get('status', 'approved')
+        if status_mode == 'rejected':
+            status_filter = ('rejected', 'auto_rejected')
+        else:
+            status_filter = ('approved', 'auto_approved')
+
         with get_cursor(commit=False) as cursor:
             if cluster_type == 'track':
                 cursor.execute('''
@@ -495,26 +624,28 @@ def get_cluster_items(cluster_type, cluster_id):
                            p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
                            p.video_id, p.scenario, p.created_at, p.review_status,
                            v.thumbnail_path, v.width AS video_width, v.height AS video_height,
-                           v.camera_id
+                           v.camera_id,
+                           p.corrected_tags->>'actual_class' AS reject_reason
                     FROM ai_predictions p
                     JOIN videos v ON p.video_id = v.id
                     WHERE p.camera_object_track_id = %s
-                      AND p.review_status IN ('approved', 'auto_approved')
+                      AND p.review_status IN %s
                     ORDER BY p.confidence DESC
-                ''', (cluster_id,))
+                ''', (cluster_id, status_filter))
             else:
                 cursor.execute('''
                     SELECT p.id, p.classification, p.confidence,
                            p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
                            p.video_id, p.scenario, p.created_at, p.review_status,
                            v.thumbnail_path, v.width AS video_width, v.height AS video_height,
-                           v.camera_id
+                           v.camera_id,
+                           p.corrected_tags->>'actual_class' AS reject_reason
                     FROM ai_predictions p
                     JOIN videos v ON p.video_id = v.id
                     WHERE p.prediction_group_id = %s
-                      AND p.review_status IN ('approved', 'auto_approved')
+                      AND p.review_status IN %s
                     ORDER BY p.confidence DESC
-                ''', (cluster_id,))
+                ''', (cluster_id, status_filter))
 
             rows = cursor.fetchall()
 
@@ -548,6 +679,8 @@ def get_gallery_cameras():
         status_mode = request.args.get('status', 'pending')
         if status_mode == 'pending':
             status_list = ('pending', 'processing')
+        elif status_mode == 'rejected':
+            status_list = ('rejected', 'auto_rejected')
         else:
             status_list = ('approved', 'auto_approved')
 
@@ -585,8 +718,8 @@ def bulk_gallery_action():
         new_classification = data.get('new_classification')
         actual_class = data.get('actual_class')
 
-        if action not in ('reclassify', 'requeue', 'remove', 'approve'):
-            return jsonify({'success': False, 'error': 'action must be reclassify, requeue, remove, or approve'}), 400
+        if action not in ('reclassify', 'requeue', 'remove', 'approve', 'update_reason'):
+            return jsonify({'success': False, 'error': 'action must be reclassify, requeue, remove, approve, or update_reason'}), 400
 
         if not prediction_ids or not isinstance(prediction_ids, list):
             return jsonify({'success': False, 'error': 'prediction_ids array required'}), 400
@@ -659,6 +792,18 @@ def bulk_gallery_action():
                             reviewed_at = NOW()
                         WHERE id = ANY(%s)
                     ''', (prediction_ids,))
+                affected = cursor.rowcount
+
+            elif action == 'update_reason':
+                new_reason = data.get('new_reason')
+                if not new_reason:
+                    return jsonify({'success': False, 'error': 'new_reason required for update_reason action'}), 400
+                cursor.execute('''
+                    UPDATE ai_predictions
+                    SET corrected_tags = COALESCE(corrected_tags, '{}'::jsonb)
+                        || jsonb_build_object('actual_class', %s)
+                    WHERE id = ANY(%s)
+                ''', (new_reason, prediction_ids))
                 affected = cursor.rowcount
 
         # Create training annotations for approved predictions
@@ -743,9 +888,9 @@ def get_prediction_crop(prediction_id):
             bw = int((row['bbox_width'] or 0) * scale_x)
             bh = int((row['bbox_height'] or 0) * scale_y)
 
-            # Add 10% padding
-            pad_x = int(bw * 0.1)
-            pad_y = int(bh * 0.1)
+            # Add 3% padding (tight crop for better embeddings)
+            pad_x = int(bw * 0.03)
+            pad_y = int(bh * 0.03)
             left = max(0, bx - pad_x)
             top = max(0, by - pad_y)
             right = min(thumb_w, bx + bw + pad_x)
@@ -817,3 +962,255 @@ def get_prediction_full_image(prediction_id):
     except Exception as e:
         logger.error(f'Failed to generate full image for prediction {prediction_id}: {e}')
         return jsonify({'error': 'Failed to generate image'}), 500
+
+
+FASTREID_URL = 'http://localhost:5061'
+SIMILARITY_LIMIT = 200  # max items to return in similarity results
+SIMILARITY_THRESHOLD = 0.55  # minimum cosine similarity to include in results
+
+
+@training_gallery_bp.route('/api/training-gallery/similar/<int:seed_id>')
+def get_similar_items(seed_id):
+    """Find visually similar predictions using pgvector cosine similarity."""
+    try:
+        scenario = request.args.get('scenario')
+        classification = request.args.get('classification')
+        status_mode = request.args.get('status', 'approved')
+        camera = request.args.get('camera')
+        reject_reasons_param = request.args.get('reject_reasons', '')
+
+        # 1. Get or compute seed embedding + seed classification
+        seed_vec_str = _get_or_compute_embedding(seed_id)
+        if not seed_vec_str:
+            return jsonify({'success': False, 'error': 'Could not generate embedding for seed'}), 400
+
+        # Get seed item full data + color histogram for display and re-ranking
+        seed_item = None
+        seed_classification = None
+        seed_color_hist = None
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT p.id, p.classification, p.confidence,
+                       p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
+                       p.video_id, p.scenario, p.created_at,
+                       v.thumbnail_path, v.width AS video_width, v.height AS video_height,
+                       v.camera_id,
+                       p.corrected_tags->>'actual_class' AS reject_reason,
+                       pe.color_hist
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                LEFT JOIN prediction_embeddings pe ON pe.prediction_id = p.id
+                WHERE p.id = %s
+            ''', (seed_id,))
+            seed_row = cursor.fetchone()
+            if seed_row:
+                seed_classification = seed_row['classification']
+                seed_color_hist = seed_row.get('color_hist')
+                seed_item = dict(seed_row)
+                seed_item.pop('color_hist', None)
+                seed_item['similarity'] = 1.0
+                if seed_item.get('created_at'):
+                    seed_item['created_at'] = seed_item['created_at'].isoformat()
+                if seed_item.get('confidence') is not None:
+                    seed_item['confidence'] = float(seed_item['confidence'])
+                seed_item['crop_url'] = f'/api/training-gallery/crop/{seed_item["id"]}'
+                seed_item['cluster_type'] = None
+                seed_item['cluster_id'] = None
+                seed_item['cluster_count'] = 1
+                seed_item['is_seed'] = True
+
+        # 2. Build filters
+        if status_mode == 'pending':
+            status_list = ('pending', 'processing')
+        elif status_mode == 'rejected':
+            status_list = ('rejected', 'auto_rejected')
+        else:
+            status_list = ('approved', 'auto_approved')
+
+        filter_clauses = []
+        filter_params = []
+        if classification:
+            filter_clauses.append('p.classification = %s')
+            filter_params.append(classification)
+        if scenario:
+            filter_clauses.append('cc.scenario = %s')
+            filter_params.append(scenario)
+
+        scenario_join = ''
+        if scenario:
+            scenario_join = 'JOIN classification_classes cc ON cc.name = p.classification'
+
+        camera_filter = ''
+        if camera:
+            camera_filter = ' AND v.camera_id = %s'
+            filter_params.append(camera)
+
+        filter_sql = ''
+        if filter_clauses:
+            filter_sql = ' AND ' + ' AND '.join(filter_clauses)
+
+        reason_filter = ''
+        if status_mode == 'rejected' and reject_reasons_param:
+            reason_list = [r.strip() for r in reject_reasons_param.split(',') if r.strip()]
+            if reason_list:
+                has_none = '__none__' in reason_list
+                named_reasons = [r for r in reason_list if r != '__none__']
+                reason_parts = []
+                if named_reasons:
+                    reason_parts.append("p.corrected_tags->>'actual_class' IN %s")
+                    filter_params.append(tuple(named_reasons))
+                if has_none:
+                    reason_parts.append("(p.corrected_tags->>'actual_class' IS NULL OR p.corrected_tags->>'actual_class' = '')")
+                if reason_parts:
+                    reason_filter = ' AND (' + ' OR '.join(reason_parts) + ')'
+
+        # 3. Query with pgvector cosine distance — searches ALL matching items
+        with get_cursor(commit=False) as cursor:
+            cursor.execute(f'''
+                SELECT p.id, p.classification, p.confidence,
+                       p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
+                       p.video_id, p.scenario, p.created_at,
+                       v.thumbnail_path, v.width AS video_width, v.height AS video_height,
+                       v.camera_id,
+                       p.corrected_tags->>'actual_class' AS reject_reason,
+                       1 - (pe.embedding <=> %s::vector) AS similarity,
+                       pe.color_hist
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                JOIN prediction_embeddings pe ON pe.prediction_id = p.id
+                {scenario_join}
+                WHERE p.review_status IN %s
+                  AND p.id != %s
+                  {filter_sql}
+                  {camera_filter}
+                  {reason_filter}
+                  AND 1 - (pe.embedding <=> %s::vector) >= %s
+                ORDER BY pe.embedding <=> %s::vector
+                LIMIT %s
+            ''', (seed_vec_str, status_list, seed_id) + tuple(filter_params) +
+                 (seed_vec_str, SIMILARITY_THRESHOLD, seed_vec_str, SIMILARITY_LIMIT))
+            rows = cursor.fetchall()
+
+        scored_items = []
+        for row in rows:
+            item = dict(row)
+            embed_sim = float(item['similarity'])
+            # Re-rank with color histogram boost if available
+            item_hist = item.pop('color_hist', None)
+            if seed_color_hist and item_hist:
+                color_sim = hist_intersection(seed_color_hist, item_hist)
+                item['similarity'] = round(0.75 * embed_sim + 0.25 * color_sim, 4)
+            else:
+                item['similarity'] = round(embed_sim, 4)
+            if item.get('created_at'):
+                item['created_at'] = item['created_at'].isoformat()
+            if item.get('confidence') is not None:
+                item['confidence'] = float(item['confidence'])
+            item['crop_url'] = f'/api/training-gallery/crop/{item["id"]}'
+            item['cluster_type'] = None
+            item['cluster_id'] = None
+            item['cluster_count'] = 1
+            scored_items.append(item)
+
+        # Re-sort by combined score
+        scored_items.sort(key=lambda x: x['similarity'], reverse=True)
+
+        return jsonify({
+            'success': True,
+            'seed_id': seed_id,
+            'seed_classification': seed_classification,
+            'seed_item': seed_item,
+            'items': scored_items,
+            'total': len(scored_items)
+        })
+
+    except Exception as e:
+        logger.error(f'Failed to find similar items for {seed_id}: {e}')
+        return jsonify({'success': False, 'error': str(e)}), 500
+
+
+def _get_or_compute_embedding(prediction_id):
+    """Get embedding vector string from DB, or compute via FastReID and store it."""
+    with get_cursor(commit=False) as cursor:
+        cursor.execute('SELECT embedding::text FROM prediction_embeddings WHERE prediction_id = %s', (prediction_id,))
+        row = cursor.fetchone()
+        if row:
+            return row['embedding']
+
+    # Not cached — compute it
+    seed_crop = CROPS_DIR / f'gallery_{prediction_id}.jpg'
+    if not seed_crop.exists():
+        with get_cursor(commit=False) as cursor:
+            cursor.execute('''
+                SELECT p.id, p.bbox_x, p.bbox_y, p.bbox_width, p.bbox_height,
+                       v.thumbnail_path, v.width AS video_width, v.height AS video_height
+                FROM ai_predictions p
+                JOIN videos v ON p.video_id = v.id
+                WHERE p.id = %s
+            ''', (prediction_id,))
+            row = cursor.fetchone()
+        if not row or not row['thumbnail_path']:
+            return None
+        _generate_crop(row, seed_crop)
+
+    if not seed_crop.exists():
+        return None
+
+    with open(str(seed_crop), 'rb') as f:
+        seed_b64 = base64.b64encode(f.read()).decode('ascii')
+    resp = http_requests.post(f'{FASTREID_URL}/embed/dino', json={'image': seed_b64}, timeout=30)
+    resp.raise_for_status()
+    embedding = resp.json()['embedding']
+    vec_str = '[' + ','.join(str(v) for v in embedding) + ']'
+
+    # Store for future use
+    with get_cursor(commit=True) as cursor:
+        cursor.execute(
+            'INSERT INTO prediction_embeddings (prediction_id, embedding) VALUES (%s, %s) ON CONFLICT DO NOTHING',
+            (prediction_id, vec_str)
+        )
+    return vec_str
+
+
+def _generate_crop(row, crop_path):
+    """Generate a crop file for a prediction row."""
+    from PIL import Image
+
+    tp = row['thumbnail_path']
+    if not tp:
+        return
+    thumb_path = Path(tp) if tp.startswith('/') else THUMBNAIL_DIR / tp
+    if not thumb_path.exists():
+        return
+
+    img = Image.open(thumb_path)
+    thumb_w, thumb_h = img.size
+    vid_w = row.get('video_width') or thumb_w
+    vid_h = row.get('video_height') or thumb_h
+    scale_x = thumb_w / vid_w
+    scale_y = thumb_h / vid_h
+
+    bx = int((row.get('bbox_x') or 0) * scale_x)
+    by = int((row.get('bbox_y') or 0) * scale_y)
+    bw = int((row.get('bbox_width') or 0) * scale_x)
+    bh = int((row.get('bbox_height') or 0) * scale_y)
+
+    pad_x = int(bw * 0.03)
+    pad_y = int(bh * 0.03)
+    left = max(0, bx - pad_x)
+    top = max(0, by - pad_y)
+    right = min(thumb_w, bx + bw + pad_x)
+    bottom = min(thumb_h, by + bh + pad_y)
+
+    if right <= left or bottom <= top:
+        left, top, right, bottom = 0, 0, thumb_w, thumb_h
+
+    crop = img.crop((left, top, right, bottom))
+    max_dim = 400
+    if max(crop.size) > max_dim:
+        ratio = max_dim / max(crop.size)
+        new_size = (int(crop.size[0] * ratio), int(crop.size[1] * ratio))
+        crop = crop.resize(new_size, Image.LANCZOS)
+
+    CROPS_DIR.mkdir(parents=True, exist_ok=True)
+    crop.save(str(crop_path), 'JPEG', quality=85)

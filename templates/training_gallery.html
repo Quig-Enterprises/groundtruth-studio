@@ -22,6 +22,7 @@
             <div class="status-toggle" id="status-toggle">
                 <button class="toggle-btn active" data-status="approved">Approved</button>
                 <button class="toggle-btn" data-status="pending">Pending</button>
+                <button class="toggle-btn" data-status="rejected">Rejected</button>
             </div>
             <select id="scenario-filter" class="filter-select">
                 <option value="">All Scenarios</option>
@@ -32,6 +33,10 @@
             <select id="camera-filter" class="filter-select">
                 <option value="">All Cameras</option>
             </select>
+            <div class="multi-select-wrap" id="reason-filter-wrap" style="display:none">
+                <button class="filter-select multi-select-btn" id="reason-filter-btn">All Reasons</button>
+                <div class="multi-select-dropdown" id="reason-filter-dropdown" style="display:none"></div>
+            </div>
             <select id="sort-select" class="filter-select">
                 <option value="confidence">Highest Confidence</option>
                 <option value="date">Newest First</option>
@@ -55,8 +60,15 @@
                 <button class="btn btn-primary" id="btn-apply-reclassify">Apply</button>
                 <button class="btn btn-ghost" id="btn-cancel-reclassify">Cancel</button>
             </div>
+            <div class="reclassify-group" id="change-reason-group" style="display:none">
+                <select id="change-reason-select" class="filter-select"></select>
+                <button class="btn btn-primary" id="btn-apply-reason">Apply</button>
+                <button class="btn btn-ghost" id="btn-cancel-reason">Cancel</button>
+            </div>
             <button class="btn btn-accent" id="btn-reclassify">Reclassify</button>
+            <button class="btn btn-accent" id="btn-change-reason" style="display:none">Change Reason</button>
             <button class="btn btn-warning" id="btn-requeue">Requeue for Review</button>
+            <button class="btn btn-primary" id="btn-restore" style="display:none">Restore</button>
             <button class="btn btn-danger" id="btn-remove">Remove</button>
         </div>
     </div>
@@ -90,8 +102,15 @@
                         <button class="btn btn-primary btn-sm" id="modal-apply-reclassify">Apply</button>
                         <button class="btn btn-ghost btn-sm" id="modal-cancel-reclassify">Cancel</button>
                     </div>
+                    <div class="modal-reclassify-group" id="modal-change-reason-group" style="display:none">
+                        <select id="modal-change-reason-select" class="filter-select"></select>
+                        <button class="btn btn-primary btn-sm" id="modal-apply-reason">Apply</button>
+                        <button class="btn btn-ghost btn-sm" id="modal-cancel-reason">Cancel</button>
+                    </div>
                     <button class="btn btn-accent btn-sm" id="modal-btn-reclassify">Reclassify</button>
+                    <button class="btn btn-accent btn-sm" id="modal-btn-change-reason" style="display:none">Change Reason</button>
                     <button class="btn btn-warning btn-sm" id="modal-btn-requeue">Requeue</button>
+                    <button class="btn btn-primary btn-sm" id="modal-btn-restore" style="display:none">Restore</button>
                     <button class="btn btn-danger btn-sm" id="modal-btn-remove">Remove</button>
                 </div>
                 <div class="modal-grid" id="modal-grid"></div>
@@ -111,6 +130,7 @@
     </div>
 
     <script src="{{ static_v('js/shared-class-search.js') }}"></script>
+    <script src="{{ static_v('js/shared-reject-reasons.js') }}"></script>
     <script src="{{ static_v('js/training-gallery.js') }}"></script>
 </body>
 </html>

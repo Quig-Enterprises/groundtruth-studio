@@ -369,6 +369,9 @@ def start_generation(template_id):
         washout_max = float(data.get('washout_max', 70)) / 100.0
         oversat_min = float(data.get('oversat_min', 20)) / 100.0
         oversat_max = float(data.get('oversat_max', 70)) / 100.0
+        overlay_pct = float(data.get('overlay_pct', 0)) / 100.0
+        overlay_opacity_min = float(data.get('overlay_opacity_min', 30)) / 100.0
+        overlay_opacity_max = float(data.get('overlay_opacity_max', 70)) / 100.0
 
         if template_id in _generation_status and _generation_status[template_id].get('status') == 'running':
             return jsonify({'success': False, 'error': 'Generation already in progress for this template'}), 409
@@ -427,6 +430,19 @@ def start_generation(template_id):
                                 vmeta["photocopy"] = True
                                 vmeta["photocopy_intensity"] = round(intensity, 3)
                                 vmeta["photocopy_mode"] = mode
+                                # Apply photocopy overlay artifacts
+                                if overlay_pct > 0:
+                                    try:
+                                        from doc_synthesizer import apply_photocopy_overlays
+                                        vimg, overlay_meta = apply_photocopy_overlays(
+                                            vimg,
+                                            overlay_pct=overlay_pct,
+                                            opacity_min=overlay_opacity_min,
+                                            opacity_max=overlay_opacity_max,
+                                        )
+                                        vmeta.update(overlay_meta)
+                                    except Exception:
+                                        pass
                             except Exception:
                                 pass
                         elif random.random() < scene_pct:

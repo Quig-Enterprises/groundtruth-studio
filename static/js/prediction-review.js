@@ -401,15 +401,7 @@ const predictionReview = {
         const existing = document.getElementById('reject-reason-picker');
         if (existing) existing.remove();
 
-        const reasons = [
-            { value: 'false_positive', label: 'False positive' },
-            { value: 'bbox_too_large', label: 'BBox too large' },
-            { value: 'bbox_too_small', label: 'BBox too small' },
-            { value: 'wrong_class', label: 'Wrong class' },
-            { value: 'duplicate', label: 'Duplicate' },
-            { value: 'poor_localization', label: 'Poor localization' },
-            { value: 'other', label: 'Other' }
-        ];
+        const reasons = RejectReasons.get('prediction');
 
         const picker = document.createElement('div');
         picker.id = 'reject-reason-picker';

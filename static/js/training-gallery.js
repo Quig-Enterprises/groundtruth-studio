@@ -6,7 +6,7 @@ var TrainingGallery = {
     perPage: 60,
     totalPages: 0,
     loading: false,
-    filters: { scenario: '', classification: '', sort: 'confidence', status: 'approved', camera: '' },
+    filters: { scenario: '', classification: '', sort: 'confidence', status: 'approved', camera: '', reject_reasons: [] },
     selected: new Set(),         // individual prediction IDs
     selectedClusters: new Set(), // "type:id" strings
     clusterMembers: {},          // cache: "type:id" -> [items]
@@ -18,6 +18,8 @@ var TrainingGallery = {
     modalClusterId: null,
     modalItems: [],
     modalSelected: new Set(),
+    similarityMode: false,
+    similaritySeedId: null,
 
     // ── Initialization ───────────────────────────────────────────────────
 
@@ -35,6 +37,7 @@ var TrainingGallery = {
         if (params.get('classification')) this.filters.classification = params.get('classification');
         if (params.get('sort')) this.filters.sort = params.get('sort');
         if (params.get('camera')) this.filters.camera = params.get('camera');
+        if (params.get('reject_reasons')) this.filters.reject_reasons = params.get('reject_reasons').split(',');
         if (params.get('page')) this.page = parseInt(params.get('page'), 10) || 1;
         // Sync UI controls
         var statusBtn = document.querySelector('#status-toggle .toggle-btn[data-status="' + this.filters.status + '"]');
@@ -54,6 +57,7 @@ var TrainingGallery = {
         if (this.filters.classification) params.set('classification', this.filters.classification);
         if (this.filters.sort && this.filters.sort !== 'confidence') params.set('sort', this.filters.sort);
         if (this.filters.camera) params.set('camera', this.filters.camera);
+        if (this.filters.reject_reasons.length) params.set('reject_reasons', this.filters.reject_reasons.join(','));
         if (this.page > 1) params.set('page', this.page);
         var newUrl = window.location.pathname + '?' + params.toString();
         history.replaceState(null, '', newUrl);
@@ -101,6 +105,30 @@ var TrainingGallery = {
             } else if (pendingBtn) {
                 var oldBadge = pendingBtn.querySelector('.count-badge');
                 if (oldBadge) oldBadge.remove();
+            }
+
+            // Update rejected badge
+            var rejectedBtn = document.querySelector('.toggle-btn[data-status="rejected"]');
+            if (rejectedBtn && data.rejected_count > 0) {
+                var rBadge = rejectedBtn.querySelector('.count-badge');
+                if (!rBadge) {
+                    rBadge = document.createElement('span');
+                    rBadge.className = 'count-badge';
+                    rejectedBtn.appendChild(rBadge);
+                }
+                rBadge.textContent = data.rejected_count.toLocaleString();
+            } else if (rejectedBtn) {
+                var oldRBadge = rejectedBtn.querySelector('.count-badge');
+                if (oldRBadge) oldRBadge.remove();
+            }
+
+            // Show/hide and populate reason filter
+            var reasonWrap = document.getElementById('reason-filter-wrap');
+            if (this.filters.status === 'rejected' && data.reject_reasons && data.reject_reasons.length) {
+                reasonWrap.style.display = '';
+                this.populateReasonFilter(data.reject_reasons);
+            } else {
+                reasonWrap.style.display = 'none';
             }
 
             // Load camera list
@@ -162,6 +190,7 @@ var TrainingGallery = {
         if (this.filters.scenario) params.set('scenario', this.filters.scenario);
         if (this.filters.classification) params.set('classification', this.filters.classification);
         if (this.filters.camera) params.set('camera', this.filters.camera);
+        if (this.filters.reject_reasons.length) params.set('reject_reasons', this.filters.reject_reasons.join(','));
 
         try {
             const resp = await fetch('/api/training-gallery/items?' + params);
@@ -370,6 +399,32 @@ var TrainingGallery = {
         info.appendChild(confSpan);
         card.appendChild(info);
 
+        // Reject reason badge (rejected mode)
+        if (this.filters.status === 'rejected') {
+            var reasonBadge = document.createElement('div');
+            reasonBadge.className = 'card-reason-badge';
+            if (item.reject_reason) {
+                reasonBadge.textContent = RejectReasons.labelFor(item.reject_reason) || item.reject_reason;
+            } else {
+                reasonBadge.textContent = 'Rejected';
+                reasonBadge.style.opacity = '0.6';
+            }
+            card.appendChild(reasonBadge);
+        }
+
+        // Similarity score badge / seed badge
+        if (item.is_seed) {
+            var seedBadge = document.createElement('div');
+            seedBadge.className = 'card-similarity-badge card-seed-badge';
+            seedBadge.textContent = 'Seed';
+            card.appendChild(seedBadge);
+        } else if (item.similarity != null) {
+            var simBadge = document.createElement('div');
+            simBadge.className = 'card-similarity-badge';
+            simBadge.textContent = Math.round(item.similarity * 100) + '% match';
+            card.appendChild(simBadge);
+        }
+
         // Checkbox change handler
         checkbox.addEventListener('change', (e) => {
             e.stopPropagation();
@@ -386,6 +441,11 @@ var TrainingGallery = {
             card.classList.toggle('selected', checkbox.checked);
         });
         card.style.cursor = 'pointer';
+
+        // Right-click context menu for Find Similar
+        card.addEventListener('contextmenu', (e) => {
+            if (item.id) this.showContextMenu(e, item);
+        });
 
         return card;
     },
@@ -410,7 +470,7 @@ var TrainingGallery = {
         }, { rootMargin: '200px' });
 
         this.observer = new IntersectionObserver((entries) => {
-            if (entries[0].isIntersecting && !this.loading && this.page < this.totalPages) {
+            if (entries[0].isIntersecting && !this.loading && this.page < this.totalPages && !this.similarityMode) {
                 this.page++;
                 this.loadPage();
             }
@@ -535,7 +595,7 @@ var TrainingGallery = {
         document.getElementById('modal-btn-reclassify').style.display = '';
 
         try {
-            const resp = await fetch('/api/training-gallery/cluster/' + clusterType + '/' + clusterId);
+            const resp = await fetch('/api/training-gallery/cluster/' + clusterType + '/' + clusterId + '?status=' + this.filters.status);
             const data = await resp.json();
             this.modalItems = data.items;
 
@@ -596,6 +656,15 @@ var TrainingGallery = {
         info.appendChild(confSpan);
         card.appendChild(info);
 
+        // Reject reason badge (rejected mode)
+        if (item.reject_reason) {
+            var reasonBadge = document.createElement('div');
+            reasonBadge.className = 'card-reason-badge';
+            reasonBadge.textContent = RejectReasons.labelFor(item.reject_reason) || item.reject_reason;
+            reasonBadge.style.margin = '0 8px 5px';
+            card.appendChild(reasonBadge);
+        }
+
         checkbox.addEventListener('change', (e) => {
             if (e.target.checked) {
                 this.modalSelected.add(item.id);
@@ -647,12 +716,13 @@ var TrainingGallery = {
 
     // ── Bulk Actions ─────────────────────────────────────────────────────
 
-    async executeBulkAction(action, predictionIds, newClassification, actualClass) {
+    async executeBulkAction(action, predictionIds, newClassification, actualClass, newReason) {
         if (!predictionIds.length) return;
 
         const body = { action: action, prediction_ids: predictionIds };
         if (newClassification) body.new_classification = newClassification;
         if (actualClass) body.actual_class = actualClass;
+        if (newReason) body.new_reason = newReason;
 
         try {
             const resp = await fetch('/api/training-gallery/bulk-action', {
@@ -664,6 +734,67 @@ var TrainingGallery = {
 
             if (data.success) {
                 const idSet = new Set(predictionIds);
+
+                // update_reason: update badges in-place, don't remove cards
+                if (action === 'update_reason' && newReason) {
+                    var reasonLabel = RejectReasons.labelFor(newReason) || newReason;
+                    idSet.forEach(id => {
+                        // Update main grid cards
+                        var mainCard = document.querySelector('.gallery-card[data-prediction-id="' + id + '"]');
+                        if (mainCard) {
+                            var badge = mainCard.querySelector('.card-reason-badge');
+                            if (badge) {
+                                badge.textContent = reasonLabel;
+                            } else {
+                                badge = document.createElement('div');
+                                badge.className = 'card-reason-badge';
+                                badge.textContent = reasonLabel;
+                                mainCard.appendChild(badge);
+                            }
+                        }
+                        // Update modal cards
+                        var modalCard = document.querySelector('#modal-grid .modal-card[data-id="' + id + '"]');
+                        if (modalCard) {
+                            var mBadge = modalCard.querySelector('.card-reason-badge');
+                            if (mBadge) {
+                                mBadge.textContent = reasonLabel;
+                            } else {
+                                mBadge = document.createElement('div');
+                                mBadge.className = 'card-reason-badge';
+                                mBadge.textContent = reasonLabel;
+                                mBadge.style.margin = '0 8px 5px';
+                                modalCard.appendChild(mBadge);
+                            }
+                        }
+                    });
+                    // Update item data
+                    this.items.forEach(item => {
+                        if (idSet.has(item.id)) item.reject_reason = newReason;
+                    });
+                    this.modalItems.forEach(item => {
+                        if (idSet.has(item.id)) item.reject_reason = newReason;
+                    });
+                    // Deselect
+                    this.selected.clear();
+                    this.selectedClusters.clear();
+                    this.modalSelected.clear();
+                    this.updateActionBar();
+                    this.updateModalActionBar();
+                    // Hide change reason UI
+                    document.getElementById('change-reason-group').style.display = 'none';
+                    document.getElementById('btn-change-reason').style.display = '';
+                    document.getElementById('modal-change-reason-group').style.display = 'none';
+                    document.getElementById('modal-btn-change-reason').style.display = '';
+                    document.querySelectorAll('.gallery-card .card-checkbox input, #modal-grid input[type=checkbox]').forEach(cb => {
+                        cb.checked = false;
+                        var parentCard = cb.closest('.gallery-card') || cb.closest('.modal-card');
+                        if (parentCard) parentCard.classList.remove('selected');
+                    });
+
+                    const affected = data.affected || predictionIds.length;
+                    this.showToast(affected + ' ' + (affected !== 1 ? 'images' : 'image') + ' reason updated', false);
+                    return;
+                }
 
                 // Remove from modal if open
                 if (this.modalOpen) {
@@ -729,9 +860,11 @@ var TrainingGallery = {
                     : 'reclassified';
                 this.showToast(affected + ' ' + noun + ' ' + verb, false);
 
-                // Force full reload in pending mode after reclassify/approve to ensure
-                // items that changed status are removed from the pending view
+                // Force full reload after actions that change status to ensure view consistency
                 if (this.filters.status === 'pending' && (action === 'reclassify' || action === 'approve')) {
+                    this.resetAndReload();
+                }
+                if (this.filters.status === 'rejected' && action === 'approve') {
                     this.resetAndReload();
                 }
             } else {
@@ -785,30 +918,14 @@ var TrainingGallery = {
             reasonWrap.style.cssText = 'margin-top:12px;text-align:left';
 
             var label = document.createElement('label');
-            label.textContent = 'What is this actually? (optional, helps training)';
+            label.textContent = 'Reason for removal (optional)';
             label.style.cssText = 'display:block;font-size:13px;color:#94a3b8;margin-bottom:4px';
             reasonWrap.appendChild(label);
 
             var select = document.createElement('select');
             select.id = 'reject-reason-select';
             select.style.cssText = 'width:100%;padding:6px 8px;border-radius:6px;border:1px solid #334155;background:#1e293b;color:#e2e8f0;font-size:14px';
-            var options = [
-                ['', '— Skip (no reason) —'],
-                ['tree', 'Tree / Bush'],
-                ['shadow', 'Shadow'],
-                ['animal', 'Animal'],
-                ['person', 'Person (not vehicle)'],
-                ['reflection', 'Reflection'],
-                ['sign', 'Sign / Post'],
-                ['building', 'Building / Structure'],
-                ['other', 'Other']
-            ];
-            options.forEach(function(o) {
-                var opt = document.createElement('option');
-                opt.value = o[0];
-                opt.textContent = o[1];
-                select.appendChild(opt);
-            });
+            select.appendChild(RejectReasons.buildOptions('training'));
             reasonWrap.appendChild(select);
 
             var msgEl = document.getElementById('confirm-message');
@@ -919,21 +1036,305 @@ var TrainingGallery = {
         newCancel.addEventListener('click', close);
     },
 
+    // ── Reason Filter (Multi-Select) ────────────────────────────────────
+
+    populateReasonFilter(reasonData) {
+        var dropdown = document.getElementById('reason-filter-dropdown');
+        var btn = document.getElementById('reason-filter-btn');
+        dropdown.textContent = '';
+        var self = this;
+        var selected = this.filters.reject_reasons;
+
+        reasonData.forEach(function(r) {
+            var label = document.createElement('label');
+            var cb = document.createElement('input');
+            cb.type = 'checkbox';
+            var filterValue = r.reason || '__none__';
+            cb.value = filterValue;
+            cb.checked = selected.indexOf(filterValue) !== -1;
+
+            var text = document.createElement('span');
+            var displayLabel = r.reason ? (RejectReasons.labelFor(r.reason) || r.reason) : '(No reason)';
+            text.textContent = displayLabel;
+
+            var count = document.createElement('span');
+            count.className = 'ms-count';
+            count.textContent = r.count.toLocaleString();
+
+            label.appendChild(cb);
+            label.appendChild(text);
+            label.appendChild(count);
+            dropdown.appendChild(label);
+
+            cb.addEventListener('change', function() {
+                self.onReasonFilterChange();
+            });
+        });
+
+        this.updateReasonBtnLabel();
+    },
+
+    onReasonFilterChange() {
+        var checkboxes = document.querySelectorAll('#reason-filter-dropdown input[type=checkbox]');
+        var selected = [];
+        checkboxes.forEach(function(cb) {
+            if (cb.checked) selected.push(cb.value);
+        });
+        this.filters.reject_reasons = selected;
+        this.updateReasonBtnLabel();
+        this.resetAndReload();
+    },
+
+    updateReasonBtnLabel() {
+        var btn = document.getElementById('reason-filter-btn');
+        var n = this.filters.reject_reasons.length;
+        if (n === 0) {
+            btn.textContent = 'All Reasons';
+        } else if (n === 1) {
+            var val = this.filters.reject_reasons[0];
+            btn.textContent = val === '__none__' ? '(No reason)' : (RejectReasons.labelFor(val) || val);
+        } else {
+            btn.textContent = n + ' Reasons';
+        }
+    },
+
     // ── Stats ────────────────────────────────────────────────────────────
 
     updateModeButtons() {
         const isPending = this.filters.status === 'pending';
+        const isRejected = this.filters.status === 'rejected';
+
+        // Main action bar buttons
         const requeueBtn = document.getElementById('btn-requeue');
-        requeueBtn.textContent = isPending ? 'Approve' : 'Requeue for Review';
-        requeueBtn.className = isPending ? 'btn btn-primary' : 'btn btn-warning';
+        const removeBtn = document.getElementById('btn-remove');
+        const reclassifyBtn = document.getElementById('btn-reclassify');
+        const changeReasonBtn = document.getElementById('btn-change-reason');
+        const restoreBtn = document.getElementById('btn-restore');
+
+        // Modal action bar buttons
         const modalRequeueBtn = document.getElementById('modal-btn-requeue');
-        modalRequeueBtn.textContent = isPending ? 'Approve' : 'Requeue';
-        modalRequeueBtn.className = isPending ? 'btn btn-primary btn-sm' : 'btn btn-warning btn-sm';
+        const modalRemoveBtn = document.getElementById('modal-btn-remove');
+        const modalReclassifyBtn = document.getElementById('modal-btn-reclassify');
+        const modalChangeReasonBtn = document.getElementById('modal-btn-change-reason');
+        const modalRestoreBtn = document.getElementById('modal-btn-restore');
+
+        if (isRejected) {
+            // Rejected mode: show Reclassify + Change Reason + Restore, hide Requeue/Remove
+            reclassifyBtn.style.display = '';
+            requeueBtn.style.display = 'none';
+            removeBtn.style.display = 'none';
+            changeReasonBtn.style.display = '';
+            restoreBtn.style.display = '';
+
+            modalReclassifyBtn.style.display = '';
+            modalRequeueBtn.style.display = 'none';
+            modalRemoveBtn.style.display = 'none';
+            modalChangeReasonBtn.style.display = '';
+            modalRestoreBtn.style.display = '';
+        } else {
+            // Approved/Pending mode: show normal buttons, hide rejected-mode buttons
+            reclassifyBtn.style.display = '';
+            requeueBtn.style.display = '';
+            removeBtn.style.display = '';
+            changeReasonBtn.style.display = 'none';
+            restoreBtn.style.display = 'none';
+
+            modalReclassifyBtn.style.display = '';
+            modalRequeueBtn.style.display = '';
+            modalRemoveBtn.style.display = '';
+            modalChangeReasonBtn.style.display = 'none';
+            modalRestoreBtn.style.display = 'none';
+
+            requeueBtn.textContent = isPending ? 'Approve' : 'Requeue for Review';
+            requeueBtn.className = isPending ? 'btn btn-primary' : 'btn btn-warning';
+            modalRequeueBtn.textContent = isPending ? 'Approve' : 'Requeue';
+            modalRequeueBtn.className = isPending ? 'btn btn-primary btn-sm' : 'btn btn-warning btn-sm';
+        }
     },
 
     updateStats(total) {
         const el = document.getElementById('filter-stats');
         if (el) el.textContent = total.toLocaleString() + ' training images';
+    },
+
+    // ── Similarity Mode ─────────────────────────────────────────────────
+
+    showContextMenu(e, item) {
+        e.preventDefault();
+        // Remove existing menu
+        var old = document.querySelector('.gallery-context-menu');
+        if (old) old.remove();
+
+        var menu = document.createElement('div');
+        menu.className = 'gallery-context-menu';
+
+        var findBtn = document.createElement('button');
+        findBtn.textContent = 'Find Similar';
+        findBtn.addEventListener('click', () => {
+            menu.remove();
+            this.loadSimilar(item.id);
+        });
+        menu.appendChild(findBtn);
+
+        menu.style.left = e.clientX + 'px';
+        menu.style.top = e.clientY + 'px';
+        document.body.appendChild(menu);
+
+        // Close on next click
+        var closeMenu = (ev) => {
+            if (!menu.contains(ev.target)) {
+                menu.remove();
+                document.removeEventListener('click', closeMenu);
+            }
+        };
+        setTimeout(() => document.addEventListener('click', closeMenu), 0);
+    },
+
+    async loadSimilar(seedId) {
+        this.similarityMode = true;
+        this.similaritySeedId = seedId;
+        this.selected.clear();
+        this.selectedClusters.clear();
+        document.getElementById('action-bar').style.display = 'none';
+
+        // Add "Most Similar" sort option
+        var sortSel = document.getElementById('sort-select');
+        if (!sortSel.querySelector('option[value="similarity"]')) {
+            var opt = document.createElement('option');
+            opt.value = 'similarity';
+            opt.textContent = 'Most Similar';
+            sortSel.insertBefore(opt, sortSel.firstChild);
+        }
+        sortSel.value = 'similarity';
+        this.filters.sort = 'similarity';
+
+        // Show loading
+        var grid = document.getElementById('gallery-grid');
+        grid.textContent = '';
+        var loadingEl = document.createElement('div');
+        loadingEl.className = 'loading-state';
+        loadingEl.textContent = 'Finding similar images...';
+        grid.appendChild(loadingEl);
+
+        // Build params
+        var params = new URLSearchParams({ status: this.filters.status });
+        if (this.filters.scenario) params.set('scenario', this.filters.scenario);
+        if (this.filters.classification) params.set('classification', this.filters.classification);
+        if (this.filters.camera) params.set('camera', this.filters.camera);
+        if (this.filters.reject_reasons.length) params.set('reject_reasons', this.filters.reject_reasons.join(','));
+
+        try {
+            var resp = await fetch('/api/training-gallery/similar/' + seedId + '?' + params);
+            var data = await resp.json();
+
+            grid.textContent = '';
+            this.items = [];
+
+            if (data.success && (data.seed_item || data.items.length > 0)) {
+                this.showSimilarityBanner(seedId, data.seed_classification);
+
+                // Sort remaining items by current sort selection
+                var sortVal = this.filters.sort;
+                data.items.sort(function(a, b) {
+                    if (sortVal === 'confidence') return (b.confidence || 0) - (a.confidence || 0);
+                    if (sortVal === 'date') return (b.created_at || '').localeCompare(a.created_at || '');
+                    if (sortVal === 'similarity') return (b.similarity || 0) - (a.similarity || 0);
+                    return (b.similarity || 0) - (a.similarity || 0);
+                });
+
+                // Seed item first, then sorted results
+                var allItems = [];
+                if (data.seed_item) {
+                    data.seed_item.is_seed = true;
+                    allItems.push(data.seed_item);
+                }
+                allItems = allItems.concat(data.items);
+                this.renderItems(allItems);
+                this.updateStats(allItems.length);
+            } else {
+                var empty = document.createElement('div');
+                empty.className = 'empty-state';
+                empty.textContent = data.error || 'No similar images found.';
+                grid.appendChild(empty);
+            }
+        } catch (e) {
+            console.error('Similarity search failed:', e);
+            grid.textContent = '';
+            var errEl = document.createElement('div');
+            errEl.className = 'empty-state error';
+            errEl.textContent = 'Similarity search failed.';
+            grid.appendChild(errEl);
+        }
+    },
+
+    resortSimilarityItems() {
+        // Separate seed from rest
+        var seed = null;
+        var rest = [];
+        for (var i = 0; i < this.items.length; i++) {
+            if (this.items[i].is_seed) {
+                seed = this.items[i];
+            } else {
+                rest.push(this.items[i]);
+            }
+        }
+        var sortVal = this.filters.sort;
+        rest.sort(function(a, b) {
+            if (sortVal === 'confidence') return (b.confidence || 0) - (a.confidence || 0);
+            if (sortVal === 'date') return (b.created_at || '').localeCompare(a.created_at || '');
+            return (b.similarity || 0) - (a.similarity || 0);
+        });
+        var sorted = seed ? [seed].concat(rest) : rest;
+        this.items = [];
+        var grid = document.getElementById('gallery-grid');
+        grid.textContent = '';
+        this.renderItems(sorted);
+    },
+
+    showSimilarityBanner(seedId, seedClass) {
+        var existing = document.getElementById('similarity-banner');
+        if (existing) existing.remove();
+
+        var banner = document.createElement('div');
+        banner.className = 'similarity-banner';
+        banner.id = 'similarity-banner';
+
+        var img = document.createElement('img');
+        img.className = 'seed-thumb';
+        img.src = '/api/training-gallery/crop/' + seedId;
+        banner.appendChild(img);
+
+        var text = document.createElement('span');
+        text.textContent = 'Visually similar to #' + seedId + (seedClass ? ' (' + seedClass + ')' : '');
+        banner.appendChild(text);
+
+        var clearBtn = document.createElement('button');
+        clearBtn.className = 'btn btn-ghost btn-sm';
+        clearBtn.textContent = 'Clear';
+        clearBtn.style.marginLeft = 'auto';
+        clearBtn.addEventListener('click', () => this.clearSimilarity());
+        banner.appendChild(clearBtn);
+
+        var filterBar = document.getElementById('filter-bar');
+        filterBar.parentNode.insertBefore(banner, filterBar.nextSibling);
+    },
+
+    clearSimilarity() {
+        this.similarityMode = false;
+        this.similaritySeedId = null;
+        var banner = document.getElementById('similarity-banner');
+        if (banner) banner.remove();
+
+        // Remove "Most Similar" sort option and reset to confidence
+        var sortSel = document.getElementById('sort-select');
+        var simOpt = sortSel.querySelector('option[value="similarity"]');
+        if (simOpt) simOpt.remove();
+        if (this.filters.sort === 'similarity') {
+            this.filters.sort = 'confidence';
+            sortSel.value = 'confidence';
+        }
+
+        this.resetAndReload();
     },
 
     // ── Event Binding ────────────────────────────────────────────────────
@@ -945,12 +1346,20 @@ var TrainingGallery = {
                 document.querySelectorAll('#status-toggle .toggle-btn').forEach(b => b.classList.remove('active'));
                 btn.classList.add('active');
                 this.filters.status = btn.dataset.status;
+                // Clear similarity mode if active
+                if (this.similarityMode) {
+                    this.similarityMode = false;
+                    this.similaritySeedId = null;
+                    var banner = document.getElementById('similarity-banner');
+                    if (banner) banner.remove();
+                }
                 // Reset state and reload filters (which calls loadPage)
                 this.filters.scenario = '';
                 this.filters.classification = '';
                 document.getElementById('scenario-filter').value = '';
                 document.getElementById('classification-filter').value = '';
                 this.filters.camera = '';
+                this.filters.reject_reasons = [];
                 var cameraFilter = document.getElementById('camera-filter');
                 if (cameraFilter) cameraFilter.value = '';
                 this.page = 1;
@@ -992,7 +1401,27 @@ var TrainingGallery = {
 
         document.getElementById('sort-select').addEventListener('change', (e) => {
             this.filters.sort = e.target.value;
-            this.resetAndReload();
+            if (this.similarityMode) {
+                // Re-sort current items in-place instead of reloading
+                this.resortSimilarityItems();
+            } else {
+                this.resetAndReload();
+            }
+        });
+
+        // Reason filter multi-select dropdown toggle
+        document.getElementById('reason-filter-btn').addEventListener('click', (e) => {
+            e.stopPropagation();
+            var dd = document.getElementById('reason-filter-dropdown');
+            dd.style.display = dd.style.display === 'none' ? '' : 'none';
+        });
+        // Close dropdown on outside click
+        document.addEventListener('click', (e) => {
+            var wrap = document.getElementById('reason-filter-wrap');
+            var dd = document.getElementById('reason-filter-dropdown');
+            if (dd && dd.style.display !== 'none' && !wrap.contains(e.target)) {
+                dd.style.display = 'none';
+            }
         });
 
         // Selection
@@ -1037,6 +1466,33 @@ var TrainingGallery = {
             this.showRejectPrompt(n, (actualClass) => {
                 this.executeBulkAction('remove', ids, null, actualClass);
             });
+        });
+
+        // Action bar — Change Reason (rejected mode)
+        document.getElementById('btn-change-reason').addEventListener('click', () => {
+            var sel = document.getElementById('change-reason-select');
+            sel.textContent = '';
+            sel.appendChild(RejectReasons.buildOptions('training', '\u2014 Select reason \u2014'));
+            document.getElementById('change-reason-group').style.display = 'flex';
+            document.getElementById('btn-change-reason').style.display = 'none';
+        });
+        document.getElementById('btn-cancel-reason').addEventListener('click', () => {
+            document.getElementById('change-reason-group').style.display = 'none';
+            document.getElementById('btn-change-reason').style.display = '';
+        });
+        document.getElementById('btn-apply-reason').addEventListener('click', async () => {
+            var reason = document.getElementById('change-reason-select').value;
+            if (!reason) return;
+            var ids = await this.getSelectedPredictionIds();
+            this.executeBulkAction('update_reason', ids, null, null, reason);
+        });
+
+        // Action bar — Restore (rejected mode → approve)
+        document.getElementById('btn-restore').addEventListener('click', async () => {
+            var ids = await this.getSelectedPredictionIds();
+            var n = ids.length;
+            var msg = 'Restore ' + n.toLocaleString() + ' image' + (n !== 1 ? 's' : '') + ' to approved?';
+            this.showConfirm(msg, () => this.executeBulkAction('approve', ids));
         });
 
         // Modal — close
@@ -1094,6 +1550,33 @@ var TrainingGallery = {
             });
         });
 
+        // Modal — Change Reason (rejected mode)
+        document.getElementById('modal-btn-change-reason').addEventListener('click', () => {
+            var sel = document.getElementById('modal-change-reason-select');
+            sel.textContent = '';
+            sel.appendChild(RejectReasons.buildOptions('training', '\u2014 Select reason \u2014'));
+            document.getElementById('modal-change-reason-group').style.display = 'flex';
+            document.getElementById('modal-btn-change-reason').style.display = 'none';
+        });
+        document.getElementById('modal-cancel-reason').addEventListener('click', () => {
+            document.getElementById('modal-change-reason-group').style.display = 'none';
+            document.getElementById('modal-btn-change-reason').style.display = '';
+        });
+        document.getElementById('modal-apply-reason').addEventListener('click', () => {
+            var reason = document.getElementById('modal-change-reason-select').value;
+            if (!reason) return;
+            var ids = Array.from(this.modalSelected);
+            this.executeBulkAction('update_reason', ids, null, null, reason);
+        });
+
+        // Modal — Restore (rejected mode → approve)
+        document.getElementById('modal-btn-restore').addEventListener('click', () => {
+            var ids = Array.from(this.modalSelected);
+            var n = ids.length;
+            var msg = 'Restore ' + n + ' image' + (n !== 1 ? 's' : '') + ' to approved?';
+            this.showConfirm(msg, () => this.executeBulkAction('approve', ids));
+        });
+
         // Keyboard
         document.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -1116,6 +1599,13 @@ var TrainingGallery = {
         this.items = [];
         this.selected.clear();
         this.selectedClusters.clear();
+        // Clear similarity mode if active
+        if (this.similarityMode) {
+            this.similarityMode = false;
+            this.similaritySeedId = null;
+            var simBanner = document.getElementById('similarity-banner');
+            if (simBanner) simBanner.remove();
+        }
         this.syncUrlParams();
 
         const grid = document.getElementById('gallery-grid');
