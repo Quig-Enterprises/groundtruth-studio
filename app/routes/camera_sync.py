@@ -13,8 +13,8 @@ camera_sync_bp = Blueprint('camera_sync', __name__)
 logger = logging.getLogger(__name__)
 
 # go2rtc API inside Frigate container (direct, bypasses Frigate's nginx POST block)
-GO2RTC_API = os.environ.get('GO2RTC_API_URL', 'http://172.200.1.6:1984')
-FRIGATE_API = os.environ.get('FRIGATE_API_URL', 'https://172.200.1.6:8971')
+GO2RTC_API = os.environ.get('GO2RTC_API_URL', 'http://172.200.1.7:1984')
+FRIGATE_API = os.environ.get('FRIGATE_API_URL', 'https://172.200.1.7:8971')
 
 
 # ---------------------------------------------------------------------------
