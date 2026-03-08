@@ -30,10 +30,10 @@ EXPORT_DIR = BASE_DIR / 'exports'
 ALLOWED_EXTENSIONS = {'mp4', 'avi', 'mov', 'mkv', 'webm'}
 
 # EcoEye API Configuration
-ECOEYE_API_BASE = 'https://alert.ecoeyetech.com'
-ECOEYE_PHP_API_KEY = '-3tsV7gFLF-nxAAUt-zRETAJLWEyxEWszwdT4fCKpeI'
-ECOEYE_API_KEY = '2cVrlQ2XW3wxDwZmVzQ3lOCi96jnqKnH8v1wyU97lM0'
-ECOEYE_API_SECRET = os.environ.get('ECOEYE_API_SECRET', '8SyPU2FW05yjtaNVOlCGPoyfqFSXJiGp36SEiiKqT-c0dSZDTBr89M8RsMTsD7_pyDHW2b6MxfPxuVUVlzpb8g')
+ECOEYE_API_BASE = os.environ.get('ECOEYE_API_BASE', 'https://alert.ecoeyetech.com')
+ECOEYE_PHP_API_KEY = os.environ.get('ECOEYE_PHP_API_KEY', '')
+ECOEYE_API_KEY = os.environ.get('ECOEYE_API_KEY', '')
+ECOEYE_API_SECRET = os.environ.get('ECOEYE_API_SECRET', '')
 
 # Service instances — initialized by init_services()
 db = None
