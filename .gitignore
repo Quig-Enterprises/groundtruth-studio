@@ -14,3 +14,7 @@ thumbnails/
 .omc/
 clips/
 *.pt
+
+# Never commit AWS credentials
+*accessKeys*
+*.csv
