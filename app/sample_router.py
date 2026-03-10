@@ -64,6 +64,9 @@ class SampleRouter:
         """
         Determine routing decision for a single prediction.
 
+        Uses consensus-based routing when voter data is available,
+        falling back to confidence-based routing.
+
         Args:
             prediction: Dict with at least 'confidence' key
             thresholds: Dict with 'auto_approve', 'review', 'auto_reject' keys
@@ -88,6 +91,27 @@ class SampleRouter:
         if confidence < thresholds['auto_reject']:
             return 'auto_reject'
         else:
+            return 'review'
+
+    def route_prediction_consensus(self, prediction_id: int) -> str:
+        """
+        Route a prediction using multi-voter consensus.
+
+        Queries the classification_votes table for this prediction,
+        computes consensus, and assigns to a review queue:
+        - 'select_all': high consensus — batch approval candidate
+        - 'review': majority agree — needs quick human check
+        - 'triage': disagreement — needs careful individual review
+
+        Falls back to 'review' if no votes exist.
+        """
+        try:
+            from vote_aggregator import VoteAggregator
+            aggregator = VoteAggregator()
+            result = aggregator.compute_consensus(prediction_id)
+            return result.get('review_queue', 'review')
+        except Exception as e:
+            logger.warning(f"Consensus routing failed for {prediction_id}: {e}")
             return 'review'
 
     def route_batch(self, prediction_ids: List[int], predictions: List[Dict],

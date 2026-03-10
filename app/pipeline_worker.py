@@ -6,6 +6,7 @@ Groundtruth Studio's intelligence layer (context engine, violation detector).
 Runs periodic visit aggregation and face clustering jobs.
 """
 
+import os
 import sys
 import json
 import time
@@ -46,6 +47,8 @@ class PipelineWorker:
         self.last_clustering_run = 0.0
         self.last_static_clustering_run = 0.0
         self.last_video_xcam_run = 0.0
+        self.last_consistency_run = 0.0
+        self.last_spatial_backfill_run = 0.0
 
     # ── Configuration ─────────────────────────────────────────────
 
@@ -69,8 +72,9 @@ class PipelineWorker:
             client_id=mqtt_cfg.get('client_id', 'pipeline-worker'),
             clean_session=True,
         )
+        mqtt_password = os.environ.get('MQTT_PASSWORD', mqtt_cfg.get('password', ''))
         self.mqtt_client.username_pw_set(
-            mqtt_cfg['username'], mqtt_cfg['password']
+            mqtt_cfg['username'], mqtt_password
         )
         self.mqtt_client.on_connect = self._on_connect
         self.mqtt_client.on_disconnect = self._on_disconnect
@@ -239,6 +243,57 @@ class PipelineWorker:
                     logger.info("Video track cross-camera matching: %s", summary)
             except Exception as e:
                 logger.error("Video track cross-camera matching error: %s", e, exc_info=True)
+
+        # Visit consistency checks (every 30 minutes)
+        consistency_interval = periodic.get('consistency_interval_seconds', 1800)
+        if now - self.last_consistency_run >= consistency_interval:
+            self.last_consistency_run = now
+            try:
+                from visit_consistency import VisitConsistencyChecker
+                checker = VisitConsistencyChecker()
+                summary = checker.run_retroactive_audit(limit=500)
+                if summary and summary.get('flags_created'):
+                    logger.info("Visit consistency check: %s", summary)
+            except Exception as e:
+                logger.error("Visit consistency check error: %s", e, exc_info=True)
+
+        # Spatial scale model backfill from recent approvals (every hour)
+        spatial_interval = periodic.get('spatial_backfill_interval_seconds', 3600)
+        if now - self.last_spatial_backfill_run >= spatial_interval:
+            self.last_spatial_backfill_run = now
+            try:
+                from spatial_scale import SpatialScaleModel
+                model = SpatialScaleModel()
+                with get_cursor(commit=False) as cursor:
+                    cursor.execute("""
+                        SELECT p.classification, p.bbox_x, p.bbox_y,
+                               p.bbox_width, p.bbox_height, v.camera_id,
+                               v.width AS frame_width, v.height AS frame_height
+                        FROM ai_predictions p
+                        JOIN videos v ON v.id = p.video_id
+                        WHERE p.review_status IN ('approved', 'auto_approved')
+                          AND p.bbox_width > 0 AND p.bbox_height > 0
+                          AND p.classification IS NOT NULL
+                          AND v.camera_id IS NOT NULL
+                          AND p.reviewed_at > NOW() - INTERVAL '2 hours'
+                        ORDER BY p.reviewed_at DESC
+                        LIMIT 200
+                    """)
+                    rows = cursor.fetchall()
+                recorded = 0
+                for row in rows:
+                    if row['frame_width'] and row['frame_height']:
+                        bbox = {'x': row['bbox_x'], 'y': row['bbox_y'],
+                                'width': row['bbox_width'], 'height': row['bbox_height']}
+                        model.record_observation(
+                            row['camera_id'], row['classification'],
+                            bbox, (row['frame_width'], row['frame_height'])
+                        )
+                        recorded += 1
+                if recorded:
+                    logger.info("Spatial scale backfill: %d recent observations recorded", recorded)
+            except Exception as e:
+                logger.error("Spatial scale backfill error: %s", e, exc_info=True)
 
     # ── Lifecycle ─────────────────────────────────────────────────
 

@@ -6,11 +6,14 @@ var TrainingGallery = {
     perPage: 60,
     totalPages: 0,
     loading: false,
-    filters: { scenario: '', classification: '', sort: 'confidence', status: 'approved', camera: '', reject_reasons: [] },
+    filters: { scenario: '', classification: '', sort: 'confidence', status: 'approved', camera: '', reject_reasons: [], tier1: '', tier2: '', tier3: '' },
     selected: new Set(),         // individual prediction IDs
     selectedClusters: new Set(), // "type:id" strings
     clusterMembers: {},          // cache: "type:id" -> [items]
     allClasses: [],              // for reclassify dropdowns
+    hierarchy: [],               // classification_hierarchy rows for reclassify cascade
+    tier2ValuesRaw: [],          // tier2 filter values with parent tier1
+    tier3ValuesRaw: [],          // tier3 filter values with parent tier2
     observer: null,
     imageObserver: null,
     modalOpen: false,
@@ -38,6 +41,9 @@ var TrainingGallery = {
         if (params.get('sort')) this.filters.sort = params.get('sort');
         if (params.get('camera')) this.filters.camera = params.get('camera');
         if (params.get('reject_reasons')) this.filters.reject_reasons = params.get('reject_reasons').split(',');
+        if (params.get('tier1')) this.filters.tier1 = params.get('tier1');
+        if (params.get('tier2')) this.filters.tier2 = params.get('tier2');
+        if (params.get('tier3')) this.filters.tier3 = params.get('tier3');
         if (params.get('page')) this.page = parseInt(params.get('page'), 10) || 1;
         // Sync UI controls
         var statusBtn = document.querySelector('#status-toggle .toggle-btn[data-status="' + this.filters.status + '"]');
@@ -58,6 +64,9 @@ var TrainingGallery = {
         if (this.filters.sort && this.filters.sort !== 'confidence') params.set('sort', this.filters.sort);
         if (this.filters.camera) params.set('camera', this.filters.camera);
         if (this.filters.reject_reasons.length) params.set('reject_reasons', this.filters.reject_reasons.join(','));
+        if (this.filters.tier1) params.set('tier1', this.filters.tier1);
+        if (this.filters.tier2) params.set('tier2', this.filters.tier2);
+        if (this.filters.tier3) params.set('tier3', this.filters.tier3);
         if (this.page > 1) params.set('page', this.page);
         var newUrl = window.location.pathname + '?' + params.toString();
         history.replaceState(null, '', newUrl);
@@ -85,11 +94,21 @@ var TrainingGallery = {
             this.reclassifyClasses = data.all_classes || data.classifications;
             this.updateClassificationDropdown(data.classifications);
 
+            // Store hierarchy and tier filter data
+            this.hierarchy = data.hierarchy || [];
+            this.tier2ValuesRaw = data.tier2_values || [];
+            this.tier3ValuesRaw = data.tier3_values || [];
+            this.populateTierFilters(data.tier1_values || [], data.tier2_values || [], data.tier3_values || []);
+            this.populateReclassifyHierarchy();
+
             // Restore dropdown values from URL params
             if (this.filters.scenario) scenarioSel.value = this.filters.scenario;
             if (this.filters.classification) {
                 document.getElementById('classification-filter').value = this.filters.classification;
             }
+            if (this.filters.tier1) document.getElementById('tier1-filter').value = this.filters.tier1;
+            if (this.filters.tier2) document.getElementById('tier2-filter').value = this.filters.tier2;
+            if (this.filters.tier3) document.getElementById('tier3-filter').value = this.filters.tier3;
             this.loadPage();
 
             // Update pending badge
@@ -170,9 +189,111 @@ var TrainingGallery = {
     },
 
     populateReclassifyDropdowns() {
-        const classes = this.reclassifyClasses || this.allClasses;
-        populateClassDatalist('reclassify-list', classes);
-        populateClassDatalist('modal-reclassify-list', classes);
+        // Legacy — no longer used for datalist but kept for compatibility
+    },
+
+    populateTierFilters(tier1Values, tier2Values, tier3Values) {
+        const t1Sel = document.getElementById('tier1-filter');
+        const t2Sel = document.getElementById('tier2-filter');
+        const t3Sel = document.getElementById('tier3-filter');
+        // Tier 1
+        while (t1Sel.options.length > 1) t1Sel.remove(1);
+        tier1Values.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v.value;
+            opt.textContent = v.value + ' (' + v.count + ')';
+            t1Sel.appendChild(opt);
+        });
+        // Tier 2 (filtered by selected tier1)
+        this.updateTier2FilterOptions();
+        // Tier 3 (filtered by selected tier2)
+        this.updateTier3FilterOptions();
+    },
+
+    updateTier2FilterOptions() {
+        const t2Sel = document.getElementById('tier2-filter');
+        while (t2Sel.options.length > 1) t2Sel.remove(1);
+        const t1 = this.filters.tier1;
+        const filtered = t1
+            ? this.tier2ValuesRaw.filter(v => v.vehicle_tier1 === t1)
+            : this.tier2ValuesRaw;
+        filtered.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v.value;
+            opt.textContent = v.value + ' (' + v.count + ')';
+            t2Sel.appendChild(opt);
+        });
+    },
+
+    updateTier3FilterOptions() {
+        const t3Sel = document.getElementById('tier3-filter');
+        while (t3Sel.options.length > 1) t3Sel.remove(1);
+        const t1 = this.filters.tier1;
+        const t2 = this.filters.tier2;
+        let filtered = this.tier3ValuesRaw;
+        if (t2) {
+            filtered = filtered.filter(v => v.vehicle_tier2 === t2);
+        } else if (t1) {
+            // Filter tier3 to only those whose parent tier2 belongs to the selected tier1
+            const tier2sForTier1 = new Set(this.tier2ValuesRaw.filter(v => v.vehicle_tier1 === t1).map(v => v.value));
+            filtered = filtered.filter(v => tier2sForTier1.has(v.vehicle_tier2));
+        }
+        filtered.forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v.value;
+            opt.textContent = v.value + ' (' + v.count + ')';
+            t3Sel.appendChild(opt);
+        });
+    },
+
+    populateReclassifyHierarchy() {
+        // Populate reclassify tier1 selects (both main + modal)
+        ['reclassify-tier1', 'modal-reclassify-tier1'].forEach(id => {
+            const sel = document.getElementById(id);
+            if (!sel) return;
+            while (sel.options.length > 1) sel.remove(1);
+            const tier1s = [...new Set(this.hierarchy.map(h => h.tier1))];
+            tier1s.forEach(t1 => {
+                const opt = document.createElement('option');
+                opt.value = t1;
+                opt.textContent = t1;
+                sel.appendChild(opt);
+            });
+        });
+    },
+
+    updateReclassifyTier2(prefix) {
+        const t1Val = document.getElementById(prefix + 'tier1').value;
+        const t2Sel = document.getElementById(prefix + 'tier2');
+        const t3Sel = document.getElementById(prefix + 'tier3');
+        while (t2Sel.options.length > 1) t2Sel.remove(1);
+        while (t3Sel.options.length > 1) t3Sel.remove(1);
+        t2Sel.value = '';
+        t3Sel.value = '';
+        if (!t1Val) return;
+        const tier2s = [...new Set(this.hierarchy.filter(h => h.tier1 === t1Val).map(h => h.tier2))];
+        tier2s.forEach(t2 => {
+            const opt = document.createElement('option');
+            opt.value = t2;
+            opt.textContent = t2;
+            t2Sel.appendChild(opt);
+        });
+    },
+
+    updateReclassifyTier3(prefix) {
+        const t1Val = document.getElementById(prefix + 'tier1').value;
+        const t2Val = document.getElementById(prefix + 'tier2').value;
+        const t3Sel = document.getElementById(prefix + 'tier3');
+        while (t3Sel.options.length > 1) t3Sel.remove(1);
+        t3Sel.value = '';
+        if (!t2Val) return;
+        const tier3s = this.hierarchy.filter(h => h.tier1 === t1Val && h.tier2 === t2Val && h.tier3);
+        tier3s.forEach(h => {
+            const opt = document.createElement('option');
+            opt.value = h.tier3;
+            opt.textContent = h.display_name || h.tier3;
+            t3Sel.appendChild(opt);
+        });
     },
 
     // ── Page Loading ─────────────────────────────────────────────────────
@@ -191,6 +312,9 @@ var TrainingGallery = {
         if (this.filters.classification) params.set('classification', this.filters.classification);
         if (this.filters.camera) params.set('camera', this.filters.camera);
         if (this.filters.reject_reasons.length) params.set('reject_reasons', this.filters.reject_reasons.join(','));
+        if (this.filters.tier1) params.set('tier1', this.filters.tier1);
+        if (this.filters.tier2) params.set('tier2', this.filters.tier2);
+        if (this.filters.tier3) params.set('tier3', this.filters.tier3);
 
         try {
             const resp = await fetch('/api/training-gallery/items?' + params);
@@ -398,6 +522,47 @@ var TrainingGallery = {
         info.appendChild(labelSpan);
         info.appendChild(confSpan);
         card.appendChild(info);
+
+        // Tier badges row
+        if (item.vehicle_tier1 || item.vehicle_tier2 || item.vehicle_tier3) {
+            const tierRow = document.createElement('div');
+            tierRow.className = 'card-tier-row';
+            tierRow.style.cssText = 'display:flex;gap:3px;padding:2px 6px;flex-wrap:wrap;';
+
+            if (item.vehicle_tier1) {
+                const t1 = document.createElement('span');
+                t1.className = 'tier-badge tier-1';
+                t1.style.cssText = 'font-size:10px;padding:1px 4px;border-radius:3px;background:#4a5568;color:#fff;';
+                t1.textContent = item.vehicle_tier1;
+                t1.title = 'Tier 1: Category';
+                tierRow.appendChild(t1);
+            }
+            if (item.vehicle_tier2) {
+                const t2 = document.createElement('span');
+                t2.className = 'tier-badge tier-2';
+                t2.style.cssText = 'font-size:10px;padding:1px 4px;border-radius:3px;background:#2b6cb0;color:#fff;';
+                t2.textContent = item.vehicle_tier2;
+                t2.title = 'Tier 2: Size/Shape';
+                tierRow.appendChild(t2);
+            }
+            if (item.vehicle_tier3) {
+                const t3 = document.createElement('span');
+                t3.className = 'tier-badge tier-3';
+                t3.style.cssText = 'font-size:10px;padding:1px 4px;border-radius:3px;background:#2f855a;color:#fff;';
+                t3.textContent = item.vehicle_tier3;
+                t3.title = 'Tier 3: Subtype';
+                tierRow.appendChild(t3);
+            }
+            if (item.cargo_type) {
+                const cBadge = document.createElement('span');
+                cBadge.className = 'tier-badge cargo';
+                cBadge.style.cssText = 'font-size:10px;padding:1px 4px;border-radius:3px;background:#d69e2e;color:#fff;';
+                cBadge.textContent = '\u2693 ' + item.cargo_type;
+                cBadge.title = 'Loaded with';
+                tierRow.appendChild(cBadge);
+            }
+            card.appendChild(tierRow);
+        }
 
         // Reject reason badge (rejected mode)
         if (this.filters.status === 'rejected') {
@@ -716,13 +881,18 @@ var TrainingGallery = {
 
     // ── Bulk Actions ─────────────────────────────────────────────────────
 
-    async executeBulkAction(action, predictionIds, newClassification, actualClass, newReason) {
+    async executeBulkAction(action, predictionIds, newClassification, actualClass, newReason, vehicleTier1, vehicleTier2, vehicleTier3, cargoType, multiEntity) {
         if (!predictionIds.length) return;
 
         const body = { action: action, prediction_ids: predictionIds };
         if (newClassification) body.new_classification = newClassification;
         if (actualClass) body.actual_class = actualClass;
         if (newReason) body.new_reason = newReason;
+        if (vehicleTier1) body.vehicle_tier1 = vehicleTier1;
+        if (vehicleTier2) body.vehicle_tier2 = vehicleTier2;
+        if (vehicleTier3) body.vehicle_tier3 = vehicleTier3;
+        if (cargoType) body.cargo_type = cargoType;
+        if (multiEntity) body.multi_entity = true;
 
         try {
             const resp = await fetch('/api/training-gallery/bulk-action', {
@@ -1356,8 +1526,14 @@ var TrainingGallery = {
                 // Reset state and reload filters (which calls loadPage)
                 this.filters.scenario = '';
                 this.filters.classification = '';
+                this.filters.tier1 = '';
+                this.filters.tier2 = '';
+                this.filters.tier3 = '';
                 document.getElementById('scenario-filter').value = '';
                 document.getElementById('classification-filter').value = '';
+                document.getElementById('tier1-filter').value = '';
+                document.getElementById('tier2-filter').value = '';
+                document.getElementById('tier3-filter').value = '';
                 this.filters.camera = '';
                 this.filters.reject_reasons = [];
                 var cameraFilter = document.getElementById('camera-filter');
@@ -1399,6 +1575,29 @@ var TrainingGallery = {
             });
         }
 
+        // Tier filters with cascade
+        document.getElementById('tier1-filter').addEventListener('change', (e) => {
+            this.filters.tier1 = e.target.value;
+            this.filters.tier2 = '';
+            this.filters.tier3 = '';
+            this.updateTier2FilterOptions();
+            this.updateTier3FilterOptions();
+            document.getElementById('tier2-filter').value = '';
+            document.getElementById('tier3-filter').value = '';
+            this.resetAndReload();
+        });
+        document.getElementById('tier2-filter').addEventListener('change', (e) => {
+            this.filters.tier2 = e.target.value;
+            this.filters.tier3 = '';
+            this.updateTier3FilterOptions();
+            document.getElementById('tier3-filter').value = '';
+            this.resetAndReload();
+        });
+        document.getElementById('tier3-filter').addEventListener('change', (e) => {
+            this.filters.tier3 = e.target.value;
+            this.resetAndReload();
+        });
+
         document.getElementById('sort-select').addEventListener('change', (e) => {
             this.filters.sort = e.target.value;
             if (this.similarityMode) {
@@ -1428,22 +1627,35 @@ var TrainingGallery = {
         document.getElementById('btn-select-all').addEventListener('click', () => this.selectAll());
         document.getElementById('btn-deselect-all').addEventListener('click', () => this.deselectAll());
 
-        // Action bar — Reclassify
+        // Action bar — Reclassify (tier cascade)
         document.getElementById('btn-reclassify').addEventListener('click', () => {
-            document.getElementById('reclassify-input').value = '';
+            document.getElementById('reclassify-tier1').value = '';
+            document.getElementById('reclassify-tier2').value = '';
+            document.getElementById('reclassify-tier3').value = '';
+            document.getElementById('reclassify-multi-check').checked = false;
+            document.getElementById('reclassify-multi-label').style.display = 'flex';
+            this.populateReclassifyHierarchy();
             document.getElementById('reclassify-group').style.display = 'flex';
             document.getElementById('btn-reclassify').style.display = 'none';
         });
         document.getElementById('btn-cancel-reclassify').addEventListener('click', () => {
             document.getElementById('reclassify-group').style.display = 'none';
             document.getElementById('btn-reclassify').style.display = '';
-            document.getElementById('reclassify-input').value = '';
+        });
+        document.getElementById('reclassify-tier1').addEventListener('change', () => {
+            this.updateReclassifyTier2('reclassify-');
+        });
+        document.getElementById('reclassify-tier2').addEventListener('change', () => {
+            this.updateReclassifyTier3('reclassify-');
         });
         document.getElementById('btn-apply-reclassify').addEventListener('click', async () => {
-            const newClass = document.getElementById('reclassify-input').value.trim();
-            if (!newClass) return;
+            const t1 = document.getElementById('reclassify-tier1').value;
+            const t2 = document.getElementById('reclassify-tier2').value;
+            const t3 = document.getElementById('reclassify-tier3').value;
+            const multiEntity = document.getElementById('reclassify-multi-check').checked;
+            if (!t2 && !multiEntity) return;
             const ids = await this.getSelectedPredictionIds();
-            this.executeBulkAction('reclassify', ids, newClass);
+            this.executeBulkAction('reclassify', ids, null, null, null, t1 || null, t2 || null, t3 || null, null, multiEntity);
         });
 
         // Action bar — Requeue / Approve
@@ -1511,21 +1723,34 @@ var TrainingGallery = {
             this.updateModalActionBar();
         });
 
-        // Modal — Reclassify
+        // Modal — Reclassify (tier cascade)
         document.getElementById('modal-btn-reclassify').addEventListener('click', () => {
-            document.getElementById('modal-reclassify-input').value = '';
+            document.getElementById('modal-reclassify-tier1').value = '';
+            document.getElementById('modal-reclassify-tier2').value = '';
+            document.getElementById('modal-reclassify-tier3').value = '';
+            document.getElementById('modal-reclassify-multi-check').checked = false;
+            document.getElementById('modal-reclassify-multi-label').style.display = 'flex';
+            this.populateReclassifyHierarchy();
             document.getElementById('modal-reclassify-group').style.display = 'flex';
             document.getElementById('modal-btn-reclassify').style.display = 'none';
         });
         document.getElementById('modal-cancel-reclassify').addEventListener('click', () => {
             document.getElementById('modal-reclassify-group').style.display = 'none';
             document.getElementById('modal-btn-reclassify').style.display = '';
-            document.getElementById('modal-reclassify-input').value = '';
+        });
+        document.getElementById('modal-reclassify-tier1').addEventListener('change', () => {
+            this.updateReclassifyTier2('modal-reclassify-');
+        });
+        document.getElementById('modal-reclassify-tier2').addEventListener('change', () => {
+            this.updateReclassifyTier3('modal-reclassify-');
         });
         document.getElementById('modal-apply-reclassify').addEventListener('click', () => {
-            const newClass = document.getElementById('modal-reclassify-input').value.trim();
-            if (!newClass) return;
-            this.executeBulkAction('reclassify', Array.from(this.modalSelected), newClass);
+            const t1 = document.getElementById('modal-reclassify-tier1').value;
+            const t2 = document.getElementById('modal-reclassify-tier2').value;
+            const t3 = document.getElementById('modal-reclassify-tier3').value;
+            const multiEntity = document.getElementById('modal-reclassify-multi-check').checked;
+            if (!t2 && !multiEntity) return;
+            this.executeBulkAction('reclassify', Array.from(this.modalSelected), null, null, null, t1 || null, t2 || null, t3 || null, null, multiEntity);
         });
 
         // Modal — Requeue / Approve

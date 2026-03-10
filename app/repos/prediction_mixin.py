@@ -14,6 +14,81 @@ VEHICLE_CLASSES = {
     'kayak', 'canoe', 'sailboat', 'jet ski', 'person', 'fence'
 }
 
+# Minimum crop size for training data (longest edge in pixels)
+MIN_TRAINING_CROP_SIZE = 80
+
+# Map flat class names to tiered hierarchy for quick lookups
+FLAT_TO_TIER = {
+    'sedan': ('vehicle', 'small_vehicle', 'sedan'),
+    'car': ('vehicle', 'small_vehicle', 'sedan'),
+    'pickup truck': ('vehicle', 'pickup', 'pickup — open bed'),
+    'pickup': ('vehicle', 'pickup', 'pickup — open bed'),
+    'suv': ('vehicle', 'large_vehicle', 'SUV'),
+    'minivan': ('vehicle', 'large_vehicle', 'minivan'),
+    'van': ('vehicle', 'large_vehicle', 'full-size van (panel van)'),
+    'tractor': ('vehicle', 'commercial_truck', None),
+    'atv': ('vehicle', 'offroad', 'ATV'),
+    'utv': ('vehicle', 'offroad', 'UTV/side-by-side'),
+    'snowmobile': ('vehicle', 'offroad', 'snowmobile'),
+    'golf cart': ('vehicle', 'offroad', 'golf cart'),
+    'motorcycle': ('motorcycle', 'motorcycle', None),
+    'trailer': ('trailer', 'utility_trailer', None),
+    'bus': ('vehicle', 'bus', None),
+    'semi truck': ('vehicle', 'commercial_truck', None),
+    'dump truck': ('vehicle', 'commercial_truck', 'dump truck'),
+    'box truck': ('vehicle', 'commercial_truck', 'box truck'),
+    'rowboat': ('boat', 'non_motorized', None),
+    'fishing boat': ('boat', 'powerboat', 'bass boat'),
+    'speed boat': ('boat', 'powerboat', 'center console'),
+    'pontoon boat': ('boat', 'powerboat', 'pontoon'),
+    'boat': ('boat', 'powerboat', None),
+    'kayak': ('boat', 'non_motorized', 'kayak'),
+    'canoe': ('boat', 'non_motorized', 'canoe'),
+    'sailboat': ('boat', 'non_motorized', None),
+    'jet ski': ('boat', 'personal_watercraft', 'jet ski'),
+    'person': ('person', 'person', None),
+    'skid loader': ('vehicle', 'commercial_truck', None),
+    'ambulance': ('vehicle', 'large_vehicle', None),
+    'other truck': ('vehicle', 'commercial_truck', None),
+    'multiple_vehicles': ('vehicle', None, None),
+    'unknown vehicle': ('vehicle', None, None),
+}
+
+
+def get_hierarchy_for_class(class_name):
+    """Look up tiered hierarchy for a class name.
+
+    Checks in-memory map first, then the classification_hierarchy DB table.
+
+    Returns:
+        (tier1, tier2, tier3) tuple, or (None, None, None) if not found.
+    """
+    if not class_name:
+        return (None, None, None)
+
+    key = class_name.lower().strip()
+    if key in FLAT_TO_TIER:
+        return FLAT_TO_TIER[key]
+
+    # Fall back to DB lookup
+    try:
+        with get_cursor(commit=False) as cursor:
+            cursor.execute("""
+                SELECT tier1, tier2, tier3 FROM classification_hierarchy
+                WHERE LOWER(tier3) = %s OR LOWER(tier2) = %s
+                  OR LOWER(display_name) = %s
+                LIMIT 1
+            """, (key, key, key))
+            row = cursor.fetchone()
+            if row:
+                result = (row['tier1'], row['tier2'], row['tier3'])
+                FLAT_TO_TIER[key] = result  # cache for next time
+                return result
+    except Exception:
+        pass
+
+    return (None, None, None)
+
 
 class PredictionMixin:
     """AI prediction CRUD, review, classification, and grouping methods."""
@@ -50,13 +125,38 @@ class PredictionMixin:
                 quality_score = pred.get('quality_score')
                 quality_flags = pred.get('quality_flags')
 
+                # Extract tier fields if provided
+                vehicle_tier1 = pred.get('vehicle_tier1')
+                vehicle_tier2 = pred.get('vehicle_tier2')
+                vehicle_tier3 = pred.get('vehicle_tier3')
+                confidence_tier1 = pred.get('confidence_tier1')
+                confidence_tier2 = pred.get('confidence_tier2')
+
+                # Auto-derive tiers from classification if not explicitly set
+                if not vehicle_tier1 and classification:
+                    tier_info = get_hierarchy_for_class(classification)
+                    vehicle_tier1, vehicle_tier2, vehicle_tier3 = tier_info
+
+                # Check training candidacy based on crop size
+                is_training_candidate = True
+                training_exclusion_reason = None
+                bbox_w = pred.get('bbox', {}).get('width', 0) or 0
+                bbox_h = pred.get('bbox', {}).get('height', 0) or 0
+                if max(bbox_w, bbox_h) < MIN_TRAINING_CROP_SIZE:
+                    is_training_candidate = False
+                    training_exclusion_reason = 'below_min_size'
+
                 cursor.execute('''
                     INSERT INTO ai_predictions
                     (video_id, model_name, model_version, prediction_type, confidence,
                      timestamp, start_time, end_time, bbox_x, bbox_y, bbox_width, bbox_height,
                      scenario, predicted_tags, batch_id, inference_time_ms, review_status, parent_prediction_id,
-                     classification, quality_score, quality_flags)
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                     classification, quality_score, quality_flags,
+                     vehicle_tier1, vehicle_tier2, vehicle_tier3,
+                     confidence_tier1, confidence_tier2,
+                     is_training_candidate, training_exclusion_reason)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s, %s, %s)
                     RETURNING id
                 ''', (
                     video_id, model_name, model_version,
@@ -72,7 +172,10 @@ class PredictionMixin:
                     pred.get('parent_prediction_id'),
                     classification,
                     quality_score,
-                    extras.Json(quality_flags) if quality_flags else None
+                    extras.Json(quality_flags) if quality_flags else None,
+                    vehicle_tier1, vehicle_tier2, vehicle_tier3,
+                    confidence_tier1, confidence_tier2,
+                    is_training_candidate, training_exclusion_reason
                 ))
                 result = cursor.fetchone()
                 ids.append(result['id'])
@@ -305,6 +408,28 @@ class PredictionMixin:
                 UPDATE ai_predictions SET created_annotation_id = %s WHERE id = %s
             ''', (annotation_id, prediction_id))
 
+            # Record spatial scale observation for approved predictions with bbox
+            try:
+                if (pred.get('bbox_width') and pred.get('bbox_height') and
+                        pred.get('classification')):
+                    # Get camera_id and frame dimensions
+                    cursor.execute(
+                        'SELECT camera_id, width, height FROM videos WHERE id = %s',
+                        (pred['video_id'],))
+                    video_row = cursor.fetchone()
+                    if video_row and video_row['camera_id'] and video_row['width']:
+                        from spatial_scale import SpatialScaleModel
+                        spatial = SpatialScaleModel()
+                        spatial.record_observation(
+                            video_row['camera_id'],
+                            pred['classification'],
+                            {'x': pred['bbox_x'], 'y': pred['bbox_y'],
+                             'width': pred['bbox_width'], 'height': pred['bbox_height']},
+                            (video_row['width'], video_row['height'])
+                        )
+            except Exception:
+                pass  # Non-blocking — spatial scale is supplementary
+
             return annotation_id
 
     def update_prediction_routing(self, prediction_id: int, review_status: str,
@@ -497,6 +622,8 @@ class PredictionMixin:
 
                 # Handle approve-as-alternate-class (confirm reclassification)
                 if status == 'approved' and actual_class:
+                    # Derive tier fields from the actual_class
+                    reclass_tiers = get_hierarchy_for_class(actual_class)
                     cursor.execute('''
                         UPDATE ai_predictions
                         SET review_status = %s, reviewed_by = %s, reviewed_at = NOW(), review_notes = %s,
@@ -505,12 +632,20 @@ class PredictionMixin:
                                     'actual_class', %s,
                                     'reclassified_by', %s,
                                     'reclassified_at', NOW()::text
-                                )) - 'needs_negative_review'
+                                )) - 'needs_negative_review',
+                            classification = %s,
+                            vehicle_tier1 = %s,
+                            vehicle_tier2 = %s,
+                            vehicle_tier3 = %s
                         WHERE id = %s AND review_status IN ('pending', 'approved', 'needs_reclassification')
                         RETURNING id, model_name, model_version
-                    ''', (status, reviewer, notes, actual_class, reviewer, pred_id))
+                    ''', (status, reviewer, notes, actual_class, reviewer,
+                          actual_class.lower().strip(),
+                          reclass_tiers[0], reclass_tiers[1], reclass_tiers[2],
+                          pred_id))
                 # Handle reclassification for rejections
                 elif status == 'rejected' and actual_class:
+                    reclass_tiers = get_hierarchy_for_class(actual_class)
                     cursor.execute('''
                         UPDATE ai_predictions
                         SET review_status = %s, reviewed_by = %s, reviewed_at = NOW(), review_notes = %s,
@@ -519,10 +654,17 @@ class PredictionMixin:
                                     'actual_class', %s,
                                     'reclassified_by', %s,
                                     'reclassified_at', NOW()::text
-                                )
+                                ),
+                            classification = %s,
+                            vehicle_tier1 = %s,
+                            vehicle_tier2 = %s,
+                            vehicle_tier3 = %s
                         WHERE id = %s AND review_status IN ('pending', 'approved', 'needs_reclassification')
                         RETURNING id, model_name, model_version
-                    ''', (status, reviewer, notes, actual_class, reviewer, pred_id))
+                    ''', (status, reviewer, notes, actual_class, reviewer,
+                          actual_class.lower().strip(),
+                          reclass_tiers[0], reclass_tiers[1], reclass_tiers[2],
+                          pred_id))
                 else:
                     corrected_tags = review.get('corrected_tags')
                     if corrected_tags:

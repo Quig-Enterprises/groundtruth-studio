@@ -2,7 +2,7 @@ mqtt:
   host: "127.0.0.1"
   port: 1883
   username: "pipeline"
-  password: "pipeline_worker_2026"
+  password: ""  # Set via MQTT_PASSWORD environment variable
   client_id: "pipeline-worker"
   subscriptions:
     - "tracker/tracks/+"

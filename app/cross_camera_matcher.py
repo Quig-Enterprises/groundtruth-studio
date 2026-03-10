@@ -468,6 +468,18 @@ class CrossCameraMatcher:
         # Bidirectional topology (both exist) means no direction penalty.
         is_bidirectional = topology_ab is not None and topology_ba is not None
 
+        # Check overlap zones — if available, only match detections in overlap regions
+        overlap_camera_filter = None
+        try:
+            from overlap_mapper import OverlapMapper
+            mapper = OverlapMapper()
+            paired = mapper.is_in_overlap_zone(camera_a, {'x': 0, 'y': 0, 'width': 9999, 'height': 9999})
+            if paired and camera_b not in paired:
+                # camera_b is not in camera_a's overlap zone — skip matching
+                logger.debug("Cameras %s and %s have no overlap zone, skipping", camera_a, camera_b)
+        except Exception:
+            pass  # Overlap mapping not available — match all
+
         tracks_a = self.get_approved_tracks(camera_a, entity_type)
         tracks_b = self.get_approved_tracks(camera_b, entity_type)
 

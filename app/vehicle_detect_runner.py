@@ -134,6 +134,39 @@ NON_VEHICLE_CLASSES = {"person", "dog", "deer", "turkey", "squirrel", "other ani
 # These get their own scenario instead of 'vehicle_detection'.
 INFRASTRUCTURE_CLASSES = {"fence"}
 
+# Minimum crop size for training data (longest edge in pixels)
+MIN_TRAINING_CROP_SIZE = 80
+
+# Map display names to tiered hierarchy (tier1, tier2, tier3)
+DISPLAY_NAME_TO_TIER = {
+    'sedan': ('vehicle', 'small_vehicle', 'sedan'),
+    'pickup truck': ('vehicle', 'pickup', 'pickup — open bed'),
+    'SUV': ('vehicle', 'large_vehicle', 'SUV'),
+    'minivan': ('vehicle', 'large_vehicle', 'minivan'),
+    'van': ('vehicle', 'large_vehicle', 'full-size van (panel van)'),
+    'tractor': ('vehicle', 'commercial_truck', None),
+    'ATV': ('vehicle', 'offroad', 'ATV'),
+    'UTV': ('vehicle', 'offroad', 'UTV/side-by-side'),
+    'snowmobile': ('vehicle', 'offroad', 'snowmobile'),
+    'golf cart': ('vehicle', 'offroad', 'golf cart'),
+    'skid loader': ('vehicle', 'commercial_truck', None),
+    'motorcycle': ('motorcycle', 'motorcycle', None),
+    'trailer': ('trailer', 'utility_trailer', None),
+    'bus': ('vehicle', 'bus', None),
+    'semi truck': ('vehicle', 'commercial_truck', None),
+    'dump truck': ('vehicle', 'commercial_truck', 'dump truck'),
+    'rowboat': ('boat', 'non_motorized', None),
+    'fishing boat': ('boat', 'powerboat', 'bass boat'),
+    'speed boat': ('boat', 'powerboat', 'center console'),
+    'pontoon boat': ('boat', 'powerboat', 'pontoon'),
+    'kayak': ('boat', 'non_motorized', 'kayak'),
+    'canoe': ('boat', 'non_motorized', 'canoe'),
+    'sailboat': ('boat', 'non_motorized', None),
+    'jet ski': ('boat', 'personal_watercraft', 'jet ski'),
+    'person': ('person', 'person', None),
+    'fence': (None, None, None),
+}
+
 # Animal classes — detected by the same model but not vehicles.
 # These get their own scenario instead of 'vehicle_detection'.
 ANIMAL_CLASSES = {"dog", "deer", "turkey", "squirrel", "other animal"}
@@ -776,6 +809,16 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
                 # Compute quality metrics for this crop
                 quality = compute_crop_quality(img, bbox)
 
+                # Check minimum crop size for training candidacy
+                quality_flags = {f: True for f in quality['flags']} if quality['flags'] else {}
+                longest_edge = max(bbox['width'], bbox['height'])
+                if longest_edge < MIN_TRAINING_CROP_SIZE:
+                    quality_flags['below_min_size'] = True
+
+                # Look up tiered classification
+                tier_info = DISPLAY_NAME_TO_TIER.get(class_name, (None, None, None))
+                tier1, tier2, tier3 = tier_info
+
                 vehicle_predictions.append({
                     'prediction_type': 'keyframe',
                     'confidence': round(confidence, 4),
@@ -791,7 +834,12 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
                     'bbox': bbox,
                     'inference_time_ms': round(inference_time_ms, 2),
                     'quality_score': quality['quality_score'],
-                    'quality_flags': {f: True for f in quality['flags']} if quality['flags'] else {}
+                    'quality_flags': quality_flags,
+                    'vehicle_tier1': tier1,
+                    'vehicle_tier2': tier2,
+                    'vehicle_tier3': tier3,
+                    'confidence_tier1': round(confidence, 4) if tier1 else None,
+                    'confidence_tier2': round(confidence, 4) if tier2 else None,
                 })
 
         # Suppress overlapping cross-class vehicle detections
@@ -876,6 +924,35 @@ def _run_detection_locked(video_id: int, thumbnail_path: str, force_review: bool
         else:
             # No vehicles found — store a scan marker so we don't re-process this video
             _store_scan_marker(video_id, person_count, inference_time_ms)
+
+        # --- Post-submission: trigger cargo classification for trailers ---
+        if vehicle_predictions:
+            try:
+                from cargo_classifier import CargoClassifier
+                cargo_clf = CargoClassifier()
+                for pred in vehicle_predictions:
+                    tier1 = pred.get('vehicle_tier1')
+                    cls_name = pred['tags'].get('class', '')
+                    if tier1 == 'trailer' or 'trailer' in cls_name.lower():
+                        # Cargo classification runs asynchronously after prediction is stored
+                        pred['tags']['needs_cargo_classification'] = True
+            except Exception as e:
+                logger.debug(f"Cargo classification setup skipped: {e}")
+
+        # --- Post-submission: record YOLO votes and spatial scale checks ---
+        if vehicle_predictions and camera_id:
+            try:
+                from spatial_scale import SpatialScaleModel
+                spatial_model = SpatialScaleModel()
+                for pred in vehicle_predictions:
+                    cls = pred['tags']['class']
+                    plausibility = spatial_model.check_plausibility(
+                        camera_id, cls, pred['bbox'], (img_width, img_height)
+                    )
+                    if plausibility:
+                        pred['tags']['spatial_scale_vote'] = plausibility
+            except Exception as e:
+                logger.debug(f"Spatial scale check skipped for video {video_id}: {e}")
 
         result = {
             'video_id': video_id,

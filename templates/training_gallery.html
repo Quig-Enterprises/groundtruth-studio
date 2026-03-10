@@ -30,6 +30,15 @@
             <select id="classification-filter" class="filter-select">
                 <option value="">All Classes</option>
             </select>
+            <select id="tier1-filter" class="filter-select">
+                <option value="">All Tier 1</option>
+            </select>
+            <select id="tier2-filter" class="filter-select">
+                <option value="">All Tier 2</option>
+            </select>
+            <select id="tier3-filter" class="filter-select">
+                <option value="">All Tier 3</option>
+            </select>
             <select id="camera-filter" class="filter-select">
                 <option value="">All Cameras</option>
             </select>
@@ -41,7 +50,7 @@
                 <option value="confidence">Highest Confidence</option>
                 <option value="date">Newest First</option>
             </select>
-            <a href="/review?filter=cross_camera" class="btn btn-ghost btn-sm" style="margin-left:auto;font-size:13px;text-decoration:none;color:#94a3b8;white-space:nowrap" title="Review cross-camera vehicle matches">Cross-Camera Review</a>
+            <a href="/cross-camera-review" class="btn btn-ghost btn-sm" style="margin-left:auto;font-size:13px;text-decoration:none;color:#94a3b8;white-space:nowrap" title="Review cross-camera vehicle matches">Cross-Camera Review</a>
         </div>
         <div class="filter-stats" id="filter-stats"></div>
     </div>
@@ -55,8 +64,18 @@
         </div>
         <div class="action-bar-right">
             <div class="reclassify-group" id="reclassify-group" style="display:none">
-                <input id="reclassify-input" list="reclassify-list" class="filter-select reclassify-combo" placeholder="Type or choose class..." autocomplete="off">
-                <datalist id="reclassify-list"></datalist>
+                <select id="reclassify-tier1" class="filter-select" style="min-width:100px">
+                    <option value="">— Tier 1 —</option>
+                </select>
+                <select id="reclassify-tier2" class="filter-select" style="min-width:120px">
+                    <option value="">— Tier 2 —</option>
+                </select>
+                <select id="reclassify-tier3" class="filter-select" style="min-width:130px">
+                    <option value="">— Tier 3 (optional) —</option>
+                </select>
+                <label id="reclassify-multi-label" style="display:none;align-items:center;gap:4px;font-size:12px;color:#94a3b8;cursor:pointer;white-space:nowrap">
+                    <input type="checkbox" id="reclassify-multi-check"> Multi-entity (redraw bboxes)
+                </label>
                 <button class="btn btn-primary" id="btn-apply-reclassify">Apply</button>
                 <button class="btn btn-ghost" id="btn-cancel-reclassify">Cancel</button>
             </div>
@@ -97,8 +116,18 @@
                     <span id="modal-selection-count">0 selected</span>
                     <button class="btn btn-ghost btn-sm" id="modal-select-all">Select All</button>
                     <div class="modal-reclassify-group" id="modal-reclassify-group" style="display:none">
-                        <input id="modal-reclassify-input" list="modal-reclassify-list" class="filter-select reclassify-combo" placeholder="Type or choose class..." autocomplete="off">
-                        <datalist id="modal-reclassify-list"></datalist>
+                        <select id="modal-reclassify-tier1" class="filter-select" style="min-width:100px">
+                            <option value="">— Tier 1 —</option>
+                        </select>
+                        <select id="modal-reclassify-tier2" class="filter-select" style="min-width:120px">
+                            <option value="">— Tier 2 —</option>
+                        </select>
+                        <select id="modal-reclassify-tier3" class="filter-select" style="min-width:130px">
+                            <option value="">— Tier 3 (optional) —</option>
+                        </select>
+                        <label id="modal-reclassify-multi-label" style="display:none;align-items:center;gap:4px;font-size:12px;color:#94a3b8;cursor:pointer;white-space:nowrap">
+                            <input type="checkbox" id="modal-reclassify-multi-check"> Multi-entity
+                        </label>
                         <button class="btn btn-primary btn-sm" id="modal-apply-reclassify">Apply</button>
                         <button class="btn btn-ghost btn-sm" id="modal-cancel-reclassify">Cancel</button>
                     </div>

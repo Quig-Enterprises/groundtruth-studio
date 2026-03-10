@@ -178,7 +178,16 @@ def _query_ollama(composite_b64, predicted_class, confidence, scenario):
         f'- If it IS a vehicle but a different type than predicted, set is_vehicle=true with the correct type\n'
         f'- Be SKEPTICAL: low-confidence detections ({conf_pct}%) are often false positives like shadows, snow, or background objects\n'
         f'- Look carefully at the LEFT crop — can you clearly see a real motor vehicle, trailer, or snowmobile?\n\n'
-        f'Respond ONLY with JSON: {{"is_vehicle": bool, "suggested_class": "...", "confidence": 0.0-1.0, "reasoning": "..."}}'
+        f'CLASSIFICATION:\n'
+        f'- tier1: One of: vehicle, trailer, boat, motorcycle, person (broad category)\n'
+        f'- tier2: Subcategory (e.g., small_vehicle, pickup, commercial_truck, large_vehicle, bus, offroad, boat_trailer, utility_trailer, powerboat, non_motorized, personal_watercraft)\n'
+        f'- tier3: Specific type (e.g., sedan, SUV, pickup — open bed, box truck, pontoon, jet ski) or null if unsure\n'
+        f'- role: One of: civilian, law_enforcement, fire, ems, government, commercial, utility, construction, rental, military (based on markings/livery)\n'
+        f'- cargo_type: If trailer, what is loaded? (boat, snowmobile, ATV, vehicle, equipment, nothing) or null\n'
+        f'- cargo_count: Number of cargo items on trailer, or null\n\n'
+        f'Respond ONLY with JSON: {{"is_vehicle": bool, "suggested_class": "...", "confidence": 0.0-1.0, "reasoning": "...", '
+        f'"tier1": "...", "tier2": "...", "tier3": "..." or null, "role": "..." or null, '
+        f'"cargo_type": "..." or null, "cargo_count": int or null}}'
     )
 
     payload = {
@@ -239,12 +248,31 @@ def _parse_vlm_response(response_text):
         return None
 
     # Normalize and validate
-    return {
+    parsed = {
         'is_vehicle': bool(result.get('is_vehicle', True)),
         'suggested_class': str(result.get('suggested_class', 'unknown')),
         'confidence': max(0.0, min(1.0, float(result.get('confidence', 0.5)))),
         'reasoning': str(result.get('reasoning', ''))[:500]
     }
+
+    # Extract tiered classification fields (optional — VLM may not always return them)
+    if result.get('tier1'):
+        parsed['tier1'] = str(result['tier1']).lower().strip()
+    if result.get('tier2'):
+        parsed['tier2'] = str(result['tier2']).lower().strip()
+    if result.get('tier3'):
+        parsed['tier3'] = str(result['tier3']).lower().strip()
+    if result.get('role'):
+        parsed['role'] = str(result['role']).lower().strip()
+    if result.get('cargo_type'):
+        parsed['cargo_type'] = str(result['cargo_type']).lower().strip()
+    if result.get('cargo_count') is not None:
+        try:
+            parsed['cargo_count'] = int(result['cargo_count'])
+        except (ValueError, TypeError):
+            pass
+
+    return parsed
 
 
 def get_config():

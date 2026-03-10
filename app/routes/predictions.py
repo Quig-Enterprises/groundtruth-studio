@@ -37,7 +37,7 @@ def mobile_review_page():
 
 @predictions_bp.route('/cross-camera-review')
 def cross_camera_review_page():
-    return redirect('/review?filter=cross_camera')
+    return render_template('cross_camera_review.html')
 
 
 @predictions_bp.route('/vehicle-metrics/<path:class_name>')

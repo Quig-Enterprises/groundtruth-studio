@@ -823,6 +823,161 @@ CREATE TABLE IF NOT EXISTS ptz_calibration_points (
 );
 CREATE INDEX IF NOT EXISTS idx_ptz_cal_pair
     ON ptz_calibration_points(source_camera_id, target_camera_id);
+
+-- ============================================================
+-- EcoEye Vision System Improvement Tables
+-- ============================================================
+
+-- Spatial scale models (per-camera, per-class size statistics at frame positions)
+CREATE TABLE IF NOT EXISTS spatial_scale_models (
+    id BIGSERIAL PRIMARY KEY,
+    camera_id VARCHAR(100) NOT NULL,
+    classification VARCHAR(100) NOT NULL,
+    grid_x INTEGER NOT NULL,
+    grid_y INTEGER NOT NULL,
+    sample_count INTEGER DEFAULT 0,
+    mean_width REAL,
+    mean_height REAL,
+    std_width REAL,
+    std_height REAL,
+    p5_width REAL,
+    p95_width REAL,
+    p5_height REAL,
+    p95_height REAL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(camera_id, classification, grid_x, grid_y)
+);
+CREATE INDEX IF NOT EXISTS idx_spatial_scale_camera ON spatial_scale_models(camera_id);
+CREATE INDEX IF NOT EXISTS idx_spatial_scale_class ON spatial_scale_models(classification);
+
+-- Classification hierarchy lookup table (Tier 1/2/3)
+CREATE TABLE IF NOT EXISTS classification_hierarchy (
+    id SERIAL PRIMARY KEY,
+    tier1 VARCHAR(50) NOT NULL,
+    tier2 VARCHAR(100) NOT NULL,
+    tier3 VARCHAR(100),
+    yolo_prompt VARCHAR(200),
+    display_name VARCHAR(200),
+    enforcement_eligible BOOLEAN DEFAULT FALSE,
+    disqualification_reason TEXT,
+    is_active BOOLEAN DEFAULT TRUE,
+    UNIQUE(tier1, tier2, tier3)
+);
+CREATE INDEX IF NOT EXISTS idx_class_hierarchy_tier1 ON classification_hierarchy(tier1);
+CREATE INDEX IF NOT EXISTS idx_class_hierarchy_tier2 ON classification_hierarchy(tier2);
+CREATE INDEX IF NOT EXISTS idx_class_hierarchy_tier3 ON classification_hierarchy(tier3);
+
+-- Classification roles (independent axis: law_enforcement, commercial, etc.)
+CREATE TABLE IF NOT EXISTS classification_roles (
+    name VARCHAR(50) PRIMARY KEY,
+    display_name VARCHAR(100),
+    visual_cues TEXT,
+    is_active BOOLEAN DEFAULT TRUE
+);
+
+-- Classification votes (multi-voter consensus system)
+CREATE TABLE IF NOT EXISTS classification_votes (
+    id BIGSERIAL PRIMARY KEY,
+    prediction_id BIGINT NOT NULL REFERENCES ai_predictions(id) ON DELETE CASCADE,
+    voter VARCHAR(50) NOT NULL,
+    voted_tier1 VARCHAR(50),
+    voted_tier2 VARCHAR(100),
+    voted_tier3 VARCHAR(100),
+    voted_role VARCHAR(50),
+    voted_cargo VARCHAR(100),
+    confidence REAL,
+    metadata JSONB,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    UNIQUE(prediction_id, voter)
+);
+CREATE INDEX IF NOT EXISTS idx_class_votes_prediction ON classification_votes(prediction_id);
+CREATE INDEX IF NOT EXISTS idx_class_votes_voter ON classification_votes(voter);
+
+-- Visit consistency flags (cross-camera classification mismatch tracking)
+CREATE TABLE IF NOT EXISTS visit_consistency_flags (
+    id BIGSERIAL PRIMARY KEY,
+    visit_id UUID REFERENCES visits(visit_id),
+    identity_id UUID REFERENCES identities(identity_id),
+    camera_a VARCHAR(100),
+    camera_b VARCHAR(100),
+    class_a VARCHAR(100),
+    class_b VARCHAR(100),
+    flag_type VARCHAR(50),
+    resolved BOOLEAN DEFAULT FALSE,
+    resolution TEXT,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_visit_flags_visit ON visit_consistency_flags(visit_id);
+CREATE INDEX IF NOT EXISTS idx_visit_flags_resolved ON visit_consistency_flags(resolved);
+
+-- PTZ stationary references (for self-calibration)
+CREATE TABLE IF NOT EXISTS ptz_stationary_references (
+    id BIGSERIAL PRIMARY KEY,
+    camera_id VARCHAR(100) NOT NULL,
+    reference_label TEXT,
+    observations JSONB DEFAULT '[]',
+    estimated_distance REAL,
+    estimated_real_width REAL,
+    estimated_real_height REAL,
+    confidence REAL,
+    is_active BOOLEAN DEFAULT TRUE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_ptz_stationary_camera ON ptz_stationary_references(camera_id);
+
+-- PTZ zoom calibration (focal length per zoom level)
+CREATE TABLE IF NOT EXISTS ptz_zoom_calibration (
+    id SERIAL PRIMARY KEY,
+    camera_id VARCHAR(100) NOT NULL,
+    zoom_level REAL NOT NULL,
+    effective_focal_length REAL,
+    pixels_per_degree_h REAL,
+    pixels_per_degree_v REAL,
+    sample_count INTEGER DEFAULT 0,
+    UNIQUE(camera_id, zoom_level)
+);
+CREATE INDEX IF NOT EXISTS idx_ptz_zoom_camera ON ptz_zoom_calibration(camera_id);
+
+-- Seasonal priors (Bayesian confidence adjustment by month)
+CREATE TABLE IF NOT EXISTS seasonal_priors (
+    id SERIAL PRIMARY KEY,
+    tier3_class VARCHAR(100) NOT NULL,
+    month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
+    prior_weight REAL DEFAULT 1.0,
+    source VARCHAR(20) DEFAULT 'manual',
+    observation_count INTEGER DEFAULT 0,
+    UNIQUE(tier3_class, month)
+);
+CREATE INDEX IF NOT EXISTS idx_seasonal_priors_class ON seasonal_priors(tier3_class);
+
+-- Background references (clean background plates per camera)
+CREATE TABLE IF NOT EXISTS background_references (
+    id SERIAL PRIMARY KEY,
+    camera_id VARCHAR(100) NOT NULL,
+    image_path TEXT NOT NULL,
+    time_category VARCHAR(20),
+    season VARCHAR(20),
+    frame_count INTEGER,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+CREATE INDEX IF NOT EXISTS idx_bg_refs_camera ON background_references(camera_id);
+
+-- Camera degradation profiles (for synthetic data generation)
+CREATE TABLE IF NOT EXISTS camera_degradation_profiles (
+    id SERIAL PRIMARY KEY,
+    camera_id VARCHAR(100) NOT NULL,
+    distance_bucket VARCHAR(20),
+    avg_crop_width REAL,
+    avg_crop_height REAL,
+    noise_level REAL,
+    compression_quality REAL,
+    motion_blur_kernel REAL,
+    color_profile JSONB,
+    sample_count INTEGER DEFAULT 0,
+    UNIQUE(camera_id, distance_bucket)
+);
+CREATE INDEX IF NOT EXISTS idx_camera_degrade_camera ON camera_degradation_profiles(camera_id);
 """
 
 
@@ -882,7 +1037,11 @@ def verify_schema():
         'camera_object_tracks', 'cross_camera_links', 'camera_crossing_lines',
         'video_tracks', 'clip_analysis_results',
         'camera_overlap_groups', 'camera_sync_selections',
-        'ptz_calibration_points'
+        'ptz_calibration_points',
+        'spatial_scale_models', 'classification_hierarchy', 'classification_roles',
+        'classification_votes', 'visit_consistency_flags',
+        'ptz_stationary_references', 'ptz_zoom_calibration', 'seasonal_priors',
+        'background_references', 'camera_degradation_profiles'
     ]
 
     with get_cursor(commit=False) as cursor:
@@ -1684,6 +1843,198 @@ def run_migrations():
             """)
             cursor.execute("CREATE INDEX IF NOT EXISTS idx_ptz_cal_pair ON ptz_calibration_points(source_camera_id, target_camera_id)")
             logger.info("PTZ calibration points table ready")
+
+            # ============================================================
+            # EcoEye Vision System Improvement Migrations
+            # ============================================================
+
+            # New tables for vision improvement system
+            for tbl_sql in [
+                """CREATE TABLE IF NOT EXISTS spatial_scale_models (
+                    id BIGSERIAL PRIMARY KEY,
+                    camera_id VARCHAR(100) NOT NULL,
+                    classification VARCHAR(100) NOT NULL,
+                    grid_x INTEGER NOT NULL,
+                    grid_y INTEGER NOT NULL,
+                    sample_count INTEGER DEFAULT 0,
+                    mean_width REAL, mean_height REAL,
+                    std_width REAL, std_height REAL,
+                    p5_width REAL, p95_width REAL,
+                    p5_height REAL, p95_height REAL,
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    UNIQUE(camera_id, classification, grid_x, grid_y)
+                )""",
+                """CREATE TABLE IF NOT EXISTS classification_hierarchy (
+                    id SERIAL PRIMARY KEY,
+                    tier1 VARCHAR(50) NOT NULL,
+                    tier2 VARCHAR(100) NOT NULL,
+                    tier3 VARCHAR(100),
+                    yolo_prompt VARCHAR(200),
+                    display_name VARCHAR(200),
+                    enforcement_eligible BOOLEAN DEFAULT FALSE,
+                    disqualification_reason TEXT,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    UNIQUE(tier1, tier2, tier3)
+                )""",
+                """CREATE TABLE IF NOT EXISTS classification_roles (
+                    name VARCHAR(50) PRIMARY KEY,
+                    display_name VARCHAR(100),
+                    visual_cues TEXT,
+                    is_active BOOLEAN DEFAULT TRUE
+                )""",
+                """CREATE TABLE IF NOT EXISTS classification_votes (
+                    id BIGSERIAL PRIMARY KEY,
+                    prediction_id BIGINT NOT NULL REFERENCES ai_predictions(id) ON DELETE CASCADE,
+                    voter VARCHAR(50) NOT NULL,
+                    voted_tier1 VARCHAR(50),
+                    voted_tier2 VARCHAR(100),
+                    voted_tier3 VARCHAR(100),
+                    voted_role VARCHAR(50),
+                    voted_cargo VARCHAR(100),
+                    confidence REAL,
+                    metadata JSONB,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    UNIQUE(prediction_id, voter)
+                )""",
+                """CREATE TABLE IF NOT EXISTS visit_consistency_flags (
+                    id BIGSERIAL PRIMARY KEY,
+                    visit_id UUID REFERENCES visits(visit_id),
+                    identity_id UUID REFERENCES identities(identity_id),
+                    camera_a VARCHAR(100),
+                    camera_b VARCHAR(100),
+                    class_a VARCHAR(100),
+                    class_b VARCHAR(100),
+                    flag_type VARCHAR(50),
+                    resolved BOOLEAN DEFAULT FALSE,
+                    resolution TEXT,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )""",
+                """CREATE TABLE IF NOT EXISTS ptz_stationary_references (
+                    id BIGSERIAL PRIMARY KEY,
+                    camera_id VARCHAR(100) NOT NULL,
+                    reference_label TEXT,
+                    observations JSONB DEFAULT '[]',
+                    estimated_distance REAL,
+                    estimated_real_width REAL,
+                    estimated_real_height REAL,
+                    confidence REAL,
+                    is_active BOOLEAN DEFAULT TRUE,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+                    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )""",
+                """CREATE TABLE IF NOT EXISTS ptz_zoom_calibration (
+                    id SERIAL PRIMARY KEY,
+                    camera_id VARCHAR(100) NOT NULL,
+                    zoom_level REAL NOT NULL,
+                    effective_focal_length REAL,
+                    pixels_per_degree_h REAL,
+                    pixels_per_degree_v REAL,
+                    sample_count INTEGER DEFAULT 0,
+                    UNIQUE(camera_id, zoom_level)
+                )""",
+                """CREATE TABLE IF NOT EXISTS seasonal_priors (
+                    id SERIAL PRIMARY KEY,
+                    tier3_class VARCHAR(100) NOT NULL,
+                    month INTEGER NOT NULL CHECK (month BETWEEN 1 AND 12),
+                    prior_weight REAL DEFAULT 1.0,
+                    source VARCHAR(20) DEFAULT 'manual',
+                    observation_count INTEGER DEFAULT 0,
+                    UNIQUE(tier3_class, month)
+                )""",
+                """CREATE TABLE IF NOT EXISTS background_references (
+                    id SERIAL PRIMARY KEY,
+                    camera_id VARCHAR(100) NOT NULL,
+                    image_path TEXT NOT NULL,
+                    time_category VARCHAR(20),
+                    season VARCHAR(20),
+                    frame_count INTEGER,
+                    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+                )""",
+                """CREATE TABLE IF NOT EXISTS camera_degradation_profiles (
+                    id SERIAL PRIMARY KEY,
+                    camera_id VARCHAR(100) NOT NULL,
+                    distance_bucket VARCHAR(20),
+                    avg_crop_width REAL, avg_crop_height REAL,
+                    noise_level REAL,
+                    compression_quality REAL,
+                    motion_blur_kernel REAL,
+                    color_profile JSONB,
+                    sample_count INTEGER DEFAULT 0,
+                    UNIQUE(camera_id, distance_bucket)
+                )""",
+            ]:
+                try:
+                    cursor.execute(tbl_sql)
+                except Exception as e:
+                    logger.debug(f"Table creation note: {e}")
+
+            # Indexes for new tables
+            new_indexes = [
+                "CREATE INDEX IF NOT EXISTS idx_spatial_scale_camera ON spatial_scale_models(camera_id)",
+                "CREATE INDEX IF NOT EXISTS idx_spatial_scale_class ON spatial_scale_models(classification)",
+                "CREATE INDEX IF NOT EXISTS idx_class_hierarchy_tier1 ON classification_hierarchy(tier1)",
+                "CREATE INDEX IF NOT EXISTS idx_class_hierarchy_tier2 ON classification_hierarchy(tier2)",
+                "CREATE INDEX IF NOT EXISTS idx_class_hierarchy_tier3 ON classification_hierarchy(tier3)",
+                "CREATE INDEX IF NOT EXISTS idx_class_votes_prediction ON classification_votes(prediction_id)",
+                "CREATE INDEX IF NOT EXISTS idx_class_votes_voter ON classification_votes(voter)",
+                "CREATE INDEX IF NOT EXISTS idx_visit_flags_visit ON visit_consistency_flags(visit_id)",
+                "CREATE INDEX IF NOT EXISTS idx_visit_flags_resolved ON visit_consistency_flags(resolved)",
+                "CREATE INDEX IF NOT EXISTS idx_ptz_stationary_camera ON ptz_stationary_references(camera_id)",
+                "CREATE INDEX IF NOT EXISTS idx_ptz_zoom_camera ON ptz_zoom_calibration(camera_id)",
+                "CREATE INDEX IF NOT EXISTS idx_seasonal_priors_class ON seasonal_priors(tier3_class)",
+                "CREATE INDEX IF NOT EXISTS idx_bg_refs_camera ON background_references(camera_id)",
+                "CREATE INDEX IF NOT EXISTS idx_camera_degrade_camera ON camera_degradation_profiles(camera_id)",
+            ]
+            for idx_sql in new_indexes:
+                try:
+                    cursor.execute(idx_sql)
+                except Exception:
+                    pass
+            logger.info("EcoEye Vision Improvement tables ready")
+
+            # New columns on ai_predictions for tiered classification + voting
+            ai_pred_columns = [
+                ("vehicle_tier1", "VARCHAR(50)"),
+                ("vehicle_tier2", "VARCHAR(100)"),
+                ("vehicle_tier3", "VARCHAR(100)"),
+                ("vehicle_role", "VARCHAR(50)"),
+                ("confidence_tier1", "REAL"),
+                ("confidence_tier2", "REAL"),
+                ("confidence_tier3", "REAL"),
+                ("confidence_role", "REAL"),
+                ("enforcement_eligible", "BOOLEAN"),
+                ("disqualification_reason", "TEXT"),
+                ("cargo_type", "VARCHAR(100)"),
+                ("cargo_count", "INTEGER"),
+                ("source_type", "VARCHAR(20) DEFAULT 'real'"),
+                ("parent_entity_prediction_id", "BIGINT REFERENCES ai_predictions(id)"),
+                ("entity_relationship", "VARCHAR(50)"),
+                ("is_training_candidate", "BOOLEAN DEFAULT TRUE"),
+                ("training_exclusion_reason", "VARCHAR(100)"),
+                ("voter_count", "INTEGER DEFAULT 0"),
+                ("voter_agreement", "INTEGER DEFAULT 0"),
+                ("consensus_tier", "VARCHAR(20)"),
+                ("review_queue", "VARCHAR(20)"),
+            ]
+            for col_name, col_type in ai_pred_columns:
+                cursor.execute(f"ALTER TABLE ai_predictions ADD COLUMN IF NOT EXISTS {col_name} {col_type}")
+
+            # Indexes for new ai_predictions columns
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_tier1 ON ai_predictions(vehicle_tier1)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_tier2 ON ai_predictions(vehicle_tier2)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_review_queue ON ai_predictions(review_queue)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_consensus ON ai_predictions(consensus_tier)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_training ON ai_predictions(is_training_candidate)")
+            cursor.execute("CREATE INDEX IF NOT EXISTS idx_ai_predictions_entity_parent ON ai_predictions(parent_entity_prediction_id)")
+            logger.info("ai_predictions tiered classification columns ready")
+
+            # New column on camera_object_tracks
+            cursor.execute("ALTER TABLE camera_object_tracks ADD COLUMN IF NOT EXISTS best_crop_prediction_id BIGINT")
+            logger.info("camera_object_tracks best_crop_prediction_id ready")
+
+            # Add overlap_zones column to camera_overlap_groups
+            cursor.execute("ALTER TABLE camera_overlap_groups ADD COLUMN IF NOT EXISTS overlap_zones JSONB")
+            logger.info("camera_overlap_groups overlap_zones ready")
 
         logger.info("Migrations completed successfully")
     except Exception as e:

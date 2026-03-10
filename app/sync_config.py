@@ -56,9 +56,10 @@ class SyncConfigManager:
             iterations=100000,
         )
 
-        # Use a combination of system identifiers
-        # In production, use a secure secret from environment
-        secret = os.environ.get('GROUNDTRUTH_ENCRYPTION_SECRET', 'default-secret-change-me')
+        # Use a secure secret from environment (required - no fallback)
+        secret = os.environ.get('GROUNDTRUTH_ENCRYPTION_SECRET')
+        if not secret:
+            raise RuntimeError("GROUNDTRUTH_ENCRYPTION_SECRET environment variable must be set. Generate one with: python3 -c \"import secrets; print(secrets.token_urlsafe(32))\"")
         key = base64.urlsafe_b64encode(kdf.derive(secret.encode()))
 
         return key.decode()

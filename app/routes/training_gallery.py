@@ -136,6 +136,52 @@ def get_gallery_filters():
                 ''', tuple(camera_params))
                 reject_reasons = [dict(row) for row in cursor.fetchall()]
 
+            # Tier filter values with counts
+            cursor.execute(f'''
+                SELECT p.vehicle_tier1 AS value, COUNT(*) AS count
+                FROM ai_predictions p
+                {camera_join}
+                WHERE p.review_status IN %s
+                  AND p.vehicle_tier1 IS NOT NULL
+                  {camera_filter}
+                GROUP BY p.vehicle_tier1
+                ORDER BY count DESC
+            ''', (status_list,) + tuple(camera_params))
+            tier1_values = [dict(row) for row in cursor.fetchall()]
+
+            cursor.execute(f'''
+                SELECT p.vehicle_tier1, p.vehicle_tier2 AS value, COUNT(*) AS count
+                FROM ai_predictions p
+                {camera_join}
+                WHERE p.review_status IN %s
+                  AND p.vehicle_tier2 IS NOT NULL
+                  {camera_filter}
+                GROUP BY p.vehicle_tier1, p.vehicle_tier2
+                ORDER BY count DESC
+            ''', (status_list,) + tuple(camera_params))
+            tier2_values = [dict(row) for row in cursor.fetchall()]
+
+            cursor.execute(f'''
+                SELECT p.vehicle_tier2, p.vehicle_tier3 AS value, COUNT(*) AS count
+                FROM ai_predictions p
+                {camera_join}
+                WHERE p.review_status IN %s
+                  AND p.vehicle_tier3 IS NOT NULL
+                  {camera_filter}
+                GROUP BY p.vehicle_tier2, p.vehicle_tier3
+                ORDER BY count DESC
+            ''', (status_list,) + tuple(camera_params))
+            tier3_values = [dict(row) for row in cursor.fetchall()]
+
+            # Full hierarchy for reclassify picker
+            cursor.execute('''
+                SELECT tier1, tier2, tier3, display_name
+                FROM classification_hierarchy
+                WHERE is_active = true
+                ORDER BY tier1, tier2, COALESCE(tier3, '')
+            ''')
+            hierarchy = [dict(row) for row in cursor.fetchall()]
+
         return jsonify({
             'success': True,
             'scenarios': scenarios,
@@ -143,7 +189,11 @@ def get_gallery_filters():
             'all_classes': all_classes,
             'pending_count': pending_count,
             'rejected_count': rejected_count,
-            'reject_reasons': reject_reasons
+            'reject_reasons': reject_reasons,
+            'tier1_values': tier1_values,
+            'tier2_values': tier2_values,
+            'tier3_values': tier3_values,
+            'hierarchy': hierarchy
         })
 
     except Exception as e:
@@ -162,6 +212,10 @@ def get_gallery_items():
         per_page = request.args.get('per_page', 60, type=int)
         sort = request.args.get('sort', 'confidence')
         camera = request.args.get('camera')
+        tier1 = request.args.get('tier1')
+        tier2 = request.args.get('tier2')
+        tier3 = request.args.get('tier3')
+        review_queue = request.args.get('review_queue')
 
         offset = (page - 1) * per_page
 
@@ -175,6 +229,18 @@ def get_gallery_items():
         if scenario:
             filter_clauses.append('cc.scenario = %s')
             filter_params.append(scenario)
+        if tier1:
+            filter_clauses.append('p.vehicle_tier1 = %s')
+            filter_params.append(tier1)
+        if tier2:
+            filter_clauses.append('p.vehicle_tier2 = %s')
+            filter_params.append(tier2)
+        if tier3:
+            filter_clauses.append('p.vehicle_tier3 = %s')
+            filter_params.append(tier3)
+        if review_queue:
+            filter_clauses.append('p.review_queue = %s')
+            filter_params.append(review_queue)
 
         # Build the classification join and where clauses
         cc_join = 'LEFT JOIN classification_classes cc ON cc.name = p.classification'
@@ -218,6 +284,17 @@ def get_gallery_items():
                     p.video_id,
                     p.scenario,
                     p.created_at,
+                    p.vehicle_tier1,
+                    p.vehicle_tier2,
+                    p.vehicle_tier3,
+                    p.vehicle_role,
+                    p.voter_count,
+                    p.voter_agreement,
+                    p.consensus_tier,
+                    p.review_queue,
+                    p.is_training_candidate,
+                    p.enforcement_eligible,
+                    p.cargo_type,
                     v.thumbnail_path,
                     v.width AS video_width,
                     v.height AS video_height,
@@ -302,6 +379,10 @@ def get_gallery_items():
                     p.video_id,
                     p.scenario,
                     p.created_at,
+                    p.vehicle_tier1,
+                    p.vehicle_tier2,
+                    p.vehicle_tier3,
+                    p.cargo_type,
                     v.thumbnail_path,
                     v.width AS video_width,
                     v.height AS video_height,
@@ -388,6 +469,10 @@ def get_gallery_items():
                         p.video_id,
                         p.scenario,
                         p.created_at,
+                        p.vehicle_tier1,
+                        p.vehicle_tier2,
+                        p.vehicle_tier3,
+                        p.cargo_type,
                         v.thumbnail_path,
                         v.width AS video_width,
                         v.height AS video_height,
@@ -441,6 +526,10 @@ def get_gallery_items():
                         p.video_id,
                         p.scenario,
                         p.created_at,
+                        p.vehicle_tier1,
+                        p.vehicle_tier2,
+                        p.vehicle_tier3,
+                        p.cargo_type,
                         v.thumbnail_path,
                         v.width AS video_width,
                         v.height AS video_height,
@@ -490,6 +579,10 @@ def get_gallery_items():
                     p.video_id,
                     p.scenario,
                     p.created_at,
+                    p.vehicle_tier1,
+                    p.vehicle_tier2,
+                    p.vehicle_tier3,
+                    p.cargo_type,
                     v.thumbnail_path,
                     v.width AS video_width,
                     v.height AS video_height,
@@ -724,8 +817,14 @@ def bulk_gallery_action():
         if not prediction_ids or not isinstance(prediction_ids, list):
             return jsonify({'success': False, 'error': 'prediction_ids array required'}), 400
 
-        if action == 'reclassify' and not new_classification:
-            return jsonify({'success': False, 'error': 'new_classification required for reclassify action'}), 400
+        vehicle_tier1 = data.get('vehicle_tier1')
+        vehicle_tier2 = data.get('vehicle_tier2')
+        vehicle_tier3 = data.get('vehicle_tier3')
+        cargo_type = data.get('cargo_type')
+        multi_entity = data.get('multi_entity', False)
+
+        if action == 'reclassify' and not new_classification and not vehicle_tier2 and not multi_entity:
+            return jsonify({'success': False, 'error': 'new_classification or vehicle_tier2 required for reclassify action'}), 400
 
         # Normalize classification to lowercase to match classification_classes table
         if new_classification:
@@ -733,24 +832,68 @@ def bulk_gallery_action():
 
         with get_cursor(commit=True) as cursor:
             if action == 'reclassify':
-                logger.info(f'Reclassify: ids={prediction_ids}, new_class={new_classification}')
-                cursor.execute('SELECT id, review_status, classification FROM ai_predictions WHERE id = ANY(%s)', (prediction_ids,))
-                logger.info(f'Reclassify PRE-UPDATE: {[dict(r) for r in cursor.fetchall()]}')
+                tier_only = not new_classification and vehicle_tier2
+                label = vehicle_tier3 or vehicle_tier2 or ''
+                logger.info(f'Reclassify: ids={prediction_ids}, new_class={new_classification}, tiers={vehicle_tier1}/{vehicle_tier2}/{vehicle_tier3}, multi_entity={multi_entity}')
 
-                cursor.execute('''
-                    UPDATE ai_predictions
-                    SET classification = %s,
-                        review_status = 'approved',
-                        reviewed_by = COALESCE(reviewed_by, 'gallery_reclassify'),
-                        reviewed_at = COALESCE(reviewed_at, NOW()),
-                        corrected_tags = COALESCE(corrected_tags, '{}'::jsonb)
-                            || jsonb_build_object('gallery_reclassify', %s, 'vehicle_subtype', %s)
-                    WHERE id = ANY(%s)
-                ''', (new_classification, new_classification, new_classification, prediction_ids))
+                if multi_entity:
+                    # Multi-entity: route to decompose queue for bbox redrawing
+                    tier_sets = []
+                    tier_params = []
+                    if vehicle_tier1:
+                        tier_sets.append('vehicle_tier1 = %s')
+                        tier_params.append(vehicle_tier1)
+                    if vehicle_tier2:
+                        tier_sets.append('vehicle_tier2 = %s')
+                        tier_params.append(vehicle_tier2)
+                    if vehicle_tier3:
+                        tier_sets.append('vehicle_tier3 = %s')
+                        tier_params.append(vehicle_tier3)
+                    tier_clause = ', ' + ', '.join(tier_sets) if tier_sets else ''
+                    cursor.execute(f'''
+                        UPDATE ai_predictions
+                        SET review_status = 'pending',
+                            review_queue = 'decompose'{tier_clause},
+                            corrected_tags = COALESCE(corrected_tags, '{{}}'::jsonb)
+                                || '{{"needs_decomposition": true, "multi_entity": true}}'::jsonb
+                        WHERE id = ANY(%s)
+                    ''', tier_params + [prediction_ids])
+                elif tier_only:
+                    # Tier-based reclassify: update tier columns, keep classification unchanged
+                    cargo_set = ', cargo_type = %s' if cargo_type else ''
+                    cargo_params = [cargo_type] if cargo_type else []
+                    cursor.execute(f'''
+                        UPDATE ai_predictions
+                        SET vehicle_tier1 = %s,
+                            vehicle_tier2 = %s,
+                            vehicle_tier3 = %s{cargo_set},
+                            review_status = 'approved',
+                            reviewed_by = COALESCE(reviewed_by, 'gallery_reclassify'),
+                            reviewed_at = COALESCE(reviewed_at, NOW()),
+                            corrected_tags = COALESCE(corrected_tags, '{{}}'::jsonb)
+                                || jsonb_build_object('gallery_reclassify', %s, 'vehicle_subtype', %s)
+                        WHERE id = ANY(%s)
+                    ''', [vehicle_tier1, vehicle_tier2, vehicle_tier3] + cargo_params +
+                         [label, label, prediction_ids])
+                else:
+                    # Flat-class reclassify: update classification + tier columns
+                    cursor.execute('''
+                        UPDATE ai_predictions
+                        SET classification = %s,
+                            vehicle_tier1 = COALESCE(%s, vehicle_tier1),
+                            vehicle_tier2 = COALESCE(%s, vehicle_tier2),
+                            vehicle_tier3 = %s,
+                            review_status = 'approved',
+                            reviewed_by = COALESCE(reviewed_by, 'gallery_reclassify'),
+                            reviewed_at = COALESCE(reviewed_at, NOW()),
+                            corrected_tags = COALESCE(corrected_tags, '{}'::jsonb)
+                                || jsonb_build_object('gallery_reclassify', %s, 'vehicle_subtype', %s)
+                        WHERE id = ANY(%s)
+                    ''', (new_classification, vehicle_tier1, vehicle_tier2, vehicle_tier3,
+                          new_classification, new_classification, prediction_ids))
                 affected = cursor.rowcount
 
-                cursor.execute('SELECT id, review_status, classification FROM ai_predictions WHERE id = ANY(%s)', (prediction_ids,))
-                logger.info(f'Reclassify POST-UPDATE: {[dict(r) for r in cursor.fetchall()]}, affected={affected}')
+                logger.info(f'Reclassify: affected={affected}')
 
             elif action == 'approve':
                 cursor.execute('''

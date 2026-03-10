@@ -307,12 +307,14 @@ class YOLOExporter:
                 video = dict(cursor.fetchone())
 
                 cursor.execute('''
-                    SELECT ka.*, ap.quality_score as pred_quality_score
+                    SELECT ka.*, ap.quality_score as pred_quality_score,
+                           ap.is_training_candidate, ap.training_exclusion_reason
                     FROM keyframe_annotations ka
                     LEFT JOIN ai_predictions ap ON ap.id = ka.source_prediction_id
                     WHERE ka.video_id = %s
                     AND ka.bbox_x IS NOT NULL
                     AND ka.bbox_width > 0
+                    AND (ap.is_training_candidate IS NULL OR ap.is_training_candidate = TRUE)
                     ORDER BY ka.timestamp
                 ''', (video_id,))
 
