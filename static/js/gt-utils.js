@@ -47,3 +47,16 @@
         _originalAlert.call(window, message);
     };
 })();
+
+// XSS Prevention Utilities
+// Use these for ALL dynamic content inserted via innerHTML
+window.escapeHtml = function(str) {
+    if (str === null || str === undefined) return '';
+    var div = document.createElement('div');
+    div.textContent = String(str);
+    return div.innerHTML;
+};
+
+window.escapeAttr = function(str) {
+    return window.escapeHtml(str).replace(/'/g, '&#39;').replace(/"/g, '&quot;');
+};

@@ -539,7 +539,7 @@
                 if (data.success && data.names.length > 0) {
                     var container = document.getElementById('person-list');
                     container.innerHTML = data.names.map(function(name) {
-                        return '<div class="person-item" onclick="selectPerson(\'' + name + '\')">' + name + '</div>';
+                        return '<div class="person-item" onclick="selectPerson(\'' + escapeAttr(name) + '\')">' + escapeHtml(name) + '</div>';
                     }).join('');
                 } else {
                     document.getElementById('person-list').innerHTML = '<div class="empty-state">No tracked people yet</div>';
@@ -577,7 +577,7 @@
             }
             container.innerHTML = path.map(function(step) {
                 return '<div class="transition-item"><div class="camera-path">' +
-                    (step.from_camera ? step.from_camera + ' &rarr; ' : '') + step.camera +
+                    (step.from_camera ? escapeHtml(step.from_camera) + ' &rarr; ' : '') + escapeHtml(step.camera) +
                     '</div>' +
                     (step.transition_time_seconds ? '<div class="time">Transit time: ' + step.transition_time_seconds.toFixed(1) + 's</div>' : '') +
                     '</div>';
@@ -597,10 +597,10 @@
                     container.innerHTML = data.suggestions.slice(0, 5).map(function(sug) {
                         return '<div class="suggestion-item"><div><span class="confidence">' +
                             (sug.confidence * 100).toFixed(0) + '%</span> ' +
-                            sug.unknown_camera + ' @ ' + sug.unknown_timestamp.toFixed(1) + 's</div>' +
-                            '<div class="reasoning">' + sug.reasoning.join(', ') + '</div>' +
+                            escapeHtml(sug.unknown_camera) + ' @ ' + sug.unknown_timestamp.toFixed(1) + 's</div>' +
+                            '<div class="reasoning">' + escapeHtml(sug.reasoning.join(', ')) + '</div>' +
                             '<button class="btn btn-primary btn-small" onclick="assignSuggestion(' +
-                            sug.unknown_detection_id + ', \'' + name + '\')">Assign to ' + name + '</button></div>';
+                            sug.unknown_detection_id + ', \'' + escapeAttr(name) + '\')">Assign to ' + escapeHtml(name) + '</button></div>';
                     }).join('');
                 } else {
                     document.getElementById('suggestions-list').innerHTML = '<div class="empty-state">No suggestions</div>';
@@ -750,12 +750,12 @@
                 var displayMac = mac.length === 12 ? mac.match(/.{2}/g).join(':') : mac;
                 var isActive = selectedCamera && selectedCamera.camera_id === cam.camera_id;
                 return '<div class="camera-list-item ' + (isActive ? 'active' : '') +
-                    '" onclick="selectCamera(\'' + cam.camera_id + '\')">' +
-                    '<div><div class="camera-mac">' + displayMac + '</div>' +
-                    '<div class="camera-info">' + (cam.camera_name || cam.site_name || 'Unnamed') +
+                    '" onclick="selectCamera(\'' + escapeAttr(cam.camera_id) + '\')">' +
+                    '<div><div class="camera-mac">' + escapeHtml(displayMac) + '</div>' +
+                    '<div class="camera-info">' + escapeHtml(cam.camera_name || cam.site_name || 'Unnamed') +
                     ' &middot; ' + cam.total_events + ' events</div></div>' +
                     '<span class="camera-badge ' + (cam.location_name ? 'has-location' : 'no-location') + '">' +
-                    (cam.location_name || 'Unassigned') + '</span></div>';
+                    escapeHtml(cam.location_name || 'Unassigned') + '</span></div>';
             }).join('');
         }
 
@@ -769,7 +769,7 @@
                     uniqueLocations.push(c.location_name);
                 }
             });
-            datalist.innerHTML = uniqueLocations.map(function(loc) { return '<option value="' + loc + '">'; }).join('');
+            datalist.innerHTML = uniqueLocations.map(function(loc) { return '<option value="' + escapeAttr(loc) + '">'; }).join('');
         }
 
         async function selectCamera(cameraId) {
@@ -909,7 +909,7 @@
                     if (stats.locations && stats.locations.length > 0) {
                         container.innerHTML = stats.locations.map(function(loc) {
                             return '<div class="export-stat-card">' +
-                                '<div class="location-label">' + loc.location_name + '</div>' +
+                                '<div class="location-label">' + escapeHtml(loc.location_name) + '</div>' +
                                 '<div class="frame-count">' + loc.total_frames + '</div>' +
                                 '<div class="source-info">' + (loc.manual_frames || 0) + ' manual + ' + (loc.auto_frames || 0) + ' auto-labeled</div>' +
                                 '</div>';
@@ -942,14 +942,14 @@
                 if (data.success) {
                     resultDiv.innerHTML = '<div style="background:#1a3a1a; border:1px solid #4CAF50; border-radius:4px; padding:15px; color:#4CAF50;">' +
                         '<strong>Export complete!</strong><br>' +
-                        '<span style="color:#aaa;">Path: ' + (data.output_dir || 'N/A') + '</span><br>' +
-                        '<span style="color:#aaa;">Format: ' + (data.format || 'N/A') + '</span><br>' +
+                        '<span style="color:#aaa;">Path: ' + escapeHtml(data.output_dir || 'N/A') + '</span><br>' +
+                        '<span style="color:#aaa;">Format: ' + escapeHtml(data.format || 'N/A') + '</span><br>' +
                         '<span style="color:#aaa;">Total frames: ' + (data.total_frames || 0) +
                         ' (Train: ' + (data.train_count || 0) + ', Val: ' + (data.val_count || 0) + ')</span><br>' +
                         '<span style="color:#aaa;">Locations: ' + (data.location_count || 0) + '</span></div>';
                 } else {
                     resultDiv.innerHTML = '<div style="background:#3a1a1a; border:1px solid #e74c3c; border-radius:4px; padding:15px; color:#e74c3c;">' +
-                        '<strong>Export failed:</strong> ' + (data.error || 'Unknown error') + '</div>';
+                        '<strong>Export failed:</strong> ' + escapeHtml(data.error || 'Unknown error') + '</div>';
                 }
             } catch (e) {
                 console.error('Error exporting:', e);

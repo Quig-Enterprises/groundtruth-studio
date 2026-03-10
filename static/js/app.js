@@ -372,7 +372,7 @@ async function previewVideo() {
             previewDiv.innerHTML = `<p style="color: #e74c3c;">Error: ${escapeHtml(data.error)}</p>`;
         }
     } catch (error) {
-        previewDiv.innerHTML = `<p style="color: #e74c3c;">Error: ${error.message}</p>`;
+        previewDiv.innerHTML = `<p style="color: #e74c3c;">Error: ${escapeHtml(error.message)}</p>`;
     }
 }
 
@@ -413,7 +413,7 @@ async function downloadVideo() {
             statusDiv.className = 'status-message error';
         }
     } catch (error) {
-        statusDiv.innerHTML = `Error: ${error.message}`;
+        statusDiv.innerHTML = `Error: ${escapeHtml(error.message)}`;
         statusDiv.className = 'status-message error';
     }
 }
@@ -615,7 +615,7 @@ async function showVideoDetails(videoId) {
                     <p><strong>File Size:</strong> ${formatFileSize(video.file_size)}</p>
                 ` : ''}
                 <p><strong>Uploaded:</strong> ${new Date(video.upload_date).toLocaleString()}</p>
-                ${video.original_url && !isEcoEye ? `<p><strong>Source:</strong> <a href="${video.original_url}" target="_blank">${video.original_url}</a></p>` : ''}
+                ${video.original_url && !isEcoEye ? `<p><strong>Source:</strong> <a href="${escapeAttr(video.original_url)}" target="_blank" rel="noopener noreferrer">${escapeHtml(video.original_url)}</a></p>` : ''}
                 ${video.notes ? `<p><strong>Notes:</strong> ${escapeHtml(video.notes)}</p>` : ''}
             </div>
 

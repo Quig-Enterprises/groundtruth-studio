@@ -5143,7 +5143,7 @@ var ReviewApp = {
         if (addNewBtn) {
             if (searchText && filtered.length === 0) {
                 addNewBtn.style.display = 'flex';
-                addNewBtn.innerHTML = '<span>+</span> Add "' + this.reclassifySearchText.trim() + '" as new class';
+                addNewBtn.innerHTML = '<span>+</span> Add "' + escapeHtml(this.reclassifySearchText.trim()) + '" as new class';
             } else {
                 addNewBtn.style.display = 'none';
             }

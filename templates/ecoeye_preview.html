@@ -1713,7 +1713,7 @@
 
                 if (event.has_local_video && event.local_video_path) {
                     playOverlay = `
-                        <div class="play-overlay always-visible" onclick="playVideo('${event.local_video_path}', '${event.camera_name || 'Video'}')">
+                        <div class="play-overlay always-visible" onclick="playVideo('${escapeAttr(event.local_video_path)}', '${escapeAttr(event.camera_name || 'Video')}')">
                             <div class="play-btn">▶</div>
                         </div>
                     `;
@@ -1770,12 +1770,12 @@
                                 `<div class="no-thumb">📹</div>`
                             }
                             ${playOverlay}
-                            <div class="event-badge ${badgeClass}">${event.event_type || 'Event'}</div>
-                            ${event.status ? `<div class="event-status status-${event.status}">${event.status}</div>` : ''}
+                            <div class="event-badge ${escapeAttr(badgeClass)}">${escapeHtml(event.event_type || 'Event')}</div>
+                            ${event.status ? `<div class="event-status status-${escapeAttr(event.status)}">${escapeHtml(event.status)}</div>` : ''}
                             ${importedBadge}
                         </div>
                         <div class="event-info">
-                            <div class="event-camera">${event.camera_name || 'Unknown Camera'}</div>
+                            <div class="event-camera">${escapeHtml(event.camera_name || 'Unknown Camera')}</div>
                             <div class="event-meta">
                                 <div class="event-timestamp">${formatTimestamp(event.timestamp)}</div>
                                 ${event.site_name ? `<div class="event-site">📍 ${event.site_name}</div>` : ''}

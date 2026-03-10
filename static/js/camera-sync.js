@@ -121,7 +121,7 @@
     function makeEmptyState(title, msg) {
         var div = document.createElement('div');
         div.className = 'empty-state';
-        div.innerHTML = '<h3>' + title + '</h3><p>' + msg + '</p>';
+        div.innerHTML = '<h3>' + escapeHtml(title) + '</h3><p>' + escapeHtml(msg) + '</p>';
         return div;
     }
 

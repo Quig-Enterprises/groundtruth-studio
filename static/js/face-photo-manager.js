@@ -342,7 +342,7 @@ var FacePhotoManager = {
 
             var html = '<table class="profile-table">';
             rows.forEach(function(row) {
-                html += '<tr><td class="profile-label">' + row[0] + '</td><td class="profile-value">' + row[1] + '</td></tr>';
+                html += '<tr><td class="profile-label">' + escapeHtml(row[0]) + '</td><td class="profile-value">' + escapeHtml(row[1]) + '</td></tr>';
             });
             html += '</table>';
             fields.innerHTML = html;
@@ -355,7 +355,7 @@ var FacePhotoManager = {
                     var doc = documents[dt];
                     var count = doc.generated_count || 0;
                     docHtml += '<div class="profile-doc-item">';
-                    docHtml += '<span class="profile-doc-type">' + dt.toUpperCase() + '</span>';
+                    docHtml += '<span class="profile-doc-type">' + escapeHtml(dt.toUpperCase()) + '</span>';
                     docHtml += '<span class="profile-doc-count">' + count + ' generated</span>';
                     docHtml += '</div>';
                 });
@@ -363,7 +363,7 @@ var FacePhotoManager = {
             }
 
             metaInfo.innerHTML = '<span>Total generations: ' + (profile.generation_count || 0) + '</span>' +
-                (profile.last_used ? '<span>Last used: ' + profile.last_used.split('T')[0] + '</span>' : '');
+                (profile.last_used ? '<span>Last used: ' + escapeHtml(profile.last_used.split('T')[0]) + '</span>' : '');
 
             panel.style.display = 'block';
 
